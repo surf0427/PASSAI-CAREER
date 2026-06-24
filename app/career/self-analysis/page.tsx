@@ -4,7 +4,6 @@ import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Button } from '@/components/ui/Button';
 import { loadAnalyzeState } from './selfAnalysisStorage';
 import { loadSelfPRs } from './selfAnalysisStorage';
 import { loadSelfAnalysisLogs } from './selfAnalysisStorage';
@@ -90,14 +89,13 @@ export default function SelfAnalysisEntryPage() {
         />
         <ModeCard
           title="過去の結果を見る"
-          description="活動整理・深掘り・添削結果を確認できます。"
-          disabled
-          badge="準備中"
+          description="自己分析AIの生成結果（最新）を確認できます。"
+          href="/career/self-analysis/result"
         />
       </div>
 
       <p className="mt-6 text-xs text-slate-500 leading-relaxed">
-        自己分析のAI機能は現在準備中です。公開までもう少しお待ちください。
+        まずは「自己分析を始める」から、基本情報・活動整理をもとに就活向けの自己分析を生成できます。
       </p>
 
       {/* ホームへの戻り導線。受験版は /home だが就活版は /career/home。 */}
@@ -174,15 +172,13 @@ function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
       <p className="text-xs text-slate-500 leading-relaxed mb-3">
         {suggestion.description}
       </p>
-      {/* 遷移先（AI壁打ち / 自己PR / 結果）はまだ準備中のため disabled で表示する。 */}
-      <Button
-        variant="primary"
-        size="md"
-        disabled
-        className="w-full sm:w-auto"
+      {/* 最小版の主要導線は「自己分析AIを実行」に集約する（run 画面へ）。 */}
+      <Link
+        href="/career/self-analysis/run"
+        className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
       >
         {suggestion.cta}
-      </Button>
+      </Link>
     </Card>
   );
 }

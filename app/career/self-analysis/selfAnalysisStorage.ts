@@ -1,6 +1,6 @@
 import type { PersistedAnalyzeState } from '@/types/analysis';
 import type { SelfPR } from '@/types/selfPR';
-import type { SelfAnalysisLog } from '@/types/selfAnalysisLog';
+import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import { safeGetStorage, safeSetStorage, safeRemoveStorage } from '@/lib/storage/safeStorage';
 
 // 就活版（career）自己分析の localStorage 保存層。
@@ -34,9 +34,16 @@ export function saveSelfPRs(entries: SelfPR[]): void {
   safeSetStorage(SELF_PR_KEY, entries);
 }
 
-export function loadSelfAnalysisLogs(): SelfAnalysisLog[] {
-  return safeGetStorage<SelfAnalysisLog[]>(SELF_ANALYSIS_LOG_KEY, []);
+// 就活版 自己分析AI の結果ログ（careerSelfAnalysisLogs）。
+// 型は就活版専用の CareerSelfAnalysisLog（受験版 SelfAnalysisLog とは別レーン）。
+export function loadSelfAnalysisLogs(): CareerSelfAnalysisLog[] {
+  return safeGetStorage<CareerSelfAnalysisLog[]>(SELF_ANALYSIS_LOG_KEY, []);
 }
-export function saveSelfAnalysisLogs(logs: SelfAnalysisLog[]): void {
+export function saveSelfAnalysisLogs(logs: CareerSelfAnalysisLog[]): void {
   safeSetStorage(SELF_ANALYSIS_LOG_KEY, logs);
+}
+
+// 1 件を先頭に追記して保存する（最新が先頭）。run 画面から利用する。
+export function appendSelfAnalysisLog(log: CareerSelfAnalysisLog): void {
+  saveSelfAnalysisLogs([log, ...loadSelfAnalysisLogs()]);
 }
