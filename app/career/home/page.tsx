@@ -27,14 +27,16 @@ const FEATURES = [
     href: '/career/self-analysis',
   },
   {
-    key: 'admission-matching',
-    title: '志望校マッチング',
-    description: 'あなたのプロフィールに合った志望校を見つけます。',
+    key: 'company-matching',
+    title: '企業マッチングAI',
+    description: 'これまでの結果を統合し、企業との相性と「なぜ向いているのか」を可視化します。',
+    href: '/career/matching',
   },
   {
-    key: 'statement',
-    title: '志望理由書作成',
-    description: 'AIのサポートで志望理由書を書き上げます。',
+    key: 'es',
+    title: 'ES作成',
+    description: 'AIのサポートで、ガクチカ・自己PR・志望動機などのESを書き上げます。',
+    href: '/career/es',
   },
   {
     key: 'essay',
@@ -44,7 +46,8 @@ const FEATURES = [
   {
     key: 'interview',
     title: '面接練習',
-    description: '予想質問の作成や、練習結果の記録・振り返りをします。',
+    description: '新卒就活の面接官AIと、質問→回答→深掘りのターン形式で練習できます。',
+    href: '/career/interview',
   },
   {
     key: 'presentation',
@@ -216,21 +219,21 @@ export default function CareerHomePage() {
         </Card>
       </section>
 
-      {/* チューターAI（準備中）。受験版では /tutor へ遷移するが就活版は未コピー。 */}
+      {/* 就活相談AI（司令塔）。/career/consultation へ遷移する。 */}
       <section className="mt-10">
         <p className="text-xs text-gray-500 mb-3 px-1">詰まった時の整理</p>
         <Card variant="soft" padding="md">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="flex-1">
-              <h2 className="text-base font-bold text-gray-800 mb-1.5">就活チューターAI</h2>
+              <h2 className="text-base font-bold text-gray-800 mb-1.5">就活相談AI</h2>
               <p className="text-sm text-gray-600 leading-relaxed">
-                志望動機・面接・不安など、今引っかかっていることを軽く整理して、次に何を進めるか一緒に見ます。
+                志望動機・面接・不安など、今引っかかっていることを整理し、就活全体の司令塔として次に進めることを一緒に見ます。
               </p>
             </div>
             <div className="shrink-0 sm:self-end">
-              <Button variant="outline" size="md" disabled>
-                準備中
-              </Button>
+              <LinkButton href="/career/consultation" variant="primary" size="md">
+                相談する
+              </LinkButton>
             </div>
           </div>
         </Card>

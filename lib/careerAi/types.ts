@@ -19,6 +19,7 @@ export type CareerAiFeatureKey =
   | 'career-es'
   | 'career-interview'
   | 'career-consultation'
+  | 'career-company-matching'
   | 'career-company-research'
   | 'career-gd'
   | 'career-aptitude';
@@ -29,6 +30,7 @@ export const CAREER_AI_FEATURE_KEYS = [
   'career-es',
   'career-interview',
   'career-consultation',
+  'career-company-matching',
   'career-company-research',
   'career-gd',
   'career-aptitude',
@@ -40,6 +42,7 @@ export const CAREER_AI_FEATURE_LABELS: Record<CareerAiFeatureKey, string> = {
   'career-es': 'エントリーシート（ES）',
   'career-interview': '面接対策',
   'career-consultation': '就活相談',
+  'career-company-matching': '企業マッチング',
   'career-company-research': '企業研究',
   'career-gd': 'グループディスカッション（GD）',
   'career-aptitude': '適性検査対策',
