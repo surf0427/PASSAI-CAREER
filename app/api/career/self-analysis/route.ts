@@ -35,12 +35,23 @@ const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
 
 // 期待する出力 JSON スキーマを明示する指示。system prompt（共通基盤）に追記する。
+// v2: ES・面接・マッチング・企業分析が再利用しやすい構造化フィールドを追加。
 const OUTPUT_FORMAT_INSTRUCTION = [
+  '# 分析の観点（就活向け）',
+  '与えられた「基本情報」「活動・経験」「就活軸」を総合し、次の観点を明確にしてください。',
+  '- どんな業界・職種に向いているか（活動・強み・就活軸から根拠づける）',
+  '- どんな企業文化・組織に合うか / どんな働き方が合うか',
+  '- どんな環境だと力を発揮しやすいか / どんな環境は避けた方がよいか',
+  '- ESで押し出すべき強み、面接で深掘りされやすい弱み',
+  '- 就活軸との整合性（重視/回避したい条件と本人の特性が噛み合うか）',
+  '- ガクチカ化できる経験、自己PR化できる経験',
+  '一般論で埋めず、必ず本人の活動・経験・就活軸に紐づけて具体的に述べてください。',
+  '',
   '# 出力形式（厳守）',
-  '上記のプロフィールと活動・経験をもとに、新卒就活向けの自己分析を行ってください。',
   '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
   '各フィールドは日本語で、活動・経験に即して具体的に記述してください。',
-  '該当が無いフィールドは空配列 [] または空文字 "" にしてください（キーは省略しない）。',
+  '該当が無いフィールドは空配列 [] または空文字 "" にしてください（キーは必ず全て含める）。',
+  '配列フィールドは原則2〜5個。可能なら各要素に「なぜそう言えるか」の根拠を短く添えてください。',
   '',
   '{',
   '  "summary": string,            // 就活視点での自己分析の全体所感（2〜4文）',
@@ -50,7 +61,17 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '  "selfPrIdeas": string[],     // 自己PR候補',
   '  "esAngles": string[],        // ESで使える経験の切り口',
   '  "interviewQuestions": string[], // 面接で深掘りされそうな想定質問',
-  '  "nextActions": string[]      // 次にやるべきこと',
+  '  "nextActions": string[],     // 次にやるべきこと',
+  '  "careerDirection": string,   // キャリアの方向性・志望の核（1〜3文。志望動機の軸）',
+  '  "recommendedIndustries": string[], // 向いている業界候補（根拠を短く）',
+  '  "recommendedJobs": string[],       // 向いている職種候補（根拠を短く）',
+  '  "suitableEnvironment": string[],   // 向いている働き方・職場環境・組織文化',
+  '  "valueKeywords": string[],         // 価値観キーワード（短い語句）',
+  '  "strengthKeywords": string[],      // 強みキーワード（短い語句）',
+  '  "motivationSources": string[],     // モチベーションの源泉',
+  '  "stressFactors": string[],         // ストレス要因・避けた方がよい環境',
+  '  "companySelectionCriteria": string[], // 企業選びで重視すべき条件',
+  '  "developmentPoints": string[]      // 今後伸ばすべき点',
   '}',
 ].join('\n');
 
@@ -78,6 +99,17 @@ function normalizeResult(raw: unknown): CareerSelfAnalysisResult {
     esAngles: strArray(r.esAngles),
     interviewQuestions: strArray(r.interviewQuestions),
     nextActions: strArray(r.nextActions),
+    // v2 構造化フィールド（キー欠落・型ゆれに強い防御は既存と同方針）。
+    careerDirection: str(r.careerDirection),
+    recommendedIndustries: strArray(r.recommendedIndustries),
+    recommendedJobs: strArray(r.recommendedJobs),
+    suitableEnvironment: strArray(r.suitableEnvironment),
+    valueKeywords: strArray(r.valueKeywords),
+    strengthKeywords: strArray(r.strengthKeywords),
+    motivationSources: strArray(r.motivationSources),
+    stressFactors: strArray(r.stressFactors),
+    companySelectionCriteria: strArray(r.companySelectionCriteria),
+    developmentPoints: strArray(r.developmentPoints),
   };
 }
 
@@ -136,7 +168,8 @@ export async function POST(req: Request) {
       const message = await anthropic.messages.create(
         {
           model: MODEL,
-          max_tokens: 2000,
+          // v2 でフィールドが増えたため余裕を持たせる（途中切れ＝502 を避ける）。
+          max_tokens: 4000,
           temperature: attempt === 2 ? 0 : 0.5,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],

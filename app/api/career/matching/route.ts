@@ -103,8 +103,16 @@ function renderSelfAnalysis(r: CareerSelfAnalysisResult | null | undefined): str
   if (!r) return '';
   const lines: string[] = [];
   if (str(r.summary)) lines.push(`- 全体所感: ${str(r.summary)}`);
+  // v2 構造化フィールド（旧ログには無いので ?. で防御）。マッチングの相性根拠に直結するため優先反映。
+  if (str(r.careerDirection)) lines.push(`- キャリアの方向性: ${str(r.careerDirection)}`);
   if (r.strengths?.length) lines.push(`- 強み: ${r.strengths.join('、')}`);
+  if (r.strengthKeywords?.length) lines.push(`- 強みキーワード: ${r.strengthKeywords.join('、')}`);
+  if (r.valueKeywords?.length) lines.push(`- 価値観キーワード: ${r.valueKeywords.join('、')}`);
   if (r.weaknesses?.length) lines.push(`- 弱み: ${r.weaknesses.join('、')}`);
+  if (r.recommendedIndustries?.length) lines.push(`- 向いている業界: ${r.recommendedIndustries.join('、')}`);
+  if (r.recommendedJobs?.length) lines.push(`- 向いている職種: ${r.recommendedJobs.join('、')}`);
+  if (r.suitableEnvironment?.length) lines.push(`- 向いている環境: ${r.suitableEnvironment.join('、')}`);
+  if (r.companySelectionCriteria?.length) lines.push(`- 企業選びの条件: ${r.companySelectionCriteria.join('、')}`);
   if (r.gakuchikaIdeas?.length) lines.push(`- ガクチカ候補: ${r.gakuchikaIdeas.join('、')}`);
   return lines.join('\n');
 }

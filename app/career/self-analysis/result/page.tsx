@@ -69,6 +69,21 @@ export default function CareerSelfAnalysisResultPage() {
             </p>
           </Section>
 
+          {/* v2 構造化フィールド。旧ログには無いので、内容があるときだけ表示する（未定義でも落ちない）。 */}
+          {str(latest.result.careerDirection) && (
+            <Section title="キャリアの方向性">
+              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                {str(latest.result.careerDirection)}
+              </p>
+            </Section>
+          )}
+          <MaybeListSection title="向いている業界" items={latest.result.recommendedIndustries} />
+          <MaybeListSection title="向いている職種" items={latest.result.recommendedJobs} />
+          <MaybeListSection title="向いている環境" items={latest.result.suitableEnvironment} />
+          <MaybeListSection title="価値観キーワード" items={latest.result.valueKeywords} />
+          <MaybeListSection title="強みキーワード" items={latest.result.strengthKeywords} />
+          <MaybeListSection title="企業選びの条件" items={latest.result.companySelectionCriteria} />
+
           <ListSection title="強み" items={latest.result.strengths} />
           <ListSection title="弱み・伸びしろ" items={latest.result.weaknesses} />
           <ListSection title="ガクチカ候補" items={latest.result.gakuchikaIdeas} />
@@ -103,6 +118,14 @@ function formatDate(iso: string): string {
   return d.toLocaleString('ja-JP');
 }
 
+// 旧ログ（v2 フィールド未保存）でも落ちないよう、文字列・配列を安全に丸める。
+function str(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+function arr(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Card variant="soft" padding="md" className="mb-4">
@@ -112,14 +135,16 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function ListSection({ title, items }: { title: string; items: string[] }) {
+// 既存の常時表示セクション（強み・弱み等）。items が未定義の旧ログでも空表示で落ちない。
+function ListSection({ title, items }: { title: string; items?: string[] }) {
+  const list = arr(items);
   return (
     <Section title={title}>
-      {items.length === 0 ? (
+      {list.length === 0 ? (
         <p className="text-sm text-slate-400">—</p>
       ) : (
         <ul className="list-disc pl-5 space-y-1.5">
-          {items.map((item, i) => (
+          {list.map((item, i) => (
             <li key={i} className="text-sm text-slate-700 leading-relaxed">
               {item}
             </li>
@@ -128,4 +153,10 @@ function ListSection({ title, items }: { title: string; items: string[] }) {
       )}
     </Section>
   );
+}
+
+// v2 フィールド用。内容があるときだけセクションを表示（旧ログでは何も出さない）。
+function MaybeListSection({ title, items }: { title: string; items?: string[] }) {
+  if (arr(items).length === 0) return null;
+  return <ListSection title={title} items={items} />;
 }

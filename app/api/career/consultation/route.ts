@@ -74,8 +74,12 @@ function renderSelfAnalysis(r: CareerSelfAnalysisResult | null | undefined): str
   if (!r) return '';
   const lines: string[] = [];
   if (str(r.summary)) lines.push(`- 全体所感: ${str(r.summary)}`);
+  // v2 構造化フィールド（旧ログには無いので ?. で防御）。司令塔が方向性・企業選びを踏まえられるよう軽く反映。
+  if (str(r.careerDirection)) lines.push(`- キャリアの方向性: ${str(r.careerDirection)}`);
   if (r.strengths?.length) lines.push(`- 強み: ${r.strengths.join('、')}`);
   if (r.weaknesses?.length) lines.push(`- 弱み: ${r.weaknesses.join('、')}`);
+  if (r.recommendedIndustries?.length) lines.push(`- 向いている業界: ${r.recommendedIndustries.join('、')}`);
+  if (r.companySelectionCriteria?.length) lines.push(`- 企業選びの条件: ${r.companySelectionCriteria.join('、')}`);
   if (r.gakuchikaIdeas?.length) lines.push(`- ガクチカ候補: ${r.gakuchikaIdeas.join('、')}`);
   return lines.join('\n');
 }

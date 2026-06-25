@@ -6,6 +6,11 @@
 
 // 就活版 自己分析AI が返す JSON 構造。
 // API route（app/api/career/self-analysis/route.ts）の出力と 1:1 で対応する。
+//
+// 後方互換: 既存フィールド（summary 〜 nextActions）は不変。下流AI（ES・面接・相談・
+// マッチング・企業分析）が再利用しやすいよう、v2 で構造化フィールドを追加した。
+// 旧 localStorage ログには v2 フィールドが無いため、消費側（結果画面 / renderSelfAnalysis）は
+// 常に「未定義なら空」で防御的に扱うこと（型上は必須だが実データは欠損し得る）。
 export type CareerSelfAnalysisResult = {
   // 全体所感（就活視点での自己分析サマリ）。
   summary: string;
@@ -23,6 +28,28 @@ export type CareerSelfAnalysisResult = {
   interviewQuestions: string[];
   // 次にやるべきこと。
   nextActions: string[];
+
+  // ── v2: 下流AI 再利用向けの構造化フィールド ──────────────────────
+  // キャリアの方向性・志望の核（1〜3文）。ES志望動機・面接・マッチングの軸になる。
+  careerDirection: string;
+  // 向いている業界候補（根拠を短く添える）。
+  recommendedIndustries: string[];
+  // 向いている職種候補（根拠を短く添える）。
+  recommendedJobs: string[];
+  // 向いている働き方・職場環境・組織文化。
+  suitableEnvironment: string[];
+  // 価値観キーワード（短い語句の配列）。
+  valueKeywords: string[];
+  // 強みキーワード（短い語句の配列）。
+  strengthKeywords: string[];
+  // モチベーションの源泉。
+  motivationSources: string[];
+  // ストレス要因・避けた方がよい環境。
+  stressFactors: string[];
+  // 企業選びで重視すべき条件。
+  companySelectionCriteria: string[];
+  // 今後伸ばすべき点。
+  developmentPoints: string[];
 };
 
 // 完了済み 就活自己分析 1 件分の localStorage スナップショット。

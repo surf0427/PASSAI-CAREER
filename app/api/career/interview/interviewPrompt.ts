@@ -62,15 +62,18 @@ const INTERVIEWER_PERSONA = [
 function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | undefined): string {
   if (!result) return '';
   const lines: string[] = [];
-  const push = (label: string, value: string) => {
-    if (value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
+  // v2 フィールドは旧ログで undefined になり得るため、空・非配列は無視して防御する。
+  const push = (label: string, value: string | undefined) => {
+    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
   };
-  const pushList = (label: string, values: string[]) => {
-    if (values.length > 0) lines.push(`- ${label}: ${values.join('、')}`);
+  const pushList = (label: string, values: string[] | undefined) => {
+    if (values && values.length > 0) lines.push(`- ${label}: ${values.join('、')}`);
   };
   push('全体所感', result.summary);
+  push('キャリアの方向性', result.careerDirection);
   pushList('強み', result.strengths);
   pushList('弱み', result.weaknesses);
+  pushList('今後伸ばすべき点', result.developmentPoints);
   pushList('ガクチカ候補', result.gakuchikaIdeas);
   pushList('自己PR候補', result.selfPrIdeas);
   return lines.join('\n');
