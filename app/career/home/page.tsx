@@ -7,7 +7,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { LinkButton } from '@/components/ui/LinkButton';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import type { BasicInfo } from '@/types/basicInfo';
+import CareerProfileSummary from '@/components/career/CareerProfileSummary';
+import type { CareerProfile } from '@/types/careerProfile';
 
 // ── 機能カードの定義 ──────────────────────────────────────────────
 // 受験版 app/home/page.tsx の FEATURES をそのまま踏襲（title / description）。
@@ -25,6 +26,12 @@ const FEATURES = [
     title: '自己分析',
     description: 'AIとの壁打ちを通じて、自分の強みや価値観を深掘りします。',
     href: '/career/self-analysis',
+  },
+  {
+    key: 'values',
+    title: '就活軸整理',
+    description: '重視する条件・避けたい条件・業界・職種・働き方・社風などをチェック形式で整理し、就活の軸を言語化します。',
+    href: '/career/values',
   },
   {
     key: 'company-matching',
@@ -76,7 +83,7 @@ export default function CareerHomePage() {
   // 就活版 localStorage（careerBasicFormData）を source of truth として派生する。
   //   - SSR / 初回 client render は isMounted=false で null を返し hydration セーフ
   //   - mount 後は就活版 loadBasicInfo() を直接読む（受験版 storage は参照しない）
-  const basicInfo = useMemo<BasicInfo | null>(
+  const basicInfo = useMemo<CareerProfile | null>(
     () => (isMounted ? loadBasicInfo() : null),
     [isMounted],
   );
@@ -92,8 +99,6 @@ export default function CareerHomePage() {
   if (!isMounted) return null;
   if (!basicInfo) return null; // mount 済 + 未入力。上記 effect で /career/profile へ replace 中
 
-  const firstPreference = basicInfo.preferences[0];
-
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12">
 
@@ -102,15 +107,11 @@ export default function CareerHomePage() {
         <h1 className="text-3xl font-bold text-gray-800 mb-2">
           こんにちは、{basicInfo.name}さん
         </h1>
-        {firstPreference && (
-          <p className="text-gray-500 text-sm mb-4">
-            第一志望：{firstPreference.university}　{firstPreference.faculty}
-          </p>
-        )}
         <p className="text-gray-600 text-sm leading-relaxed mb-4">
-          総合型選抜（AO・推薦）の対策をAIがサポートします。<br />
-          活動整理から志望理由書・面接対策まで、一歩ずつ進めましょう。
+          就職活動の準備をAIがサポートします。<br />
+          活動整理から自己分析・ES作成・面接対策まで、一歩ずつ進めましょう。
         </p>
+        <CareerProfileSummary profile={basicInfo} />
         <Link
           href="/career/profile"
           className="inline-block border border-gray-300 hover:border-gray-400 text-gray-600 hover:text-gray-800 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
