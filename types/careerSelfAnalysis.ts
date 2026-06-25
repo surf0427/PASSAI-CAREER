@@ -52,6 +52,15 @@ export type CareerSelfAnalysisResult = {
   developmentPoints: string[];
 };
 
+// 深掘り壁打ち（自己分析の会話）の 1 ターン。AI の質問 or ユーザーの回答。
+// 構造は面接の CareerInterviewTurn と同形だが、機能間の結合を避けるため自己分析側で独自定義する。
+// Phase 1 では会話は run 画面の state で保持し（resume は Phase 2）、最終生成時に
+// /api/career/self-analysis へ conversation として渡す。
+export type CareerSelfAnalysisTurn = {
+  role: 'question' | 'answer';
+  content: string;
+};
+
 // 完了済み 就活自己分析 1 件分の localStorage スナップショット。
 // 保存キーは 'careerSelfAnalysisLogs'（app/career/self-analysis/selfAnalysisStorage.ts）。
 export type CareerSelfAnalysisLog = {

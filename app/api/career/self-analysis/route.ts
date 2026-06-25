@@ -21,7 +21,10 @@ import type {
   CareerActivityInput,
   CareerValuesInput,
 } from '@/lib/careerAi';
-import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
+import type {
+  CareerSelfAnalysisResult,
+  CareerSelfAnalysisTurn,
+} from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -86,6 +89,36 @@ function strArray(value: unknown): string[] {
   return value.map((v) => str(v)).filter((v) => v !== '');
 }
 
+// 深掘り壁打ちの会話（任意）を正規化する。壊れた要素は捨てる。
+function normalizeConversation(value: unknown): CareerSelfAnalysisTurn[] {
+  if (!Array.isArray(value)) return [];
+  const out: CareerSelfAnalysisTurn[] = [];
+  for (const t of value) {
+    if (!t || typeof t !== 'object') continue;
+    const role = (t as { role?: unknown }).role;
+    const content = str((t as { content?: unknown }).content);
+    if ((role === 'question' || role === 'answer') && content) {
+      out.push({ role, content });
+    }
+  }
+  return out;
+}
+
+// 会話を system prompt 用の可読ブロックに整形する。空なら null（ブロック自体を出さない）。
+// 未入力ユーザー（単発生成）では prompt が従来と完全一致し、AI 挙動に影響しない。
+function renderConversation(turns: CareerSelfAnalysisTurn[]): string | null {
+  if (turns.length === 0) return null;
+  const lines = turns.map((t) =>
+    t.role === 'question' ? `Q: ${t.content}` : `A: ${t.content}`,
+  );
+  return [
+    '# 深掘り対話（本人との壁打ち）',
+    '以下は本人との深掘り対話です。本人が自分の言葉で語った内容なので、',
+    '自己分析の最優先の根拠として活用し、各フィールドに具体的に反映してください。',
+    ...lines,
+  ].join('\n');
+}
+
 // AI 出力（パース済み unknown）を CareerSelfAnalysisResult 形状に正規化する。
 // キー過不足・型ゆれに強くするための防御。
 function normalizeResult(raw: unknown): CareerSelfAnalysisResult {
@@ -125,12 +158,14 @@ export async function POST(req: Request) {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
+    conversation?: unknown;
     userInput?: string;
   };
 
   const profile = b.profile ?? null;
   const activity = b.activity ?? null;
   const values = b.values ?? null;
+  const conversation = normalizeConversation(b.conversation);
   const userInput = typeof b.userInput === 'string' ? b.userInput : '';
 
   // プロフィールも活動も無ければ自己分析の材料が無いので弾く。
@@ -152,7 +187,15 @@ export async function POST(req: Request) {
     userInput,
   });
 
-  const systemPrompt = `${buildCareerSystemPrompt(context)}\n\n${OUTPUT_FORMAT_INSTRUCTION}`;
+  // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む（未入力なら従来と完全一致）。
+  const conversationBlock = renderConversation(conversation);
+  const systemPrompt = [
+    buildCareerSystemPrompt(context),
+    conversationBlock,
+    OUTPUT_FORMAT_INSTRUCTION,
+  ]
+    .filter((s): s is string => !!s)
+    .join('\n\n');
 
   // user メッセージは実行トリガ。機能別指示を再掲して JSON 出力を促す。
   const userMessage = [
