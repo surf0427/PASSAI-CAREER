@@ -12,7 +12,11 @@ import {
   buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
@@ -172,6 +176,7 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     interviewResult?: CareerInterviewFinalResult | null;
@@ -194,6 +199,7 @@ export async function POST(req: Request) {
     featureKey: FEATURE_KEY,
     profile: b.profile ?? null,
     activity: b.activity ?? null,
+    values: b.values ?? null,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
 

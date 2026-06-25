@@ -4,7 +4,11 @@
 //   - 受験版 /api/interview-ai/complete（generateFinalFeedback）の構造を踏襲しつつ、DB 保存・
 //     課金・usage には接続しない。評価結果はクライアントが localStorage に保存する。
 
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type {
@@ -68,6 +72,7 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     userInput?: string;
@@ -84,6 +89,7 @@ export async function POST(req: Request) {
     buildInterviewBaseSystem({
       profile: b.profile ?? null,
       activity: b.activity ?? null,
+      values: b.values ?? null,
       selfAnalysis: b.selfAnalysis ?? null,
       es: b.es ?? null,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',

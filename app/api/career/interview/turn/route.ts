@@ -5,7 +5,11 @@
 //     usage には接続しない。会話状態（turns）はクライアントが送る（ステートレス）。
 //   - ターン上限（CAREER_INTERVIEW_MAX_TURNS）に達したら done を返し、followup を生成しない。
 
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewTurn } from '@/types/careerInterview';
@@ -53,6 +57,7 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     userInput?: string;
@@ -89,6 +94,7 @@ export async function POST(req: Request) {
   const system = buildInterviewBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
+    values: b.values ?? null,
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',

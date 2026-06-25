@@ -2,7 +2,7 @@
 
 // PASSAI 就活版 — 自己分析AI 実行画面（最小版）
 //
-// 入力: careerBasicFormData（基本情報）/ careerActivityFormData（活動整理）を localStorage から読む。
+// 入力: careerBasicFormData（基本情報）/ careerActivityData（活動整理）を localStorage から読む。
 // 実行: /api/career/self-analysis を呼び、結果を careerSelfAnalysisLogs に保存して結果画面へ遷移する。
 // DB / 課金 / usage には接続しない（localStorage のみ）。
 
@@ -14,10 +14,18 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData } from '@/app/career/activity/activityStorage';
+import {
+  loadActivityData,
+  hasAnyActivity,
+} from '@/app/career/activity/activityStorage';
+import {
+  loadCareerValues,
+  isCareerValuesEmpty,
+} from '@/app/career/values/careerValuesStorage';
 import { appendSelfAnalysisLog } from '../selfAnalysisStorage';
 import type { BasicInfo } from '@/types/basicInfo';
-import type { ActivityData } from '@/types/activity';
+import type { CareerActivity } from '@/types/careerActivity';
+import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
@@ -34,11 +42,6 @@ function newId(): string {
   return `csa-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-// activity の各カテゴリ配列に 1 件でも入っていれば「活動あり」とみなす。
-function hasAnyActivity(activity: ActivityData | null): boolean {
-  if (!activity) return false;
-  return Object.values(activity).some((v) => Array.isArray(v) && v.length > 0);
-}
 
 export default function CareerSelfAnalysisRunPage() {
   const router = useRouter();
@@ -57,13 +60,20 @@ export default function CareerSelfAnalysisRunPage() {
     () => (isMounted ? loadBasicInfo() : null),
     [isMounted],
   );
-  const activity = useMemo<ActivityData | null>(
+  const activity = useMemo<CareerActivity | null>(
     () => (isMounted ? loadActivityData() : null),
+    [isMounted],
+  );
+  // 就活軸（/career/values）。AI へ価値観・重視/回避軸を渡すために読む。
+  const values = useMemo<CareerValues | null>(
+    () => (isMounted ? loadCareerValues() : null),
     [isMounted],
   );
 
   const profileReady = !!basicInfo;
   const activityReady = hasAnyActivity(activity);
+  // 1 つでも選択 / 備考があれば「入力あり」とみなす簡易判定。
+  const valuesReady = !!values && !isCareerValuesEmpty(values);
   const canRun = profileReady || activityReady;
 
   async function handleRun() {
@@ -77,6 +87,7 @@ export default function CareerSelfAnalysisRunPage() {
         body: JSON.stringify({
           profile: basicInfo,
           activity,
+          values,
           userInput,
         }),
       });
@@ -114,6 +125,7 @@ export default function CareerSelfAnalysisRunPage() {
         <div className="grid grid-cols-2 gap-y-3 gap-x-4">
           <ReadyItem label="基本情報" ready={profileReady} href="/career/profile" />
           <ReadyItem label="活動整理" ready={activityReady} href="/career/activity" />
+          <ReadyItem label="就活軸" ready={valuesReady} href="/career/values" />
         </div>
         {!canRun && (
           <p className="mt-4 text-xs text-amber-700 leading-relaxed">

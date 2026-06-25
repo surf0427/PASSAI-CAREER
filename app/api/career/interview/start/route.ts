@@ -6,7 +6,11 @@
 //   - プロンプトは就活版共通基盤（@/lib/careerAi）経由（app/api/career/interview/interviewPrompt.ts）。
 //   - 利用ユーティリティは AI 呼び出し系の純粋なものに限定（@/lib/ai / @/lib/aiTimeout）。
 
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import { anthropic } from '@/lib/ai';
@@ -38,6 +42,7 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     userInput?: string;
@@ -55,6 +60,7 @@ export async function POST(req: Request) {
   const system = buildInterviewBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
+    values: b.values ?? null,
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',

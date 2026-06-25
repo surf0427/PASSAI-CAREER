@@ -10,10 +10,12 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData } from '@/app/career/activity/activityStorage';
+import {
+  loadActivityData,
+  hasAnyActivity,
+} from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { loadEsLogs } from './esStorage';
-import type { ActivityData } from '@/types/activity';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -26,11 +28,6 @@ type Status = {
   selfAnalysisReady: boolean;
   esLogCount: number;
 };
-
-function hasAnyActivity(activity: ActivityData | null): boolean {
-  if (!activity) return false;
-  return Object.values(activity).some((v) => Array.isArray(v) && v.length > 0);
-}
 
 export default function CareerEsEntryPage() {
   const isMounted = useSyncExternalStore(

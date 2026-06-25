@@ -9,7 +9,8 @@
 // これは「型の再利用」であって受験版コードの編集ではない。
 
 import type { BasicInfo } from '@/types/basicInfo';
-import type { ActivityData } from '@/types/activity';
+import type { CareerActivity } from '@/types/careerActivity';
+import type { CareerValues } from '@/types/careerValues';
 
 // ── 機能キー ──────────────────────────────────────────────────────
 
@@ -79,18 +80,61 @@ export type CareerProfileContext = {
 // ── 活動コンテキスト ──────────────────────────────────────────────
 
 // 就活 AI に渡す「活動・経験」の正規化済み形状。各カテゴリは人間可読な行の配列。
+// 就活版「活動整理」(/career/activity) の 18 セクションに対応する（受験版 ActivityData 由来の
+// studentActivities / research / contests 等は廃止し、就活向けの粒度に再構成）。
 export type CareerActivityContext = {
-  studentActivities: string[];
-  partTimeJobs: string[];
-  internships: string[];
-  studyAbroad: string[];
-  research: string[];
-  volunteer: string[];
-  certifications: string[];
-  contests: string[];
-  hobbies: string[];
-  others: string[];
+  personality: string[]; // ① MBTI・性格
+  academics: string[]; // ② 学業・学生時代の活動
+  partTimeJobs: string[]; // ③ アルバイト
+  internships: string[]; // ④ インターン
+  clubActivities: string[]; // ⑤ サークル・部活動
+  projects: string[]; // ⑥ プロジェクト経験
+  leadership: string[]; // ⑦ リーダー経験
+  volunteer: string[]; // ⑧ ボランティア・社会活動
+  overseas: string[]; // ⑨ 海外経験
+  certifications: string[]; // ⑩ 資格
+  itSkills: string[]; // ⑪ ITスキル
+  languages: string[]; // ⑫ 語学
+  hobbies: string[]; // ⑬ 趣味・特技
+  awards: string[]; // ⑭ 表彰・実績
+  snsActivities: string[]; // ⑮ SNS・情報発信経験
+  portfolios: string[]; // ⑯ ポートフォリオ・制作物
+  lifeExperiences: string[]; // ⑰ 人生経験
+  others: string[]; // ⑱ その他
 };
+
+// ── 就活軸コンテキスト ────────────────────────────────────────────
+
+// 就活 AI に渡す「就活軸整理」(/career/values) の正規化済み形状。
+// 各カテゴリの選択（日本語ラベルの配列）+ カテゴリ別備考 + 総合備考を持つ。
+// 自己分析・ES・面接・企業マッチング・企業研究・相談 すべてが「本人が何を重視し、
+// 何を避けたいか」の前提として参照できる。
+export type CareerValuesContext = {
+  priorities: string[];
+  avoidances: string[];
+  industries: string[];
+  jobTypes: string[];
+  workStyles: string[];
+  companyTypes: string[];
+  careerGoals: string[];
+  culturePreferences: string[];
+  // カテゴリ別の自由記述備考（空文字も含む。表示側で空はスキップ）。
+  notes: {
+    priorities: string;
+    avoidances: string;
+    industries: string;
+    jobTypes: string;
+    workStyles: string;
+    companyTypes: string;
+    careerGoals: string;
+    culturePreferences: string;
+  };
+  overallNote: string;
+};
+
+// /career/values は CareerValues（localStorage / Supabase 共通形状）を保存する。
+// 部分データ・未入力でも落ちないよう全体を optional 受け取りにする。
+export type CareerValuesInput = Partial<CareerValues>;
 
 // ── 統合コンテキスト ──────────────────────────────────────────────
 
@@ -105,6 +149,8 @@ export type CareerAiContextMetadata = {
 export type CareerAiContext = {
   profile: CareerProfileContext;
   activity: CareerActivityContext;
+  // 就活軸整理。未入力なら全カテゴリ空（buildCareerAiContext が常に埋める）。
+  values: CareerValuesContext;
   featureKey: CareerAiFeatureKey;
   userInput: string;
   metadata: CareerAiContextMetadata;
@@ -129,6 +175,6 @@ export type CareerProfileInput = Partial<BasicInfo> & {
   notes?: string;
 };
 
-// /career/activity は現状 ActivityData を保存する。全カテゴリ optional 受け取りで
-// 旧データ・部分データでも落ちないようにする。
-export type CareerActivityInput = Partial<ActivityData>;
+// /career/activity は CareerActivity（就活版 活動整理）を保存する。全セクション optional
+// 受け取りで、旧データ・部分データでも落ちないようにする。
+export type CareerActivityInput = Partial<CareerActivity>;

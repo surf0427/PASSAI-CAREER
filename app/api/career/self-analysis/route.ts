@@ -16,7 +16,11 @@ import {
   buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -88,11 +92,13 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     userInput?: string;
   };
 
   const profile = b.profile ?? null;
   const activity = b.activity ?? null;
+  const values = b.values ?? null;
   const userInput = typeof b.userInput === 'string' ? b.userInput : '';
 
   // プロフィールも活動も無ければ自己分析の材料が無いので弾く。
@@ -110,6 +116,7 @@ export async function POST(req: Request) {
     featureKey: FEATURE_KEY,
     profile,
     activity,
+    values,
     userInput,
   });
 

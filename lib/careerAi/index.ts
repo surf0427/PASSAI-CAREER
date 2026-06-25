@@ -12,10 +12,12 @@ export type {
   CareerPlan,
   CareerProfileContext,
   CareerActivityContext,
+  CareerValuesContext,
   CareerAiContext,
   CareerAiContextMetadata,
   CareerProfileInput,
   CareerActivityInput,
+  CareerValuesInput,
 } from './types';
 export {
   CAREER_AI_FEATURE_KEYS,
@@ -26,6 +28,7 @@ export {
 export {
   normalizeCareerProfileContext,
   normalizeCareerActivityContext,
+  normalizeCareerValuesContext,
   buildCareerAiContext,
 } from './context';
 

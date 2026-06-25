@@ -17,7 +17,11 @@ import {
   buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
@@ -108,12 +112,14 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     userInput?: string;
   };
 
   const profile = b.profile ?? null;
   const activity = b.activity ?? null;
+  const values = b.values ?? null;
   const selfAnalysis = b.selfAnalysis ?? null;
   const userInput = typeof b.userInput === 'string' ? b.userInput : '';
 
@@ -132,6 +138,7 @@ export async function POST(req: Request) {
     featureKey: FEATURE_KEY,
     profile,
     activity,
+    values,
     userInput,
   });
 

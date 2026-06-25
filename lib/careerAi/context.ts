@@ -10,11 +10,13 @@
 import type {
   CareerProfileContext,
   CareerActivityContext,
+  CareerValuesContext,
   CareerAiContext,
   CareerAiContextMetadata,
   CareerAiFeatureKey,
   CareerProfileInput,
   CareerActivityInput,
+  CareerValuesInput,
 } from './types';
 
 // 現行スキーマバージョン。将来コンテキスト形状を変えたら上げる。
@@ -82,133 +84,252 @@ export function normalizeCareerProfileContext(
 
 // ── 活動正規化 ────────────────────────────────────────────────────
 
-// ActivityData の各カテゴリを、就活 AI 向けの可読な string[] に正規化する。
-// - 受験版「探究(research)」「コンテスト(contest)」等もそのまま経験として活用する。
-// - インターンは現行 ActivityData に専用カテゴリが無いため空配列（就活版で活動フォームに
-//   追加されたら本関数を拡張する）。
-// - 「読書(reading)」は就活コンテキストに専用枠が無いため others に畳み込む。
+// 単発オブジェクトセクションを「ラベル: 値」の行配列に正規化する。
+// 値が空の行は捨てる。全フィールド空なら空配列を返す。
+function labeledLines(pairs: Array<[label: string, value: unknown]>): string[] {
+  return pairs
+    .map(([label, value]) => [label, str(value)] as const)
+    .filter(([, value]) => value !== '')
+    .map(([label, value]) => `${label}: ${value}`);
+}
+
+// CareerActivity（就活版「活動整理」の 18 セクション）を、就活 AI 向けの可読な
+// string[] 群に正規化する。各セクションは「全フィールド空なら空配列」になり、
+// renderActivity 側で空セクションは出力されない（未入力ユーザーへの影響なし）。
 export function normalizeCareerActivityContext(
   input: CareerActivityInput | null | undefined,
 ): CareerActivityContext {
   const a = input ?? {};
-
-  const studentActivities = (a.clubActivities ?? []).map((c) =>
-    joinFields([
-      ['部活/サークル', c.clubName],
-      ['種目', c.sport],
-      ['役割', c.role],
-      ['活動内容', c.description],
-      ['成果', c.achievement],
-      ['期間', periodText(c.period)],
-    ]),
-  );
-
-  const partTimeJobs = (a.partTimeJobActivities ?? []).map((p) =>
-    joinFields([
-      ['業種', p.industry],
-      ['業務内容', p.jobContent],
-      ['役割', p.role],
-      ['成果', p.achievement],
-      ['勤務頻度', p.workFrequency],
-      ['期間', periodText(p.period)],
-    ]),
-  );
-
-  // 現行 ActivityData にインターン専用カテゴリは無い。就活版フォーム拡張時に配線する。
-  const internships: string[] = [];
-
-  const studyAbroad = (a.studyAbroadActivities ?? []).map((s) =>
-    joinFields([
-      ['留学先', s.destination],
-      ['プログラム', s.programContent],
-      ['使用言語', s.language],
-      ['学び', s.reflection],
-      ['期間', periodText(s.period)],
-    ]),
-  );
-
-  const research = (a.researchActivities ?? []).map((r) =>
-    joinFields([
-      ['テーマ', r.theme],
-      ['きっかけ', r.trigger],
-      ['調査方法', r.methodology],
-      ['成果物', r.output],
-      ['学び', r.reflection],
-    ]),
-  );
-
-  const volunteer = (a.volunteerActivities ?? []).map((v) =>
-    joinFields([
-      ['活動', v.activityContent],
-      ['対象', v.target],
-      ['目的', v.purpose],
-      ['成果', v.achievement],
-      ['頻度', v.frequency],
-    ]),
-  );
-
-  const certifications = (a.certificationActivities ?? []).map((c) =>
-    joinFields([
-      ['資格', c.certificationName],
-      ['レベル/スコア', c.level],
-      ['取得時期', c.acquiredDate],
-      ['取得目的', c.purpose],
-    ]),
-  );
-
-  const contests = (a.contestActivities ?? []).map((c) =>
-    joinFields([
-      ['コンテスト', c.contestName],
-      ['分野', c.field],
-      ['結果', c.result],
-      ['活動内容', c.description],
-    ]),
-  );
-
-  const hobbies = (a.hobbyActivities ?? []).map((h) =>
-    joinFields([
-      ['趣味', h.hobbyContent],
-      ['頻度', h.frequency],
-      ['続ける理由', h.reason],
-      ['得たスキル', h.acquiredSkills],
-    ]),
-  );
-
-  // others = その他活動 + 読書（専用枠が無いため畳み込み）。
-  const others = [
-    ...(a.otherActivities ?? []).map((o) =>
-      joinFields([
-        ['活動名', o.activityName],
-        ['活動内容', o.description],
-        ['役割', o.role],
-        ['成果', o.achievement],
-        ['期間', periodText(o.period)],
-      ]),
-    ),
-    ...(a.readingActivities ?? []).map((r) =>
-      joinFields([
-        ['読書ジャンル', r.genre],
-        ['印象に残った本', r.favoriteBook],
-        ['選んだ理由', r.reason],
-        ['思考の変化', r.mindChange],
-      ]),
-    ),
-  ];
-
-  // 全フィールド空の行は捨てる（活動枠だけ追加して未入力のケースを除去）。
   const dropEmpty = (lines: string[]) => lines.filter((line) => line.trim() !== '');
 
+  // ① MBTI・性格
+  const p = a.personality ?? {};
+  const personality = labeledLines([
+    ['MBTI', (p as Record<string, unknown>).mbti],
+    ['自分で思う性格', (p as Record<string, unknown>).selfView],
+    ['周囲から言われる性格', (p as Record<string, unknown>).othersView],
+    ['強み', (p as Record<string, unknown>).strengths],
+    ['弱み', (p as Record<string, unknown>).weaknesses],
+    ['大切にしている価値観', (p as Record<string, unknown>).values],
+    ['モチベーションが上がる環境', (p as Record<string, unknown>).motivationUp],
+    ['モチベーションが下がる環境', (p as Record<string, unknown>).motivationDown],
+  ]);
+
+  // ② 学業・学生時代の活動
+  const ac = a.academics ?? {};
+  const academics = labeledLines([
+    ['力を入れたこと', (ac as Record<string, unknown>).focusedEffort],
+    ['ゼミ・研究', (ac as Record<string, unknown>).seminar],
+    ['卒業研究・卒論', (ac as Record<string, unknown>).thesis],
+    ['印象に残った授業', (ac as Record<string, unknown>).memorableClass],
+    ['GPA', (ac as Record<string, unknown>).gpa],
+    ['成績・受賞歴', (ac as Record<string, unknown>).academicAwards],
+  ]);
+
+  // 経験系の共通フィールド（役割・人数規模・期間・工夫・定量的な成果・学び）を行末尾に付ける。
+  // ES・面接 AI が「規模・役割・定量成果・学び（＝強みの根拠）」を読み取れるようにする。
+  const experienceFields = (
+    e: Partial<{
+      role: string;
+      scale: string;
+      period: { from?: string; to?: string };
+      ingenuity: string;
+      quantitativeResult: string;
+      learning: string;
+    }>,
+  ): Array<[label: string, value: unknown]> => [
+    ['役割', e.role],
+    ['人数規模', e.scale],
+    ['期間', periodText(e.period)],
+    ['工夫', e.ingenuity],
+    ['定量的な成果', e.quantitativeResult],
+    ['学び', e.learning],
+  ];
+
+  // ③ アルバイト
+  const partTimeJobs = (a.partTimeJobs ?? []).map((j) =>
+    joinFields([
+      ['勤務先', j.workplace],
+      ['業務内容', j.jobContent],
+      ...experienceFields(j),
+    ]),
+  );
+
+  // ④ インターン
+  const internships = (a.internships ?? []).map((i) =>
+    joinFields([
+      ['企業名', i.companyName],
+      ['業務内容', i.jobContent],
+      ...experienceFields(i),
+    ]),
+  );
+
+  // ⑤ サークル・部活動（複数登録）
+  const clubActivities = (a.club ?? []).map((c) =>
+    joinFields([
+      ['団体名', c.organizationName],
+      ['活動内容', c.activityContent],
+      ...experienceFields(c),
+    ]),
+  );
+
+  // ⑥ プロジェクト経験
+  const projects = (a.projects ?? []).map((pr) =>
+    joinFields([
+      ['プロジェクト名', pr.name],
+      ['内容', pr.content],
+      ...experienceFields(pr),
+    ]),
+  );
+
+  // ⑦ リーダー経験（複数登録）
+  const leadership = (a.leadership ?? []).map((l) =>
+    joinFields([['経験内容', l.experience], ...experienceFields(l)]),
+  );
+
+  // ⑧ ボランティア・社会活動（複数登録）
+  const volunteer = (a.volunteer ?? []).map((v) =>
+    joinFields([['活動内容', v.activityContent], ...experienceFields(v)]),
+  );
+
+  // ⑨ 海外経験
+  const ov = a.overseas ?? {};
+  const overseas = labeledLines([
+    ['内容', (ov as Record<string, unknown>).description],
+    ['期間', (ov as Record<string, unknown>).period],
+    ['学び', (ov as Record<string, unknown>).learning],
+  ]);
+
+  // ⑩ 資格
+  const certifications = (a.certifications ?? []).map((c) =>
+    joinFields([
+      ['資格', c.name],
+      ['スコア・級', c.score],
+      ['取得時期', c.acquiredDate],
+    ]),
+  );
+
+  // ⑪ ITスキル — "スキル名（レベル）"。レベル未選択なら名前のみ。
+  const itSkills = (a.itSkills ?? [])
+    .map((s) => {
+      const name = str(s.name);
+      if (name === '') return '';
+      const level = str(s.level);
+      return level !== '' ? `${name}（${level}）` : name;
+    });
+
+  // ⑫ 語学 — "言語（レベル）"。
+  const languages = (a.languages ?? [])
+    .map((l) => {
+      const lang = str(l.language);
+      if (lang === '') return '';
+      const level = str(l.level);
+      return level !== '' ? `${lang}（${level}）` : lang;
+    });
+
+  // ⑬⑭⑱ 自由記述（単一テキスト → 1 行 or 空）
+  const hobbies = str(a.hobbies) !== '' ? [str(a.hobbies)] : [];
+  const awards = str(a.awards) !== '' ? [str(a.awards)] : [];
+  const others = str(a.freeNote) !== '' ? [str(a.freeNote)] : [];
+
+  // ⑮ SNS・情報発信（複数登録）— 発信内容・継続性・得意分野・マーケ/発信力の根拠を渡す。
+  const snsActivities = (a.snsActivities ?? []).map((s) =>
+    joinFields([
+      ['プラットフォーム', s.platform],
+      ['アカウント', s.accountName],
+      ['URL', s.url],
+      ['内容・テーマ', s.theme],
+      ['運営期間', periodText(s.period)],
+      ['フォロワー/登録者数', s.followers],
+      ['月間PV/再生数', s.monthlyViews],
+      ['一番力を入れたこと', s.focusedEffort],
+      ['学び', s.learning],
+    ]),
+  );
+
+  // ⑯ ポートフォリオ・制作物（複数登録）— 技術スタック・課題解決力・デザイン/開発経験の根拠を渡す。
+  const portfolios = (a.portfolios ?? []).map((p) =>
+    joinFields([
+      ['サービス名', p.name],
+      ['種類', p.kind],
+      ['URL', p.url],
+      ['使用技術', p.techStack],
+      ['担当', p.role],
+      ['制作期間', periodText(p.period)],
+      ['概要', p.overview],
+      ['工夫', p.ingenuity],
+      ['成果', p.result],
+      ['学び', p.learning],
+    ]),
+  );
+
+  // ⑰ 人生経験
+  const le = a.lifeExperiences ?? {};
+  const lifeExperiences = labeledLines([
+    ['一番頑張った経験', (le as Record<string, unknown>).hardestEffort],
+    ['一番失敗した経験', (le as Record<string, unknown>).biggestFailure],
+    ['一番嬉しかった経験', (le as Record<string, unknown>).happiest],
+    ['一番悔しかった経験', (le as Record<string, unknown>).mostFrustrated],
+    ['挫折経験', (le as Record<string, unknown>).setback],
+    ['人生の転機', (le as Record<string, unknown>).turningPoint],
+    ['一番成長した経験', (le as Record<string, unknown>).mostGrowth],
+  ]);
+
   return {
-    studentActivities: dropEmpty(studentActivities),
+    personality,
+    academics,
     partTimeJobs: dropEmpty(partTimeJobs),
     internships: dropEmpty(internships),
-    studyAbroad: dropEmpty(studyAbroad),
-    research: dropEmpty(research),
+    clubActivities: dropEmpty(clubActivities),
+    projects: dropEmpty(projects),
+    leadership: dropEmpty(leadership),
     volunteer: dropEmpty(volunteer),
+    overseas,
     certifications: dropEmpty(certifications),
-    contests: dropEmpty(contests),
-    hobbies: dropEmpty(hobbies),
-    others: dropEmpty(others),
+    itSkills: dropEmpty(itSkills),
+    languages: dropEmpty(languages),
+    hobbies,
+    awards,
+    snsActivities: dropEmpty(snsActivities),
+    portfolios: dropEmpty(portfolios),
+    lifeExperiences,
+    others,
+  };
+}
+
+// ── 就活軸正規化 ──────────────────────────────────────────────────
+
+// CareerValues（/career/values の localStorage / Supabase 形状）を、就活 AI 向けの
+// CareerValuesContext に正規化する。未入力・部分データでも空配列・空文字で安全に埋める。
+// 本ファイルは constants（careerValuesCategories）に依存しない（選択肢の妥当性検証は
+// 保存層 careerValuesStorage が担保済み。ここでは型と空除去のみ行う純粋関数）。
+export function normalizeCareerValuesContext(
+  input: CareerValuesInput | null | undefined,
+): CareerValuesContext {
+  const v = input ?? {};
+  const sel: Partial<CareerValuesContext> = v.selections ?? {};
+  const notes: Partial<CareerValuesContext['notes']> = v.notes ?? {};
+
+  return {
+    priorities: strArray(sel.priorities),
+    avoidances: strArray(sel.avoidances),
+    industries: strArray(sel.industries),
+    jobTypes: strArray(sel.jobTypes),
+    workStyles: strArray(sel.workStyles),
+    companyTypes: strArray(sel.companyTypes),
+    careerGoals: strArray(sel.careerGoals),
+    culturePreferences: strArray(sel.culturePreferences),
+    notes: {
+      priorities: str(notes.priorities),
+      avoidances: str(notes.avoidances),
+      industries: str(notes.industries),
+      jobTypes: str(notes.jobTypes),
+      workStyles: str(notes.workStyles),
+      companyTypes: str(notes.companyTypes),
+      careerGoals: str(notes.careerGoals),
+      culturePreferences: str(notes.culturePreferences),
+    },
+    overallNote: str(v.overallNote),
   };
 }
 
@@ -220,6 +341,8 @@ export function buildCareerAiContext(params: {
   featureKey: CareerAiFeatureKey;
   profile?: CareerProfileInput | null;
   activity?: CareerActivityInput | null;
+  // 就活軸整理（/career/values）。未指定なら空コンテキストで埋める（後方互換）。
+  values?: CareerValuesInput | null;
   userInput?: string;
   metadata?: Partial<CareerAiContextMetadata>;
 }): CareerAiContext {
@@ -233,6 +356,7 @@ export function buildCareerAiContext(params: {
   return {
     profile: normalizeCareerProfileContext(params.profile),
     activity: normalizeCareerActivityContext(params.activity),
+    values: normalizeCareerValuesContext(params.values),
     featureKey: params.featureKey,
     userInput: str(params.userInput),
     metadata,

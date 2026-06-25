@@ -12,13 +12,16 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData } from '@/app/career/activity/activityStorage';
+import {
+  loadActivityData,
+  hasAnyActivity,
+} from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
+import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { appendMatchingLog } from './matchingStorage';
-import type { ActivityData } from '@/types/activity';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
 import type { CareerMatchingResult } from '@/types/careerMatching';
 
@@ -31,11 +34,6 @@ function newId(): string {
     return crypto.randomUUID();
   }
   return `cmatch-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-}
-
-function hasAnyActivity(activity: ActivityData | null): boolean {
-  if (!activity) return false;
-  return Object.values(activity).some((v) => Array.isArray(v) && v.length > 0);
 }
 
 // 直近の就活相談（最新スレッドの最後の assistant 結果）を取り出す。
@@ -58,6 +56,7 @@ function buildMatchingContext() {
   return {
     profile: loadBasicInfo(),
     activity: loadActivityData(),
+    values: loadCareerValues(),
     selfAnalysis: selfLogs.length > 0 ? selfLogs[0].result : null,
     es: esLogs.length > 0 ? esLogs[0].result : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,

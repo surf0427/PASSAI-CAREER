@@ -11,7 +11,11 @@ import {
   buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
-import type { CareerProfileInput, CareerActivityInput } from '@/lib/careerAi';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewTurn } from '@/types/careerInterview';
@@ -89,6 +93,7 @@ function renderEs(result: CareerEsResult | null | undefined): string {
 export type CareerInterviewContextInput = {
   profile?: CareerProfileInput | null;
   activity?: CareerActivityInput | null;
+  values?: CareerValuesInput | null;
   selfAnalysis?: CareerSelfAnalysisResult | null;
   es?: CareerEsResult | null;
   userInput?: string;
@@ -101,6 +106,7 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     featureKey: FEATURE_KEY,
     profile: input.profile ?? null,
     activity: input.activity ?? null,
+    values: input.values ?? null,
     userInput: input.userInput ?? '',
   });
 

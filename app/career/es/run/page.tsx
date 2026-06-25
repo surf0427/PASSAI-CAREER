@@ -2,7 +2,7 @@
 
 // PASSAI 就活版 — ES作成 実行画面（最小版）
 //
-// 入力: careerBasicFormData / careerActivityFormData / careerSelfAnalysisLogs（最新1件）を
+// 入力: careerBasicFormData / careerActivityData / careerSelfAnalysisLogs（最新1件）を
 //       localStorage から読む。
 // 実行: /api/career/es を呼び、結果を careerEsLogs に保存して結果画面へ遷移する。
 // DB / 課金 / usage には接続しない（localStorage のみ）。
@@ -15,11 +15,19 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData } from '@/app/career/activity/activityStorage';
+import {
+  loadActivityData,
+  hasAnyActivity,
+} from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
+import {
+  loadCareerValues,
+  isCareerValuesEmpty,
+} from '@/app/career/values/careerValuesStorage';
 import { appendEsLog } from '../esStorage';
 import type { BasicInfo } from '@/types/basicInfo';
-import type { ActivityData } from '@/types/activity';
+import type { CareerActivity } from '@/types/careerActivity';
+import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 
@@ -34,11 +42,6 @@ function newId(): string {
     return crypto.randomUUID();
   }
   return `ces-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-}
-
-function hasAnyActivity(activity: ActivityData | null): boolean {
-  if (!activity) return false;
-  return Object.values(activity).some((v) => Array.isArray(v) && v.length > 0);
 }
 
 export default function CareerEsRunPage() {
@@ -58,8 +61,13 @@ export default function CareerEsRunPage() {
     () => (isMounted ? loadBasicInfo() : null),
     [isMounted],
   );
-  const activity = useMemo<ActivityData | null>(
+  const activity = useMemo<CareerActivity | null>(
     () => (isMounted ? loadActivityData() : null),
+    [isMounted],
+  );
+  // 就活軸（/career/values）。ES に価値観・志望軸を反映させるため AI へ渡す。
+  const values = useMemo<CareerValues | null>(
+    () => (isMounted ? loadCareerValues() : null),
     [isMounted],
   );
   // 自己分析は最新1件を使う（appendSelfAnalysisLog が先頭に積む）。
@@ -71,6 +79,8 @@ export default function CareerEsRunPage() {
 
   const profileReady = !!basicInfo;
   const activityReady = hasAnyActivity(activity);
+  // 1 つでも選択 / 備考があれば「入力あり」とみなす簡易判定（自己分析画面と同方針）。
+  const valuesReady = !!values && !isCareerValuesEmpty(values);
   const selfAnalysisReady = !!selfAnalysis;
   const canRun = profileReady || activityReady;
 
@@ -85,6 +95,7 @@ export default function CareerEsRunPage() {
         body: JSON.stringify({
           profile: basicInfo,
           activity,
+          values,
           selfAnalysis,
           userInput,
         }),
@@ -122,6 +133,7 @@ export default function CareerEsRunPage() {
         <div className="grid grid-cols-2 gap-y-3 gap-x-4">
           <ReadyItem label="基本情報" ready={profileReady} href="/career/profile" />
           <ReadyItem label="活動整理" ready={activityReady} href="/career/activity" />
+          <ReadyItem label="就活軸" ready={valuesReady} href="/career/values" />
           <ReadyItem label="自己分析" ready={selfAnalysisReady} href="/career/self-analysis" />
         </div>
         {!canRun && (

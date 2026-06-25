@@ -16,6 +16,7 @@ import type {
   CareerAiFeatureKey,
   CareerProfileContext,
   CareerActivityContext,
+  CareerValuesContext,
 } from './types';
 import { CAREER_AI_FEATURE_LABELS } from './types';
 
@@ -119,15 +120,23 @@ function renderProfile(profile: CareerProfileContext): string {
 // 活動コンテキストを system prompt 用の可読テキストに整形する。
 function renderActivity(activity: CareerActivityContext): string {
   const sections: Array<[label: string, lines: string[]]> = [
-    ['学生時代の活動（部活・サークル）', activity.studentActivities],
+    ['MBTI・性格', activity.personality],
+    ['学業・学生時代の活動', activity.academics],
     ['アルバイト', activity.partTimeJobs],
     ['インターン', activity.internships],
-    ['留学', activity.studyAbroad],
-    ['研究・探究', activity.research],
-    ['ボランティア', activity.volunteer],
+    ['サークル・部活動', activity.clubActivities],
+    ['プロジェクト経験', activity.projects],
+    ['リーダー経験', activity.leadership],
+    ['ボランティア・社会活動', activity.volunteer],
+    ['海外経験', activity.overseas],
     ['資格', activity.certifications],
-    ['コンテスト', activity.contests],
-    ['趣味', activity.hobbies],
+    ['ITスキル', activity.itSkills],
+    ['語学', activity.languages],
+    ['趣味・特技', activity.hobbies],
+    ['表彰・実績', activity.awards],
+    ['SNS・情報発信', activity.snsActivities],
+    ['ポートフォリオ・制作物', activity.portfolios],
+    ['人生経験', activity.lifeExperiences],
     ['その他', activity.others],
   ];
 
@@ -138,8 +147,43 @@ function renderActivity(activity: CareerActivityContext): string {
   return rendered.length > 0 ? rendered.join('\n') : '- （活動・経験は未入力）';
 }
 
+// 就活軸整理（/career/values）を system prompt 用の可読テキストに整形する。
+// 何も入力が無ければ null を返し、呼び出し側はブロック自体を出さない
+//   → 就活軸未入力の既存ユーザーでは prompt が従来と完全一致し、AI 挙動・cache に影響しない。
+function renderValues(values: CareerValuesContext): string | null {
+  const lines: string[] = [];
+  const pushList = (label: string, items: string[]) => {
+    if (items.length > 0) lines.push(`- ${label}: ${items.join('、')}`);
+  };
+  const pushNote = (label: string, note: string) => {
+    if (note.trim() !== '') lines.push(`- ${label}（補足）: ${note.trim()}`);
+  };
+
+  pushList('重視する条件', values.priorities);
+  pushNote('重視する条件', values.notes.priorities);
+  pushList('避けたい条件', values.avoidances);
+  pushNote('避けたい条件', values.notes.avoidances);
+  pushList('興味ある業界', values.industries);
+  pushNote('興味ある業界', values.notes.industries);
+  pushList('興味ある職種', values.jobTypes);
+  pushNote('興味ある職種', values.notes.jobTypes);
+  pushList('働き方の希望', values.workStyles);
+  pushNote('働き方の希望', values.notes.workStyles);
+  pushList('会社タイプ', values.companyTypes);
+  pushNote('会社タイプ', values.notes.companyTypes);
+  pushList('キャリア志向', values.careerGoals);
+  pushNote('キャリア志向', values.notes.careerGoals);
+  pushList('人間関係・社風', values.culturePreferences);
+  pushNote('人間関係・社風', values.notes.culturePreferences);
+  if (values.overallNote.trim() !== '') {
+    lines.push(`- 総合備考: ${values.overallNote.trim()}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
 // 就活版 AI の共通 system prompt を組み立てる。
-// 基本方針 + 機能別指示 + 学生プロフィール + 活動経験 + ユーザー入力（あれば）を 1 つにまとめる。
+// 基本方針 + 機能別指示 + 学生プロフィール + 活動経験 + 就活軸（入力があれば）+ ユーザー入力（あれば）を 1 つにまとめる。
 export function buildCareerSystemPrompt(context: CareerAiContext): string {
   const featureLabel = CAREER_AI_FEATURE_LABELS[context.featureKey];
 
@@ -150,6 +194,12 @@ export function buildCareerSystemPrompt(context: CareerAiContext): string {
     `# 学生プロフィール\n${renderProfile(context.profile)}`,
     `# 活動・経験\n${renderActivity(context.activity)}`,
   ];
+
+  // 就活軸整理は「入力があるときだけ」セクションを足す（未入力ユーザーへの影響ゼロ）。
+  const valuesBlock = renderValues(context.values);
+  if (valuesBlock) {
+    blocks.push(`# 就活軸（重視・回避・志向）\n${valuesBlock}`);
+  }
 
   if (context.userInput.trim() !== '') {
     blocks.push(`# ユーザーからの入力・相談\n${context.userInput.trim()}`);

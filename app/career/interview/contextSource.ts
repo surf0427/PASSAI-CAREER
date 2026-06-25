@@ -4,31 +4,36 @@
 //
 // 受験版 app/interview/ai/sourceData.ts に相当するが、就活版の localStorage キーからのみ読む。
 //   - careerBasicFormData      → profile
-//   - careerActivityFormData   → activity
+//   - careerActivityData   → activity
 //   - careerSelfAnalysisLogs[0] → selfAnalysis（最新）
 //   - careerEsLogs[0]          → es（最新）
 // 受験版ストレージ・DB・Supabase は一切参照しない。
 
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData } from '@/app/career/activity/activityStorage';
+import {
+  loadActivityData,
+  hasAnyActivity,
+} from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { loadEsLogs } from '@/app/career/es/esStorage';
+import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import type { BasicInfo } from '@/types/basicInfo';
-import type { ActivityData } from '@/types/activity';
+import type { CareerActivity } from '@/types/careerActivity';
+import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 
 export type CareerInterviewContextPayload = {
   profile: BasicInfo | null;
-  activity: ActivityData | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
   selfAnalysis: CareerSelfAnalysisResult | null;
   es: CareerEsResult | null;
 };
 
-export function hasAnyActivity(activity: ActivityData | null): boolean {
-  if (!activity) return false;
-  return Object.values(activity).some((v) => Array.isArray(v) && v.length > 0);
-}
+// readiness 判定は activityStorage の hasAnyActivity を正本として再エクスポートする
+// （interview/page.tsx・interview/setup/page.tsx が本モジュール経由で参照する）。
+export { hasAnyActivity };
 
 // 面接AI API に渡す入力コンテキストを localStorage から組み立てる。
 export function buildInterviewContextPayload(): CareerInterviewContextPayload {
@@ -37,6 +42,7 @@ export function buildInterviewContextPayload(): CareerInterviewContextPayload {
   return {
     profile: loadBasicInfo(),
     activity: loadActivityData(),
+    values: loadCareerValues(),
     selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
     es: esLogs.length > 0 ? esLogs[0].result : null,
   };
