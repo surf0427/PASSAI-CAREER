@@ -23,7 +23,7 @@ import { loadConsultationThreads } from '@/app/career/consultation/consultationS
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { appendMatchingLog } from './matchingStorage';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
-import type { CareerMatchingResult } from '@/types/careerMatching';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -117,7 +117,7 @@ export default function CareerMatchingStartPage() {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
         throw new Error(data?.detail ?? 'マッチングの生成に失敗しました。');
       }
-      const data = (await res.json()) as { result: CareerMatchingResult };
+      const data = (await res.json()) as { result: CareerMatchEngineResult };
       appendMatchingLog({
         id: newId(),
         createdAt: new Date().toISOString(),

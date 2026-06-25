@@ -1,10 +1,11 @@
-// PASSAI 就活版 — 企業マッチングAI API（最小・ステートレス）
+// PASSAI 就活版 — 企業マッチングAI API（決定的スコアリングエンジン版）
 //
 // 就活版独自のコア機能。受験版のコピーではない。
-//   - プロフィール・活動・自己分析・ES・面接・相談の結果を統合し、企業との相性をスコアリングする。
-//   - 「おすすめ企業」ではなく「企業マッチング」: 企業名の羅列ではなく「なぜ向いているのか」を可視化する。
+//   - プロフィール・活動・自己分析・ES・面接・相談の結果を統合し、企業との相性を可視化する。
+//   - 【スコア契約】AI は小スコア（AiMatchingSignal）と根拠のみ返す。総合スコア・順位・
+//     不足優先度・ロードマップはすべてサーバ側の決定的エンジン（@/lib/careerMatching）が計算する。
+//     AI が score / total / 順位を返してもサーバは一切採用しない。
 //   - 課金 / quota / usage / DB / Supabase / Stripe には一切接続しない（localStorage のみ）。
-//   - プロンプトは就活版共通基盤（@/lib/careerAi）経由（featureKey=career-company-matching）。
 //   - Web 検索は常時実装しない。実在しない企業の生成・年収/福利厚生の断定は禁止。
 
 import {
@@ -21,7 +22,23 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
-import type { CareerMatchingResult, CareerCompanyMatch } from '@/types/careerMatching';
+import {
+  runCareerMatch,
+  deriveMatchWeights,
+  normalizeBarTier,
+  clampScore,
+  COMPANY_FLAG_VOCAB,
+  MATCH_AXES,
+  SUCCESS_AXES,
+  CAREER_MATCHING_SCHEMA_VERSION,
+  READINESS_DISCLAIMER,
+} from '@/lib/careerMatching';
+import type {
+  CompanyEngineInput,
+  ScoreSignal,
+  EngineInput,
+  CareerMatchEngineResult,
+} from '@/lib/careerMatching';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -31,56 +48,66 @@ export const maxDuration = 80;
 
 const MAX_COMPANIES = 5;
 
-// マッチングアナリストとしての役割・評価軸・企業選定ルール（共通基盤の上に重ねる）。
+const MATCH_KEYS = MATCH_AXES.map((a) => `match:${a}`);
+const SUCCESS_KEYS = SUCCESS_AXES.map((a) => `success:${a}`);
+// AI が判断してよい readiness シグナル（質的データから推定するもののみ）。
+// SPI/プレゼン/語学/資格は measured（データ有無）でサーバが扱うので AI には判断させない。
+const AI_READINESS_KEYS = ['readiness:es', 'readiness:interview', 'readiness:self_understanding'];
+const FLAG_SET = new Set(COMPANY_FLAG_VOCAB);
+
+// ── マッチングアナリストとしての役割・出力契約 ──
 const MATCHING_PERSONA = [
   'あなたは新卒就活専門のキャリアアドバイザー兼マッチングアナリストです。',
   'プロフィール・活動・自己分析・ES・面接・相談の結果を統合し、本人と企業の「相性」を分析します。',
   '',
-  '【最重要】これは「おすすめ企業の羅列」ではなく「企業マッチング」です。',
-  '企業名を挙げるだけでなく、「なぜ向いているのか」を必ず根拠とともに可視化してください。',
-  '',
-  '【評価軸（相性の分析にこれらの観点を用いる）】',
-  '価値観 / 強み / 働き方 / 興味 / スキル / コミュニケーション傾向 / 成長志向 / 裁量権志向 /',
-  'チーム志向 / 国際志向 / 安定志向 / 挑戦志向。',
+  '【最重要・スコア契約】',
+  '- あなたは「総合点」「順位」「合否」「内定可能性」を一切出力してはいけません。',
+  '- あなたが返すのは各観点の小スコア（0〜100）と、その根拠だけです。',
+  '- 総合スコア・順位・不足優先度はサーバが計算します。',
   '',
   '【企業選定ルール】',
-  `- 提案は最大 ${MAX_COMPANIES} 社。日本国内の企業を中心とする。`,
-  '- 実在する企業のみを挙げる。実在しない企業・架空の企業名は絶対に生成しない。',
-  '- 大手のみ / ベンチャーのみに偏らせない。規模をバランスよく混ぜる。',
-  '- 業界を分散させる（同一業界に偏らせない）。',
-  '- 根拠が弱い企業は company 名に「（候補）」を付けて明示する。',
-  '',
-  '【禁止・注意】',
-  '- 年収・給与・福利厚生などの待遇は断定しない（必要なら公式情報での確認を促す）。',
-  '- 事業内容・選考フロー等、事実確認が必要な情報は断定しない。',
-  '- 各社について matchReasons（マッチ理由）を必ず 1 つ以上提示する（理由の無い企業は出さない）。',
+  `- 提案は最大 ${MAX_COMPANIES} 社。実在する日本国内企業のみ。架空企業は絶対に生成しない。`,
+  '- 大手/ベンチャーを偏らせず、業界を分散させる。',
+  '- 各社に matchReasons（なぜ向いているか）を必ず 1 つ以上付ける（根拠の無い企業は出さない）。',
+  '- 年収・福利厚生・選考フロー等の事実は断定しない（必要なら公式情報での確認を促す）。',
 ].join('\n');
 
-// 出力 JSON スキーマの指示。
+function signalKeyList(): string {
+  return [...MATCH_KEYS, ...AI_READINESS_KEYS, ...SUCCESS_KEYS].join(' / ');
+}
+
 const OUTPUT_FORMAT_INSTRUCTION = [
   '# 出力形式（厳守）',
-  '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
-  '各フィールドは日本語。配列は該当が無ければ空配列 [] にする（キーは省略しない）。',
-  'score は 0〜100 の数値（相性の高さ）。companyMatches は最大 5 件。',
+  '出力は次の JSON オブジェクトのみ。前後に説明文やコードブロック記号を付けない。',
+  '各 value は 0〜100 の数値。配列は該当が無ければ空配列 []（キーは省略しない）。',
   '',
   '{',
-  '  "profileSummary": string,        // 本人の総括（マッチングの前提）',
+  '  "profileSummary": string,        // 本人の総括',
   '  "careerType": string,            // タイプ分類（例: 裁量重視の挑戦型）',
-  '  "recommendedIndustries": string[], // 向いている業界（分散させる）',
-  '  "recommendedJobs": string[],     // 向いている職種',
-  '  "companyMatches": [',
-  '    {',
-  '      "company": string,           // 実在する日本国内企業（弱い根拠なら「（候補）」を付す）',
-  '      "score": number,             // 0〜100',
-  '      "matchReasons": string[],    // なぜ向いているのか（必須・1つ以上）',
-  '      "strengthsUsed": string[],   // この企業で活きる本人の強み',
-  '      "attentionPoints": string[], // 見極めるべき留意点（待遇は断定しない）',
-  '      "nextActions": string[]      // この企業に向けた次の具体アクション',
-  '    }',
-  '  ],',
+  '  "recommendedIndustries": string[],',
+  '  "recommendedJobs": string[],',
   '  "developmentAreas": string[],    // 伸ばすべき領域',
-  '  "nextSteps": string[]            // 全体としての次の一歩',
+  '  "nextSteps": string[],           // 全体の次の一歩',
+  '  "companies": [',
+  '    {',
+  '      "company": string,           // 実在する日本国内企業',
+  '      "selectionTier": "S"|"A"|"B"|"C", // 選考難易度の推測（S=最難関）',
+  `      "companyFlags": string[],    // 次の語彙のみ: ${COMPANY_FLAG_VOCAB.join(', ')}`,
+  '      "signals": [                 // 小スコアのみ。総合点は出さない',
+  `        { "key": string, "value": number, "rationale": string, "source": "ai_inferred" }`,
+  '      ],',
+  '      "matchReasons": string[],    // なぜ向いているか（必須・1つ以上・本人データを引用）',
+  '      "strengthsUsed": string[],',
+  '      "attentionPoints": string[], // 留意点（待遇は断定しない）',
+  '      "nextActions": string[]',
+  '    }',
+  '  ]',
   '}',
+  '',
+  `signals.key に使える値（これ以外は無視されます）: ${signalKeyList()}`,
+  '- match:* … 企業と本人の相性（価値観/社風/働き方/成長/安定/待遇志向/業界職種の一致）',
+  '- readiness:* … 本人の選考準備度（ES/面接/自己理解）。SPI・語学等はサーバが扱うので出さない',
+  '- success:* … 入社後の活躍可能性（強み/社風適応/動機/ストレス相性/成長志向）',
 ].join('\n');
 
 function str(value: unknown): string {
@@ -92,28 +119,20 @@ function strArray(value: unknown): string[] {
   return value.map((v) => str(v)).filter((v) => v !== '');
 }
 
-function clampScore(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return Math.min(100, Math.max(0, Math.round(n)));
-}
-
-// ── 統合コンテキストの整形（各機能の最新結果を可読テキストに） ──
+// ── 統合コンテキストの整形（AI へ渡す可読テキスト） ──
 function renderSelfAnalysis(r: CareerSelfAnalysisResult | null | undefined): string {
   if (!r) return '';
   const lines: string[] = [];
   if (str(r.summary)) lines.push(`- 全体所感: ${str(r.summary)}`);
-  // v2 構造化フィールド（旧ログには無いので ?. で防御）。マッチングの相性根拠に直結するため優先反映。
   if (str(r.careerDirection)) lines.push(`- キャリアの方向性: ${str(r.careerDirection)}`);
   if (r.strengths?.length) lines.push(`- 強み: ${r.strengths.join('、')}`);
   if (r.strengthKeywords?.length) lines.push(`- 強みキーワード: ${r.strengthKeywords.join('、')}`);
   if (r.valueKeywords?.length) lines.push(`- 価値観キーワード: ${r.valueKeywords.join('、')}`);
+  if (r.motivationSources?.length) lines.push(`- モチベーションの源泉: ${r.motivationSources.join('、')}`);
+  if (r.stressFactors?.length) lines.push(`- ストレス要因: ${r.stressFactors.join('、')}`);
   if (r.weaknesses?.length) lines.push(`- 弱み: ${r.weaknesses.join('、')}`);
-  if (r.recommendedIndustries?.length) lines.push(`- 向いている業界: ${r.recommendedIndustries.join('、')}`);
-  if (r.recommendedJobs?.length) lines.push(`- 向いている職種: ${r.recommendedJobs.join('、')}`);
   if (r.suitableEnvironment?.length) lines.push(`- 向いている環境: ${r.suitableEnvironment.join('、')}`);
   if (r.companySelectionCriteria?.length) lines.push(`- 企業選びの条件: ${r.companySelectionCriteria.join('、')}`);
-  if (r.gakuchikaIdeas?.length) lines.push(`- ガクチカ候補: ${r.gakuchikaIdeas.join('、')}`);
   return lines.join('\n');
 }
 
@@ -143,33 +162,165 @@ function renderConsultation(r: CareerConsultationResult | null | undefined): str
   return lines.join('\n');
 }
 
-function normalizeCompany(raw: unknown): CareerCompanyMatch {
-  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return {
-    company: str(c.company),
-    score: clampScore(c.score),
-    matchReasons: strArray(c.matchReasons),
-    strengthsUsed: strArray(c.strengthsUsed),
-    attentionPoints: strArray(c.attentionPoints),
-    nextActions: strArray(c.nextActions),
-  };
+// ── measured readiness（データの有無から決定的に算出。AI を通さない） ──
+function countExperiences(activity: CareerActivityInput | null | undefined): number {
+  if (!activity) return 0;
+  const groups = [
+    activity.internships,
+    activity.partTimeJobs,
+    activity.club,
+    activity.projects,
+    activity.leadership,
+    activity.volunteer,
+  ];
+  let count = 0;
+  for (const g of groups) {
+    if (!Array.isArray(g)) continue;
+    for (const e of g) {
+      if (!e || typeof e !== 'object') continue;
+      const rec = e as Record<string, unknown>;
+      if (str(rec.quantitativeResult) || str(rec.ingenuity) || str(rec.role)) count++;
+    }
+  }
+  return count;
 }
 
-function normalizeResult(raw: unknown): CareerMatchingResult {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const companies = Array.isArray(r.companyMatches) ? r.companyMatches : [];
+function buildMeasuredReadiness(activity: CareerActivityInput | null | undefined): ScoreSignal[] {
+  const signals: ScoreSignal[] = [];
+
+  // ガクチカ・実績: エピソード数から決定的に算出。
+  const expCount = countExperiences(activity);
+  if (expCount > 0) {
+    signals.push({
+      key: 'readiness:gakuchika',
+      value: Math.min(100, 45 + expCount * 12),
+      present: true,
+      source: 'measured',
+      rationale: `活動整理に内容のあるエピソードが ${expCount} 件`,
+    });
+  }
+
+  // 語学・英語: 語学エントリ or 英語系資格の有無。
+  const hasLanguages = Array.isArray(activity?.languages) && activity!.languages!.length > 0;
+  const certs = Array.isArray(activity?.certifications) ? activity!.certifications! : [];
+  const hasEnglishCert = certs.some((c) => {
+    const name = c && typeof c === 'object' ? str((c as Record<string, unknown>).name) : '';
+    return /TOEIC|英語|英検|TOEFL|IELTS/i.test(name);
+  });
+  if (hasLanguages || hasEnglishCert) {
+    signals.push({
+      key: 'readiness:english',
+      value: 60,
+      present: true,
+      source: 'measured',
+      rationale: '語学・英語系の登録あり（レベルは要確認）',
+    });
+  }
+
+  // 資格・スキル: 資格 or IT スキルの有無。
+  const hasCerts = certs.length > 0;
+  const hasItSkills = Array.isArray(activity?.itSkills) && activity!.itSkills!.length > 0;
+  if (hasCerts || hasItSkills) {
+    signals.push({
+      key: 'readiness:certifications',
+      value: 60,
+      present: true,
+      source: 'measured',
+      rationale: '資格・スキルの登録あり',
+    });
+  }
+
+  // SPI・プレゼンは就活版 MVP ではデータ源が無い → 欠損（present:false）。
+  signals.push({
+    key: 'readiness:spi',
+    value: 0,
+    present: false,
+    source: 'absent',
+    rationale: 'SPI・適性検査のデータが未取得',
+  });
+  signals.push({
+    key: 'readiness:presentation',
+    value: 0,
+    present: false,
+    source: 'absent',
+    rationale: 'プレゼンのデータが未取得',
+  });
+
+  return signals;
+}
+
+// ── AI 出力 → エンジン入力への正規化（AI の総合点・順位は採用しない） ──
+type RawAiCompany = {
+  company?: unknown;
+  selectionTier?: unknown;
+  companyFlags?: unknown;
+  signals?: unknown;
+  matchReasons?: unknown;
+  strengthsUsed?: unknown;
+  attentionPoints?: unknown;
+  nextActions?: unknown;
+};
+
+function normalizeAiSignals(
+  raw: unknown,
+  allowedKeys: string[],
+): ScoreSignal[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: ScoreSignal[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const key = str(rec.key);
+    if (!allowedKeys.includes(key) || seen.has(key)) continue;
+    seen.add(key);
+    const sourceRaw = str(rec.source);
+    const source: ScoreSignal['source'] =
+      sourceRaw === 'user_input' || sourceRaw === 'verified_fact' ? sourceRaw : 'ai_inferred';
+    out.push({
+      key,
+      value: clampScore(rec.value),
+      present: true,
+      source,
+      rationale: str(rec.rationale),
+    });
+  }
+  return out;
+}
+
+// measured を優先し、AI の readiness は measured に無いキーだけ採用する。
+function mergeReadiness(measured: ScoreSignal[], aiSignals: ScoreSignal[]): ScoreSignal[] {
+  const byKey = new Map<string, ScoreSignal>();
+  for (const s of measured) byKey.set(s.key, s);
+  for (const s of aiSignals) {
+    if (s.key.startsWith('readiness:') && !byKey.has(s.key)) byKey.set(s.key, s);
+  }
+  return Array.from(byKey.values());
+}
+
+function normalizeCompany(raw: RawAiCompany, measuredReadiness: ScoreSignal[]): CompanyEngineInput | null {
+  const company = str(raw.company);
+  const matchReasons = strArray(raw.matchReasons);
+  if (company === '' || matchReasons.length === 0) return null;
+
+  const allAiSignals = Array.isArray(raw.signals) ? raw.signals : [];
+  const matchSignals = normalizeAiSignals(allAiSignals, MATCH_KEYS);
+  const successSignals = normalizeAiSignals(allAiSignals, SUCCESS_KEYS);
+  const aiReadiness = normalizeAiSignals(allAiSignals, AI_READINESS_KEYS);
+
+  const companyFlags = strArray(raw.companyFlags).filter((f) => FLAG_SET.has(f));
+
   return {
-    profileSummary: str(r.profileSummary),
-    careerType: str(r.careerType),
-    recommendedIndustries: strArray(r.recommendedIndustries),
-    recommendedJobs: strArray(r.recommendedJobs),
-    companyMatches: companies
-      .map(normalizeCompany)
-      // 企業名と理由がある社のみ採用（理由の無い企業は出さない）。
-      .filter((c) => c.company !== '' && c.matchReasons.length > 0)
-      .slice(0, MAX_COMPANIES),
-    developmentAreas: strArray(r.developmentAreas),
-    nextSteps: strArray(r.nextSteps),
+    company,
+    matchSignals,
+    readinessSignals: mergeReadiness(measuredReadiness, aiReadiness),
+    successSignals,
+    barTier: normalizeBarTier(raw.selectionTier),
+    companyFlags,
+    matchReasons,
+    strengthsUsed: strArray(raw.strengthsUsed),
+    attentionPoints: strArray(raw.attentionPoints),
+    nextActions: strArray(raw.nextActions),
   };
 }
 
@@ -195,7 +346,6 @@ export async function POST(req: Request) {
   const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
   const hasActivity = !!b.activity && Object.keys(b.activity).length > 0;
   const hasSelfAnalysis = !!b.selfAnalysis;
-  // マッチングは判断材料が必要。プロフィール/活動/自己分析のいずれも無ければ弾く。
   if (!hasProfile && !hasActivity && !hasSelfAnalysis) {
     return Response.json(
       { error: '基本情報・活動整理・自己分析のいずれかを入力してください。' },
@@ -210,6 +360,16 @@ export async function POST(req: Request) {
     values: b.values ?? null,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
+
+  // ── 決定的な重み・避けたい条件・measured シグナル（AI を通さない） ──
+  const priorities = Array.isArray(b.values?.selections?.priorities)
+    ? (b.values!.selections!.priorities as string[])
+    : [];
+  const avoidances = Array.isArray(b.values?.selections?.avoidances)
+    ? (b.values!.selections!.avoidances as string[])
+    : [];
+  const matchWeights = deriveMatchWeights(priorities);
+  const measuredReadiness = buildMeasuredReadiness(b.activity);
 
   const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
   const esBlock = renderEs(b.es);
@@ -232,17 +392,26 @@ export async function POST(req: Request) {
   const userMessage = [
     buildCareerFeatureInstruction(FEATURE_KEY),
     '',
-    '上記の統合情報をもとに企業マッチングを行い、指定の JSON 形式で結果のみを出力してください。',
-    '各企業について「なぜ向いているのか」を必ず根拠付きで示してください。',
+    '上記の統合情報をもとに、各企業の小スコア（signals）と根拠を指定 JSON で出力してください。',
+    '総合点・順位は出さないでください（サーバが計算します）。',
   ].join('\n');
 
   try {
-    let result: CareerMatchingResult | null = null;
+    let companies: CompanyEngineInput[] | null = null;
+    let meta: {
+      profileSummary: string;
+      careerType: string;
+      recommendedIndustries: string[];
+      recommendedJobs: string[];
+      developmentAreas: string[];
+      nextSteps: string[];
+    } | null = null;
+
     for (let attempt = 1; attempt <= 2; attempt++) {
       const message = await anthropic.messages.create(
         {
           model: MODEL,
-          max_tokens: 3500,
+          max_tokens: 4000,
           temperature: attempt === 2 ? 0 : 0.5,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
@@ -260,7 +429,20 @@ export async function POST(req: Request) {
       }
 
       try {
-        result = normalizeResult(JSON.parse(extractJson(raw)));
+        const parsed = JSON.parse(extractJson(raw)) as Record<string, unknown>;
+        const rawCompanies = Array.isArray(parsed.companies) ? parsed.companies : [];
+        companies = rawCompanies
+          .map((c) => normalizeCompany(c as RawAiCompany, measuredReadiness))
+          .filter((c): c is CompanyEngineInput => c !== null)
+          .slice(0, MAX_COMPANIES);
+        meta = {
+          profileSummary: str(parsed.profileSummary),
+          careerType: str(parsed.careerType),
+          recommendedIndustries: strArray(parsed.recommendedIndustries),
+          recommendedJobs: strArray(parsed.recommendedJobs),
+          developmentAreas: strArray(parsed.developmentAreas),
+          nextSteps: strArray(parsed.nextSteps),
+        };
         break;
       } catch {
         if (attempt === 1) continue;
@@ -271,12 +453,31 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!result) {
+    if (!companies || !meta) {
       return Response.json(
         { error: 'AI_MATCHING_PARSE_FAILED', detail: 'AI応答を解釈できませんでした。' },
         { status: 502 },
       );
     }
+
+    // ── 決定的エンジンで総合スコア・順位・不足優先度・ロードマップを計算 ──
+    const engineInput: EngineInput = {
+      profile: { matchWeights, avoidances, schemaVersion: CAREER_MATCHING_SCHEMA_VERSION },
+      companies,
+    };
+    const scoredCompanies = runCareerMatch(engineInput);
+
+    const result: CareerMatchEngineResult = {
+      schemaVersion: CAREER_MATCHING_SCHEMA_VERSION,
+      profileSummary: meta.profileSummary,
+      careerType: meta.careerType,
+      recommendedIndustries: meta.recommendedIndustries,
+      recommendedJobs: meta.recommendedJobs,
+      developmentAreas: meta.developmentAreas,
+      nextSteps: meta.nextSteps,
+      companies: scoredCompanies,
+      readinessDisclaimer: READINESS_DISCLAIMER,
+    };
 
     return Response.json({ result });
   } catch (error) {

@@ -17,6 +17,7 @@
     "qa:diagnosisScoring": "npx tsx scripts/diagnosis-scoring-qa.ts",
     "qa:examDiagnosis": "npx tsx scripts/exam-diagnosis-scoring-qa.ts",
     "qa:diagnosis": "npm run qa:diagnosisScoring && npm run qa:diagnosisTaxonomy && npm run qa:examDiagnosis",
+    "qa:careerMatching": "npx tsx scripts/qa-career-matching.ts",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"
   },
   "dependencies": {
