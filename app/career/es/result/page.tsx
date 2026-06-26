@@ -5,12 +5,18 @@
 // careerEsLogs（localStorage）から結果を読み、一覧（日時）＋選択中の詳細を表示する。
 // 既定では最新（先頭）を選択。DB / 課金 / usage には接続しない。
 
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  useMemo,
+  useState,
+  useCallback,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { loadEsLogs } from '../esStorage';
-import type { CareerEsLog } from '@/types/careerEs';
+import { loadEsLogs, updateEsLog } from '../esStorage';
+import type { CareerEsLog, CareerEsResult } from '@/types/careerEs';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -24,10 +30,13 @@ export default function CareerEsResultPage() {
     getMountedServerSnapshot,
   );
 
+  // localStorage 書き込み（お気に入り / 提出済みトグル）後に再読込するためのバージョン。
+  const [version, setVersion] = useState(0);
+
   // null = hydration 前 / 未読込。読み込み後は配列（最新が先頭）。
   const logs = useMemo<CareerEsLog[] | null>(
     () => (isMounted ? loadEsLogs() : null),
-    [isMounted],
+    [isMounted, version],
   );
 
   // 選択中の ID。未選択（null）なら最新（先頭）を表示する。
@@ -36,6 +45,27 @@ export default function CareerEsResultPage() {
     if (!logs || logs.length === 0) return null;
     return logs.find((l) => l.id === selectedId) ?? logs[0];
   }, [logs, selectedId]);
+
+  // コピー成功表示用（直近にコピーした論理ブロックのキー）。
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopy = useCallback((key: string, text: string) => {
+    if (!text || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => setCopiedKey(key))
+      .catch(() => setCopiedKey(null));
+  }, []);
+
+  const toggleFavorite = useCallback((log: CareerEsLog) => {
+    updateEsLog(log.id, { favorite: !log.favorite });
+    setVersion((v) => v + 1);
+  }, []);
+
+  const toggleSubmitted = useCallback((log: CareerEsLog) => {
+    updateEsLog(log.id, { submitted: !log.submitted });
+    setVersion((v) => v + 1);
+  }, []);
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -79,10 +109,21 @@ export default function CareerEsResultPage() {
                       }`}
                     >
                       <span className="font-semibold">{formatDate(log.createdAt)}</span>
-                      {log.result.headline && (
+                      {logLabel(log) && (
                         <span className={active ? 'text-blue-100' : 'text-slate-400'}>
                           {' '}
-                          — {log.result.headline}
+                          — {logLabel(log)}
+                        </span>
+                      )}
+                      {(log.favorite || log.submitted) && (
+                        <span className="ml-1">
+                          {log.favorite && <span title="お気に入り">★</span>}
+                          {log.submitted && (
+                            <span className={active ? 'text-blue-100' : 'text-emerald-600'}>
+                              {' '}
+                              提出済み
+                            </span>
+                          )}
                         </span>
                       )}
                     </button>
@@ -94,17 +135,59 @@ export default function CareerEsResultPage() {
 
           {selected && (
             <>
-              <p className="text-xs text-slate-400 mb-4">
-                生成日時: {formatDate(selected.createdAt)}
-              </p>
+              {/* メタ情報 + 管理トグル（企業名 / 設問 / 文字数 / お気に入り / 提出済み）。 */}
+              <Card variant="soft" padding="md" className="mb-4">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="text-xs text-slate-400">
+                    生成日時: {formatDate(selected.createdAt)}
+                  </p>
+                  <div className="flex gap-2">
+                    <ToggleButton
+                      active={!!selected.favorite}
+                      activeLabel="★ お気に入り"
+                      inactiveLabel="☆ お気に入り"
+                      onClick={() => toggleFavorite(selected)}
+                    />
+                    <ToggleButton
+                      active={!!selected.submitted}
+                      activeLabel="提出済み ✓"
+                      inactiveLabel="提出済みにする"
+                      onClick={() => toggleSubmitted(selected)}
+                    />
+                  </div>
+                </div>
+                {(selected.companyName || selected.question || selected.charLimit) && (
+                  <div className="grid grid-cols-1 gap-1.5 pt-2 border-t border-slate-200">
+                    {selected.companyName && (
+                      <MetaRow label="企業名" value={selected.companyName} />
+                    )}
+                    {selected.question && (
+                      <MetaRow label="設問" value={selected.question} />
+                    )}
+                    {selected.charLimit && (
+                      <MetaRow label="指定文字数" value={`${selected.charLimit} 字`} />
+                    )}
+                  </div>
+                )}
+              </Card>
 
-              <TextSection title="キャッチコピー" body={selected.result.headline} />
-              <TextSection title="ガクチカ" body={selected.result.gakuchika} />
-              <TextSection title="自己PR" body={selected.result.selfPr} />
-              <TextSection title="志望動機" body={selected.result.motivation} />
-              <ListSection title="企業へのアピールポイント" items={selected.result.appealPoints} />
-              <ListSection title="面接で深掘りされそうな点" items={selected.result.interviewQuestions} />
-              <ListSection title="改善点" items={selected.result.improvements} />
+              {/* 設問モード（answer あり）は回答を優先表示。それ以外は従来の 7 フィールド。 */}
+              {selected.result.answer ? (
+                <TextSection
+                  title="回答"
+                  body={selected.result.answer}
+                  copyKey={`${selected.id}-answer`}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              ) : (
+                <SevenFieldResult
+                  result={selected.result}
+                  logId={selected.id}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              )}
             </>
           )}
         </>
@@ -134,20 +217,128 @@ function formatDate(iso: string): string {
   return d.toLocaleString('ja-JP');
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+// 一覧での 1 行ラベル。企業名 → 設問（先頭） → キャッチコピー の優先で短く表示する。
+function logLabel(log: CareerEsLog): string {
+  if (log.companyName) return log.companyName;
+  const q = log.question ?? '';
+  if (q) return q.length > 24 ? `${q.slice(0, 24)}…` : q;
+  return log.result.headline ?? '';
+}
+
+// 設問モードでない従来ログの 7 フィールド表示。answer が無いログはこれで描画する。
+function SevenFieldResult({
+  result,
+  logId,
+  copiedKey,
+  onCopy,
+}: {
+  result: CareerEsResult;
+  logId: string;
+  copiedKey: string | null;
+  onCopy: (key: string, text: string) => void;
+}) {
+  return (
+    <>
+      <TextSection title="キャッチコピー" body={result.headline} copyKey={`${logId}-headline`} copiedKey={copiedKey} onCopy={onCopy} />
+      <TextSection title="ガクチカ" body={result.gakuchika} copyKey={`${logId}-gakuchika`} copiedKey={copiedKey} onCopy={onCopy} />
+      <TextSection title="自己PR" body={result.selfPr} copyKey={`${logId}-selfPr`} copiedKey={copiedKey} onCopy={onCopy} />
+      <TextSection title="志望動機" body={result.motivation} copyKey={`${logId}-motivation`} copiedKey={copiedKey} onCopy={onCopy} />
+      <ListSection title="企業へのアピールポイント" items={result.appealPoints} />
+      <ListSection title="面接で深掘りされそうな点" items={result.interviewQuestions} />
+      <ListSection title="改善点" items={result.improvements} />
+    </>
+  );
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2 text-xs">
+      <span className="shrink-0 text-slate-400">{label}</span>
+      <span className="text-slate-700 whitespace-pre-wrap break-words">{value}</span>
+    </div>
+  );
+}
+
+function ToggleButton({
+  active,
+  activeLabel,
+  inactiveLabel,
+  onClick,
+}: {
+  active: boolean;
+  activeLabel: string;
+  inactiveLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+        active
+          ? 'bg-blue-600 text-white'
+          : 'bg-white ring-1 ring-slate-300 text-slate-600 hover:bg-slate-50'
+      }`}
+    >
+      {active ? activeLabel : inactiveLabel}
+    </button>
+  );
+}
+
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <Card variant="soft" padding="md" className="mb-4">
-      <h2 className="text-sm font-bold text-slate-900 mb-2">{title}</h2>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <h2 className="text-sm font-bold text-slate-900">{title}</h2>
+        {action}
+      </div>
       {children}
     </Card>
   );
 }
 
-function TextSection({ title, body }: { title: string; body: string }) {
+function TextSection({
+  title,
+  body,
+  copyKey,
+  copiedKey,
+  onCopy,
+}: {
+  title: string;
+  body: string;
+  copyKey?: string;
+  copiedKey?: string | null;
+  onCopy?: (key: string, text: string) => void;
+}) {
+  const canCopy = !!body && !!copyKey && !!onCopy;
   return (
-    <Section title={title}>
+    <Section
+      title={title}
+      action={
+        canCopy ? (
+          <button
+            type="button"
+            onClick={() => onCopy!(copyKey!, body)}
+            className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold bg-white ring-1 ring-slate-300 text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            {copiedKey === copyKey ? 'コピーしました' : 'コピー'}
+          </button>
+        ) : undefined
+      }
+    >
       {body ? (
-        <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{body}</p>
+        <>
+          <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{body}</p>
+          <p className="mt-2 text-[11px] text-slate-400">{body.length} 字</p>
+        </>
       ) : (
         <p className="text-sm text-slate-400">—</p>
       )}

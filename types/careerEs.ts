@@ -20,6 +20,19 @@ export type CareerEsResult = {
   interviewQuestions: string[];
   // 改善点（さらに良くするための指摘）。
   improvements: string[];
+
+  // ── 設問モード（任意設問が指定されたとき）の追加フィールド ──────────
+  // 後方互換: 既存の「おまかせ生成モード」（7フィールド一括）ログには存在しない。
+  // 消費側は常に「未定義なら設問モードでない」と防御的に扱うこと。
+  //
+  // 設問に対する回答本文ドラフト。設問モードのときのみ生成される。
+  answer?: string;
+  // 生成時に与えられた ES 設問文（結果を自己完結させるため echo する）。
+  question?: string;
+  // 生成時に与えられた文字数指定。
+  charLimit?: number;
+  // 生成時に与えられた企業名（任意）。
+  companyName?: string;
 };
 
 // 完了済み ES作成 1 件分の localStorage スナップショット。
@@ -33,4 +46,20 @@ export type CareerEsLog = {
   userInput: string;
   // AI 出力本体。
   result: CareerEsResult;
+
+  // ── 企業別 ES 管理の土台（すべて optional・後方互換） ────────────────
+  // 既存ログには存在しないため、read / normalize 側で defensive に扱うこと。
+  //
+  // 対象企業名（企業別の一覧・絞り込みに使う）。
+  companyName?: string;
+  // 生成に使った ES 設問文（設問モードのときに保存）。
+  question?: string;
+  // 生成に使った文字数指定。
+  charLimit?: number;
+  // お気に入りフラグ（結果画面でトグル）。
+  favorite?: boolean;
+  // 提出済みフラグ（結果画面でトグル）。
+  submitted?: boolean;
+  // 将来の編集保存用（今回は型のみ用意し、UI からは未書き込み）。
+  editedResult?: CareerEsResult;
 };

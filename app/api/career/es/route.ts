@@ -37,12 +37,13 @@ const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
 
 // 期待する出力 JSON スキーマを明示する指示。system prompt（共通基盤）に追記する。
+// 設問が無い「おまかせ生成モード」用。既存の 7 フィールド一括生成を維持する。
 const OUTPUT_FORMAT_INSTRUCTION = [
   '# 出力形式（厳守）',
   '上記のプロフィール・活動・自己分析をもとに、新卒就活向けの ES ドラフトを作成してください。',
   '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
   '各フィールドは日本語で、本人の経験に即して具体的に記述してください。',
-  '盛りすぎ・テンプレ化を避け、本人が自分の言葉で語れる自然な表現にしてください。',
+  '盛りすぎ・テンプレ化を避け、本人が自分の言葉で語れる自然で読みやすい就活向けの文にしてください。',
   '該当が無いフィールドは空配列 [] または空文字 "" にしてください（キーは省略しない）。',
   '',
   '{',
@@ -56,6 +57,45 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '}',
 ].join('\n');
 
+// 設問モード用の出力形式。設問に対する回答 1 本だけを生成する。
+function buildAnswerFormatInstruction(charLimit: number | null): string {
+  const lines = [
+    '# 出力形式（厳守）',
+    '指定された ES 設問に対する回答本文ドラフトを作成してください。',
+    '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
+    '',
+    '回答作成のルール:',
+    '- 問われていることに直接答える（設問の意図から外れない）。',
+    '- 構成は「結論 → 具体経験 → 学び → 企業/仕事への接続」を基本にする。',
+    '- 盛りすぎ・テンプレ化を避け、本人の経験に即した自然な文にする。',
+    '- 活動・就活軸・自己分析に根拠がある内容だけを使い、事実を捏造しない。',
+  ];
+  if (charLimit) {
+    lines.push(
+      `- 文字数は ${charLimit} 字を目安に、±10% 以内（約 ${Math.round(
+        charLimit * 0.9,
+      )}〜${Math.round(charLimit * 1.1)} 字）に収める。`,
+    );
+  }
+  lines.push(
+    '',
+    '{',
+    '  "answer": string  // 設問に対する回答本文ドラフト',
+    '}',
+  );
+  return lines.join('\n');
+}
+
+// 企業名が与えられたときの指示ブロック。汎用文を避けつつ、未確認の事実は捏造させない。
+function buildCompanyInstruction(companyName: string): string {
+  return [
+    `# 志望企業: ${companyName}`,
+    `- どの企業にも当てはまる汎用文ではなく、「${companyName}」を志望する文脈に寄せた言い回しにしてください。`,
+    '- ただし企業分析データは未接続です。事業内容・待遇・選考フロー・社風などの事実は',
+    '  断定・捏造せず、本人の価値観や経験と企業の一般的な志望理由の接続にとどめてください。',
+  ].join('\n');
+}
+
 // 任意の値を string に丸める。
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -67,7 +107,20 @@ function strArray(value: unknown): string[] {
   return value.map((v) => str(v)).filter((v) => v !== '');
 }
 
-// AI 出力（パース済み unknown）を CareerEsResult 形状に正規化する。
+// 空の 7 フィールド土台。設問モードでは answer 以外を空で埋める。
+function emptyResult(): CareerEsResult {
+  return {
+    gakuchika: '',
+    selfPr: '',
+    motivation: '',
+    headline: '',
+    appealPoints: [],
+    interviewQuestions: [],
+    improvements: [],
+  };
+}
+
+// AI 出力（パース済み unknown）を CareerEsResult 形状に正規化する（おまかせ生成モード）。
 function normalizeResult(raw: unknown): CareerEsResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
@@ -79,6 +132,22 @@ function normalizeResult(raw: unknown): CareerEsResult {
     interviewQuestions: strArray(r.interviewQuestions),
     improvements: strArray(r.improvements),
   };
+}
+
+// 設問モードの AI 出力を正規化する。answer を取り出し、設問・文字数・企業名を echo する。
+function normalizeAnswerResult(
+  raw: unknown,
+  meta: { question: string; charLimit: number | null; companyName: string },
+): CareerEsResult {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const result: CareerEsResult = {
+    ...emptyResult(),
+    answer: str(r.answer),
+    question: meta.question,
+  };
+  if (meta.charLimit) result.charLimit = meta.charLimit;
+  if (meta.companyName) result.companyName = meta.companyName;
+  return result;
 }
 
 // 直近の自己分析結果を system prompt 用の可読テキストに整形する。
@@ -119,6 +188,9 @@ export async function POST(req: Request) {
     values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     userInput?: string;
+    question?: string;
+    charLimit?: number;
+    companyName?: string;
   };
 
   const profile = b.profile ?? null;
@@ -126,6 +198,15 @@ export async function POST(req: Request) {
   const values = b.values ?? null;
   const selfAnalysis = b.selfAnalysis ?? null;
   const userInput = typeof b.userInput === 'string' ? b.userInput : '';
+
+  // 設問モードの入力。設問が非空なら「設問への回答 1 本」を生成する分岐に入る。
+  const question = typeof b.question === 'string' ? b.question.trim() : '';
+  const companyName = typeof b.companyName === 'string' ? b.companyName.trim() : '';
+  const charLimit =
+    typeof b.charLimit === 'number' && Number.isFinite(b.charLimit) && b.charLimit > 0
+      ? Math.floor(b.charLimit)
+      : null;
+  const answerMode = question !== '';
 
   // 材料が何も無ければ ES を作れないので弾く。
   const hasProfile = !!profile && Object.keys(profile).length > 0;
@@ -146,12 +227,29 @@ export async function POST(req: Request) {
     userInput,
   });
 
-  // base（共通基盤）に「直近の自己分析」「出力形式」を追記する。
+  // base（共通基盤）に「企業」「直近の自己分析」「設問 / 出力形式」を追記する。
+  // 設問モードでは設問ブロックと answer 用出力形式、それ以外は従来の 7 フィールド出力形式。
   const selfAnalysisBlock = renderSelfAnalysis(selfAnalysis);
+  const companyBlock = companyName ? buildCompanyInstruction(companyName) : '';
+  const questionBlock = answerMode
+    ? [
+        '# ES設問（この設問に直接答えてください）',
+        question,
+        charLimit ? `\n指定文字数: ${charLimit} 字（±10% 以内を目安）` : '',
+      ]
+        .filter((s) => s !== '')
+        .join('\n')
+    : '';
+  const outputFormat = answerMode
+    ? buildAnswerFormatInstruction(charLimit)
+    : OUTPUT_FORMAT_INSTRUCTION;
+
   const systemPrompt = [
     buildCareerSystemPrompt(context),
+    companyBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
-    OUTPUT_FORMAT_INSTRUCTION,
+    questionBlock,
+    outputFormat,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
@@ -160,7 +258,9 @@ export async function POST(req: Request) {
   const userMessage = [
     buildCareerFeatureInstruction(FEATURE_KEY),
     '',
-    '以上を踏まえ、指定の JSON 形式で ES ドラフトのみを出力してください。',
+    answerMode
+      ? '以上を踏まえ、指定の JSON 形式で設問への回答ドラフトのみを出力してください。'
+      : '以上を踏まえ、指定の JSON 形式で ES ドラフトのみを出力してください。',
   ].join('\n');
 
   try {
@@ -189,7 +289,10 @@ export async function POST(req: Request) {
       }
 
       try {
-        result = normalizeResult(JSON.parse(extractJson(raw)));
+        const parsed = JSON.parse(extractJson(raw));
+        result = answerMode
+          ? normalizeAnswerResult(parsed, { question, charLimit, companyName })
+          : normalizeResult(parsed);
         break;
       } catch {
         if (attempt === 1) continue;

@@ -14,6 +14,7 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
+import { Input } from '@/components/ui/Input';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import {
   loadActivityData,
@@ -47,6 +48,10 @@ function newId(): string {
 export default function CareerEsRunPage() {
   const router = useRouter();
   const [userInput, setUserInput] = useState('');
+  // 設問モード用の入力。すべて任意。設問が空なら従来の「おまかせ生成」になる。
+  const [question, setQuestion] = useState('');
+  const [charLimitInput, setCharLimitInput] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +93,14 @@ export default function CareerEsRunPage() {
     if (!canRun || loading) return;
     setLoading(true);
     setError(null);
+
+    // 設問モードの入力を正規化する。空なら従来のおまかせ生成にフォールバック。
+    const trimmedQuestion = question.trim();
+    const trimmedCompany = companyName.trim();
+    const parsedLimit = Number.parseInt(charLimitInput, 10);
+    const charLimit =
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+
     try {
       const res = await fetch('/api/career/es', {
         method: 'POST',
@@ -98,6 +111,10 @@ export default function CareerEsRunPage() {
           values,
           selfAnalysis,
           userInput,
+          // 任意フィールド。未入力なら送らない（API 側は欠損を許容する）。
+          question: trimmedQuestion || undefined,
+          charLimit,
+          companyName: trimmedCompany || undefined,
         }),
       });
 
@@ -112,6 +129,10 @@ export default function CareerEsRunPage() {
         createdAt: new Date().toISOString(),
         userInput: userInput.trim(),
         result: data.result,
+        // 企業別 ES 管理の土台。入力があった分だけ保存する（既存ログ形状は不変）。
+        ...(trimmedCompany ? { companyName: trimmedCompany } : {}),
+        ...(trimmedQuestion ? { question: trimmedQuestion } : {}),
+        ...(charLimit ? { charLimit } : {}),
       });
 
       router.push('/career/es/result');
@@ -146,6 +167,55 @@ export default function CareerEsRunPage() {
             自己分析の結果があると、より精度の高いESを生成できます（任意）。
           </p>
         )}
+      </Card>
+
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
+          設問に合わせて作る（任意）
+        </p>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          ES設問を入力すると、その設問への回答を生成します。空のままだと、ガクチカ・自己PR・志望動機などを一括で下書きします。
+        </p>
+
+        <label className="block text-sm font-bold text-slate-800 mb-2">
+          ES設問
+        </label>
+        <Textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="例: 学生時代に最も力を入れたことを教えてください。"
+          rows={3}
+          disabled={loading}
+          className="mb-4"
+        />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-2">
+              文字数（任意）
+            </label>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={charLimitInput}
+              onChange={(e) => setCharLimitInput(e.target.value)}
+              placeholder="例: 400"
+              disabled={loading}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-2">
+              企業名（任意）
+            </label>
+            <Input
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="例: 〇〇株式会社"
+              disabled={loading}
+            />
+          </div>
+        </div>
       </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
