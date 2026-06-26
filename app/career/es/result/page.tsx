@@ -32,16 +32,25 @@ function newId(): string {
 }
 
 // AI添削の画面 state（添削結果自体は careerEsLogs には保存しない）。
+//   - 1 つの添削対象（設問モードの answer / 7 フィールドの各項目）ごとに 1 件持つ。
+//     親では Record<reviewKey, ReviewState> で保持し、項目間で結果が混ざらないようにする。
 //   - saving / saved / saveError は「改善版を保存」（rewriteExample → 新規ログ）の状態。
 //   - data が差し替わる（再添削）たびに saved/saving はリセットする。
 type ReviewState = {
-  logId: string;
   data: CareerEsReview | null;
   loading: boolean;
   error: string | null;
   saving: boolean;
   saved: boolean;
   saveError: string | null;
+};
+
+// 添削 1 件分の依頼内容（保存時の question/charLimit/companyName 引き継ぎにも使う）。
+type ReviewRequest = {
+  answer: string;
+  question?: string;
+  companyName?: string;
+  charLimit?: number;
 };
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
@@ -93,33 +102,29 @@ export default function CareerEsResultPage() {
     setVersion((v) => v + 1);
   }, []);
 
-  // AI添削。設問モード（answer あり）のログを対象に、その場で添削結果を取得する。
-  // ページ遷移なし・保存なし（画面 state のみ）。
-  const [review, setReview] = useState<ReviewState | null>(null);
+  // AI添削。添削対象（設問モードの answer / 7 フィールドの各項目）ごとに 1 件保持する。
+  // ページ遷移なし・添削結果自体は保存なし（画面 state のみ）。
+  const [reviews, setReviews] = useState<Record<string, ReviewState>>({});
   // 直近に「改善版を保存」で作成したログ ID（成功表示を保存先ログに紐づける）。
   const [lastSavedId, setLastSavedId] = useState<string | null>(null);
 
-  const runReview = useCallback(async (log: CareerEsLog) => {
-    const answer = log.result.answer ?? '';
+  // 指定キーの添削を実行する。既存 /api/career/es-review を再利用（新 API なし）。
+  const runReview = useCallback(async (key: string, request: ReviewRequest) => {
+    const answer = request.answer.trim();
     if (!answer) return;
-    setReview({
-      logId: log.id,
-      data: null,
-      loading: true,
-      error: null,
-      saving: false,
-      saved: false,
-      saveError: null,
-    });
+    setReviews((prev) => ({
+      ...prev,
+      [key]: { data: null, loading: true, error: null, saving: false, saved: false, saveError: null },
+    }));
     try {
       const res = await fetch('/api/career/es-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           answer,
-          question: log.question ?? log.result.question,
-          companyName: log.companyName ?? log.result.companyName,
-          charLimit: log.charLimit ?? log.result.charLimit,
+          question: request.question,
+          companyName: request.companyName,
+          charLimit: request.charLimit,
         }),
       });
       if (!res.ok) {
@@ -127,104 +132,101 @@ export default function CareerEsResultPage() {
         throw new Error(data?.detail ?? 'ESの添削に失敗しました。');
       }
       const data = (await res.json()) as { review: CareerEsReview };
-      setReview({
-        logId: log.id,
-        data: data.review,
-        loading: false,
-        error: null,
-        saving: false,
-        saved: false,
-        saveError: null,
-      });
+      setReviews((prev) => ({
+        ...prev,
+        [key]: { data: data.review, loading: false, error: null, saving: false, saved: false, saveError: null },
+      }));
     } catch (e) {
-      setReview({
-        logId: log.id,
-        data: null,
-        loading: false,
-        error: e instanceof Error ? e.message : 'ESの添削に失敗しました。',
-        saving: false,
-        saved: false,
-        saveError: null,
-      });
+      setReviews((prev) => ({
+        ...prev,
+        [key]: {
+          data: null,
+          loading: false,
+          error: e instanceof Error ? e.message : 'ESの添削に失敗しました。',
+          saving: false,
+          saved: false,
+          saveError: null,
+        },
+      }));
     }
   }, []);
 
-  // 添削結果の rewriteExample を「改善版ES」として新規ログ保存する。
-  // 設問モードのログ（answer + question/charLimit/companyName を引き継ぐ）として保存する。
+  // 添削結果の rewriteExample を「改善版ES」として新規ログ保存する（設問モードと同形）。
+  // request は添削時の依頼内容で、question/charLimit/companyName を新ログへ引き継ぐ。
   // 連打防止: saving 中・保存済みは早期 return。ページ遷移はしない。
-  const handleSaveRewrite = useCallback((sourceLog: CareerEsLog, data: CareerEsReview) => {
-    const rewrite = data.rewriteExample?.trim();
-    if (!rewrite) return;
+  const handleSaveRewrite = useCallback(
+    (key: string, sourceLog: CareerEsLog, data: CareerEsReview, request: ReviewRequest) => {
+      const rewrite = data.rewriteExample?.trim();
+      if (!rewrite) return;
 
-    let blocked = false;
-    setReview((prev) => {
-      if (!prev || prev.logId !== sourceLog.id || prev.data !== data) {
-        blocked = true;
-        return prev;
+      let blocked = false;
+      setReviews((prev) => {
+        const cur = prev[key];
+        if (!cur || cur.data !== data || cur.saving || cur.saved) {
+          blocked = true;
+          return prev;
+        }
+        return { ...prev, [key]: { ...cur, saving: true, saveError: null } };
+      });
+      if (blocked) return;
+
+      const question = request.question;
+      const charLimit = request.charLimit;
+      const companyName = request.companyName;
+
+      const result: CareerEsResult = {
+        answer: rewrite,
+        question,
+        charLimit,
+        companyName,
+        // 7 フィールドは空（設問モードログと同形）。
+        headline: '',
+        gakuchika: '',
+        selfPr: '',
+        motivation: '',
+        appealPoints: [],
+        interviewQuestions: [],
+        improvements: [],
+      };
+
+      const newLog: CareerEsLog = {
+        id: newId(),
+        createdAt: new Date().toISOString(),
+        userInput: '',
+        result,
+        sourceLogId: sourceLog.id,
+        sourceType: 'review_rewrite',
+        ...(companyName ? { companyName } : {}),
+        ...(question ? { question } : {}),
+        ...(charLimit ? { charLimit } : {}),
+      };
+
+      try {
+        appendEsLog(newLog);
+        setSelectedId(newLog.id); // 保存したログを自動選択
+        setLastSavedId(newLog.id); // 保存成功表示を保存先ログに紐づける
+        setVersion((v) => v + 1); // 一覧（先頭）へ即時反映
+        setReviews((prev) =>
+          prev[key] ? { ...prev, [key]: { ...prev[key], saving: false, saved: true, saveError: null } } : prev,
+        );
+      } catch (e) {
+        setReviews((prev) =>
+          prev[key]
+            ? {
+                ...prev,
+                [key]: {
+                  ...prev[key],
+                  saving: false,
+                  saved: false,
+                  saveError: e instanceof Error ? e.message : '保存に失敗しました。',
+                },
+              }
+            : prev,
+        );
       }
-      if (prev.saving || prev.saved) {
-        blocked = true;
-        return prev;
-      }
-      return { ...prev, saving: true, saveError: null };
-    });
-    if (blocked) return;
-
-    // 設問・文字数・企業名は元ログ（result 側 → ログ側の順）から引き継ぐ。
-    const question = sourceLog.result.question ?? sourceLog.question;
-    const charLimit = sourceLog.result.charLimit ?? sourceLog.charLimit;
-    const companyName = sourceLog.result.companyName ?? sourceLog.companyName;
-
-    const result: CareerEsResult = {
-      answer: rewrite,
-      question,
-      charLimit,
-      companyName,
-      // 7 フィールドは空（設問モードログと同形）。
-      headline: '',
-      gakuchika: '',
-      selfPr: '',
-      motivation: '',
-      appealPoints: [],
-      interviewQuestions: [],
-      improvements: [],
-    };
-
-    const newLog: CareerEsLog = {
-      id: newId(),
-      createdAt: new Date().toISOString(),
-      userInput: '',
-      result,
-      sourceLogId: sourceLog.id,
-      sourceType: 'review_rewrite',
-      ...(companyName ? { companyName } : {}),
-      ...(question ? { question } : {}),
-      ...(charLimit ? { charLimit } : {}),
-    };
-
-    try {
-      appendEsLog(newLog);
-      setSelectedId(newLog.id); // 保存したログを自動選択
-      setLastSavedId(newLog.id); // 保存成功表示を保存先ログに紐づける
-      setVersion((v) => v + 1); // 一覧（先頭）へ即時反映
-      setReview((prev) =>
-        prev && prev.logId === sourceLog.id
-          ? { ...prev, saving: false, saved: true, saveError: null }
-          : prev,
-      );
-    } catch (e) {
-      setReview((prev) =>
-        prev && prev.logId === sourceLog.id
-          ? {
-              ...prev,
-              saving: false,
-              saved: false,
-              saveError: e instanceof Error ? e.message : '保存に失敗しました。',
-            }
-          : prev,
-      );
-    }
-  }, []);
+    },
+    [],
+  );
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -344,87 +346,39 @@ export default function CareerEsResultPage() {
 
               {/* 設問モード（answer あり）は回答を優先表示。それ以外は従来の 7 フィールド。 */}
               {selected.result.answer ? (
-                <>
-                  <TextSection
-                    title="回答"
-                    body={selected.result.answer}
-                    copyKey={`${selected.id}-answer`}
-                    copiedKey={copiedKey}
-                    onCopy={handleCopy}
-                  />
-
-                  {/* AI添削（その場で結果表示・ページ遷移なし・保存なし）。 */}
-                  <Card variant="soft" padding="md" className="mb-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-slate-900">AI添削</p>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          6軸でスコアリングし、改善後の完成例まで提示します。
-                        </p>
-                      </div>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => runReview(selected)}
-                        disabled={review?.logId === selected.id && review.loading}
-                        className="shrink-0"
-                      >
-                        {review?.logId === selected.id && review.loading
-                          ? '添削中…'
-                          : 'AI添削する'}
-                      </Button>
-                    </div>
-                    {review?.logId === selected.id && review.error && (
-                      <p className="mt-3 text-sm text-red-600" role="alert">
-                        {review.error}
-                      </p>
-                    )}
-                  </Card>
-
-                  {review?.logId === selected.id && review.data && (
+                (() => {
+                  const reviewKey = `${selected.id}:answer`;
+                  const request: ReviewRequest = {
+                    answer: selected.result.answer,
+                    question: selected.result.question ?? selected.question,
+                    companyName: selected.result.companyName ?? selected.companyName,
+                    charLimit: selected.result.charLimit ?? selected.charLimit,
+                  };
+                  return (
                     <>
-                      <ReviewPanel review={review.data} />
-
-                      {/* 改善版（rewriteExample）を新規ESログとして保存する。 */}
-                      {review.data.rewriteExample && (
-                        <Card variant="soft" padding="md" className="mb-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-bold text-slate-900">改善版を保存</p>
-                              <p className="text-xs text-slate-500 leading-relaxed">
-                                完成例を新しいESとして履歴に追加します。
-                              </p>
-                            </div>
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onClick={() => handleSaveRewrite(selected, review.data!)}
-                              disabled={review.saving || review.saved}
-                              className="shrink-0"
-                            >
-                              {review.saved
-                                ? '保存済み'
-                                : review.saving
-                                  ? '保存中…'
-                                  : '改善版を保存'}
-                            </Button>
-                          </div>
-                          {review.saveError && (
-                            <p className="mt-3 text-sm text-red-600" role="alert">
-                              {review.saveError}
-                            </p>
-                          )}
-                        </Card>
-                      )}
+                      <TextSection
+                        title="回答"
+                        body={selected.result.answer}
+                        copyKey={`${selected.id}-answer`}
+                        copiedKey={copiedKey}
+                        onCopy={handleCopy}
+                      />
+                      <ReviewBlock
+                        review={reviews[reviewKey]}
+                        onRun={() => runReview(reviewKey, request)}
+                        onSave={(data) => handleSaveRewrite(reviewKey, selected, data, request)}
+                      />
                     </>
-                  )}
-                </>
+                  );
+                })()
               ) : (
                 <SevenFieldResult
-                  result={selected.result}
-                  logId={selected.id}
+                  log={selected}
                   copiedKey={copiedKey}
                   onCopy={handleCopy}
+                  reviews={reviews}
+                  onRun={runReview}
+                  onSave={handleSaveRewrite}
                 />
               )}
             </>
@@ -464,27 +418,147 @@ function logLabel(log: CareerEsLog): string {
   return log.result.headline ?? '';
 }
 
+// 7 フィールドのうち AI添削の対象にする独立 ES 項目。各項目を「1 つの ES」として扱う。
+// question は添削/保存時に自動付与する設問文。キャッチコピー・配列項目は対象外。
+const REVIEWABLE_SECTIONS: Array<{
+  field: 'gakuchika' | 'selfPr' | 'motivation';
+  title: string;
+  question: string;
+}> = [
+  { field: 'gakuchika', title: 'ガクチカ', question: '学生時代に力を入れたことを書いてください' },
+  { field: 'selfPr', title: '自己PR', question: '自己PRを書いてください' },
+  { field: 'motivation', title: '志望動機', question: '志望動機を書いてください' },
+];
+
 // 設問モードでない従来ログの 7 フィールド表示。answer が無いログはこれで描画する。
+// 自己PR / ガクチカ / 志望動機は各カード直下に AI添削（項目ごと state）を表示する。
 function SevenFieldResult({
-  result,
-  logId,
+  log,
   copiedKey,
   onCopy,
+  reviews,
+  onRun,
+  onSave,
 }: {
-  result: CareerEsResult;
-  logId: string;
+  log: CareerEsLog;
   copiedKey: string | null;
   onCopy: (key: string, text: string) => void;
+  reviews: Record<string, ReviewState>;
+  onRun: (key: string, request: ReviewRequest) => void;
+  onSave: (key: string, sourceLog: CareerEsLog, data: CareerEsReview, request: ReviewRequest) => void;
 }) {
+  const { result } = log;
+  const companyName = result.companyName ?? log.companyName;
+
   return (
     <>
-      <TextSection title="キャッチコピー" body={result.headline} copyKey={`${logId}-headline`} copiedKey={copiedKey} onCopy={onCopy} />
-      <TextSection title="ガクチカ" body={result.gakuchika} copyKey={`${logId}-gakuchika`} copiedKey={copiedKey} onCopy={onCopy} />
-      <TextSection title="自己PR" body={result.selfPr} copyKey={`${logId}-selfPr`} copiedKey={copiedKey} onCopy={onCopy} />
-      <TextSection title="志望動機" body={result.motivation} copyKey={`${logId}-motivation`} copiedKey={copiedKey} onCopy={onCopy} />
+      <TextSection title="キャッチコピー" body={result.headline} copyKey={`${log.id}-headline`} copiedKey={copiedKey} onCopy={onCopy} />
+
+      {REVIEWABLE_SECTIONS.map(({ field, title, question }) => {
+        const body = result[field];
+        const reviewKey = `${log.id}:${field}`;
+        // 各項目を独立した ES として添削する。文字数指定は無し（未指定）。
+        const request: ReviewRequest = { answer: body, question, companyName };
+        return (
+          <div key={field}>
+            <TextSection
+              title={title}
+              body={body}
+              copyKey={`${log.id}-${field}`}
+              copiedKey={copiedKey}
+              onCopy={onCopy}
+            />
+            {/* 本文があるときだけ、そのカードの直下にだけ添削を表示する（他項目に波及しない）。 */}
+            {body && (
+              <ReviewBlock
+                review={reviews[reviewKey]}
+                onRun={() => onRun(reviewKey, request)}
+                onSave={(data) => onSave(reviewKey, log, data, request)}
+              />
+            )}
+          </div>
+        );
+      })}
+
       <ListSection title="企業へのアピールポイント" items={result.appealPoints} />
       <ListSection title="面接で深掘りされそうな点" items={result.interviewQuestions} />
       <ListSection title="改善点" items={result.improvements} />
+    </>
+  );
+}
+
+// AI添削の実行ボタン + 結果パネル + 改善版保存ボタンをまとめた再利用ブロック。
+// 設問モード（answer）と 7 フィールド各項目の両方から同じ形で使う。
+function ReviewBlock({
+  review,
+  onRun,
+  onSave,
+}: {
+  review: ReviewState | undefined;
+  onRun: () => void;
+  onSave: (data: CareerEsReview) => void;
+}) {
+  return (
+    <>
+      {/* AI添削（その場で結果表示・ページ遷移なし・添削結果は保存なし）。 */}
+      <Card variant="soft" padding="md" className="mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900">AI添削</p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              6軸でスコアリングし、改善後の完成例まで提示します。
+            </p>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onRun}
+            disabled={!!review?.loading}
+            className="shrink-0"
+          >
+            {review?.loading ? '添削中…' : 'AI添削する'}
+          </Button>
+        </div>
+        {review?.error && (
+          <p className="mt-3 text-sm text-red-600" role="alert">
+            {review.error}
+          </p>
+        )}
+      </Card>
+
+      {review?.data && (
+        <>
+          <ReviewPanel review={review.data} />
+
+          {/* 改善版（rewriteExample）を新規ESログとして保存する。 */}
+          {review.data.rewriteExample && (
+            <Card variant="soft" padding="md" className="mb-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-slate-900">改善版を保存</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    完成例を新しいESとして履歴に追加します。
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => onSave(review.data!)}
+                  disabled={review.saving || review.saved}
+                  className="shrink-0"
+                >
+                  {review.saved ? '保存済み' : review.saving ? '保存中…' : '改善版を保存'}
+                </Button>
+              </div>
+              {review.saveError && (
+                <p className="mt-3 text-sm text-red-600" role="alert">
+                  {review.saveError}
+                </p>
+              )}
+            </Card>
+          )}
+        </>
+      )}
     </>
   );
 }
