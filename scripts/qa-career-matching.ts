@@ -21,6 +21,8 @@ import {
   runCareerMatch,
   deriveMatchWeights,
   simulateChanges,
+  buildMeasuredReadiness,
+  mergeReadinessSignals,
   READINESS_DISCLAIMER,
   CAREER_MATCHING_SCHEMA_VERSION,
   MATCH_AXES,
@@ -29,6 +31,7 @@ import {
   type CompanyEngineInput,
   type ScoreSignal,
   type MatchProfile,
+  type MeasuredReadinessInput,
 } from '../lib/careerMatching';
 
 let failures = 0;
@@ -206,6 +209,52 @@ console.log('7. 不足優先度・シミュレーション');
   });
   check('シミュレーションで準備度が上がる', sim.scoreDelta[0].readiness > 0, `delta=${sim.scoreDelta[0].readiness}`);
   check('シミュレーションは before/after を返す', sim.before.length === 1 && sim.after.length === 1);
+}
+
+// ── 8. buildMeasuredReadiness（ACL リファクタ） ──
+console.log('8. buildMeasuredReadiness（ACL）');
+{
+  const input: MeasuredReadinessInput = {
+    activity: {
+      internships: [{ role: 'リーダー', quantitativeResult: '売上20%増' }],
+      certifications: [{ name: 'TOEIC 850' }],
+    } as MeasuredReadinessInput['activity'],
+  };
+
+  // 決定的
+  const m1 = JSON.stringify(buildMeasuredReadiness(input));
+  const m2 = JSON.stringify(buildMeasuredReadiness(input));
+  check('同じ入力で同じ measured 出力', m1 === m2);
+
+  const out = buildMeasuredReadiness(input);
+  const byKey = new Map(out.map((s) => [s.key, s]));
+  check('活動整理から gakuchika が measured で取れる', byKey.get('readiness:gakuchika')?.source === 'measured');
+  check('英語系資格から english が measured', byKey.get('readiness:english')?.source === 'measured');
+  check('SPI は present:false（欠損）', byKey.get('readiness:spi')?.present === false);
+  check('プレゼンは present:false（欠損）', byKey.get('readiness:presentation')?.present === false);
+
+  // 欠損入力でも落ちない
+  let threw = false;
+  let empty: ScoreSignal[] = [];
+  try {
+    empty = buildMeasuredReadiness({});
+  } catch {
+    threw = true;
+  }
+  check('空入力でも例外を投げない', !threw);
+  check('空入力でも SPI/プレゼンの欠損は返る', empty.some((s) => s.key === 'readiness:spi' && !s.present));
+  check('空入力では gakuchika は出ない（誤検出しない）', !empty.some((s) => s.key === 'readiness:gakuchika'));
+
+  // measured-first: AI が同キーを返しても measured が勝つ
+  const measured = buildMeasuredReadiness(input);
+  const ai: ScoreSignal[] = [
+    { key: 'readiness:gakuchika', value: 99, present: true, source: 'ai_inferred', rationale: 'ai' },
+    { key: 'readiness:es', value: 80, present: true, source: 'ai_inferred', rationale: 'ai' },
+  ];
+  const merged = new Map(mergeReadinessSignals(measured, ai).map((s) => [s.key, s]));
+  check('measured が AI 推測より優先される（gakuchika は measured 値）', merged.get('readiness:gakuchika')?.source === 'measured');
+  check('measured が AI 値99で上書きされない', merged.get('readiness:gakuchika')?.value !== 99);
+  check('measured に無いキー（es）は AI 推測で補完される', merged.get('readiness:es')?.source === 'ai_inferred');
 }
 
 console.log('');

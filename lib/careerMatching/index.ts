@@ -63,3 +63,7 @@ export { analyzeGaps, buildRoadmap } from './roadmap';
 // エンジン本体・順位付け・シミュレーション
 export { scoreCompany, rankCompanies, runCareerMatch } from './engine';
 export { simulateChanges } from './simulation';
+
+// measured readiness のアンチコラプション層（既存データ → readiness シグナル）
+export type { MeasuredReadinessInput, MeasuredReadinessSignal } from './measuredReadiness';
+export { buildMeasuredReadiness, mergeReadinessSignals } from './measuredReadiness';

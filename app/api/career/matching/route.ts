@@ -27,6 +27,8 @@ import {
   deriveMatchWeights,
   normalizeBarTier,
   clampScore,
+  buildMeasuredReadiness,
+  mergeReadinessSignals,
   COMPANY_FLAG_VOCAB,
   MATCH_AXES,
   SUCCESS_AXES,
@@ -162,93 +164,6 @@ function renderConsultation(r: CareerConsultationResult | null | undefined): str
   return lines.join('\n');
 }
 
-// ── measured readiness（データの有無から決定的に算出。AI を通さない） ──
-function countExperiences(activity: CareerActivityInput | null | undefined): number {
-  if (!activity) return 0;
-  const groups = [
-    activity.internships,
-    activity.partTimeJobs,
-    activity.club,
-    activity.projects,
-    activity.leadership,
-    activity.volunteer,
-  ];
-  let count = 0;
-  for (const g of groups) {
-    if (!Array.isArray(g)) continue;
-    for (const e of g) {
-      if (!e || typeof e !== 'object') continue;
-      const rec = e as Record<string, unknown>;
-      if (str(rec.quantitativeResult) || str(rec.ingenuity) || str(rec.role)) count++;
-    }
-  }
-  return count;
-}
-
-function buildMeasuredReadiness(activity: CareerActivityInput | null | undefined): ScoreSignal[] {
-  const signals: ScoreSignal[] = [];
-
-  // ガクチカ・実績: エピソード数から決定的に算出。
-  const expCount = countExperiences(activity);
-  if (expCount > 0) {
-    signals.push({
-      key: 'readiness:gakuchika',
-      value: Math.min(100, 45 + expCount * 12),
-      present: true,
-      source: 'measured',
-      rationale: `活動整理に内容のあるエピソードが ${expCount} 件`,
-    });
-  }
-
-  // 語学・英語: 語学エントリ or 英語系資格の有無。
-  const hasLanguages = Array.isArray(activity?.languages) && activity!.languages!.length > 0;
-  const certs = Array.isArray(activity?.certifications) ? activity!.certifications! : [];
-  const hasEnglishCert = certs.some((c) => {
-    const name = c && typeof c === 'object' ? str((c as Record<string, unknown>).name) : '';
-    return /TOEIC|英語|英検|TOEFL|IELTS/i.test(name);
-  });
-  if (hasLanguages || hasEnglishCert) {
-    signals.push({
-      key: 'readiness:english',
-      value: 60,
-      present: true,
-      source: 'measured',
-      rationale: '語学・英語系の登録あり（レベルは要確認）',
-    });
-  }
-
-  // 資格・スキル: 資格 or IT スキルの有無。
-  const hasCerts = certs.length > 0;
-  const hasItSkills = Array.isArray(activity?.itSkills) && activity!.itSkills!.length > 0;
-  if (hasCerts || hasItSkills) {
-    signals.push({
-      key: 'readiness:certifications',
-      value: 60,
-      present: true,
-      source: 'measured',
-      rationale: '資格・スキルの登録あり',
-    });
-  }
-
-  // SPI・プレゼンは就活版 MVP ではデータ源が無い → 欠損（present:false）。
-  signals.push({
-    key: 'readiness:spi',
-    value: 0,
-    present: false,
-    source: 'absent',
-    rationale: 'SPI・適性検査のデータが未取得',
-  });
-  signals.push({
-    key: 'readiness:presentation',
-    value: 0,
-    present: false,
-    source: 'absent',
-    rationale: 'プレゼンのデータが未取得',
-  });
-
-  return signals;
-}
-
 // ── AI 出力 → エンジン入力への正規化（AI の総合点・順位は採用しない） ──
 type RawAiCompany = {
   company?: unknown;
@@ -288,16 +203,6 @@ function normalizeAiSignals(
   return out;
 }
 
-// measured を優先し、AI の readiness は measured に無いキーだけ採用する。
-function mergeReadiness(measured: ScoreSignal[], aiSignals: ScoreSignal[]): ScoreSignal[] {
-  const byKey = new Map<string, ScoreSignal>();
-  for (const s of measured) byKey.set(s.key, s);
-  for (const s of aiSignals) {
-    if (s.key.startsWith('readiness:') && !byKey.has(s.key)) byKey.set(s.key, s);
-  }
-  return Array.from(byKey.values());
-}
-
 function normalizeCompany(raw: RawAiCompany, measuredReadiness: ScoreSignal[]): CompanyEngineInput | null {
   const company = str(raw.company);
   const matchReasons = strArray(raw.matchReasons);
@@ -313,7 +218,7 @@ function normalizeCompany(raw: RawAiCompany, measuredReadiness: ScoreSignal[]): 
   return {
     company,
     matchSignals,
-    readinessSignals: mergeReadiness(measuredReadiness, aiReadiness),
+    readinessSignals: mergeReadinessSignals(measuredReadiness, aiReadiness),
     successSignals,
     barTier: normalizeBarTier(raw.selectionTier),
     companyFlags,
@@ -369,7 +274,16 @@ export async function POST(req: Request) {
     ? (b.values!.selections!.avoidances as string[])
     : [];
   const matchWeights = deriveMatchWeights(priorities);
-  const measuredReadiness = buildMeasuredReadiness(b.activity);
+  // measured readiness は ACL（lib/careerMatching）に委譲。route は既存データを渡すだけ。
+  const measuredReadiness = buildMeasuredReadiness({
+    profile: b.profile ?? null,
+    activity: b.activity ?? null,
+    selfAnalysis: b.selfAnalysis ?? null,
+    es: b.es ?? null,
+    interview: b.interviewResult ?? null,
+    spi: null,
+    presentation: null,
+  });
 
   const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
   const esBlock = renderEs(b.es);
