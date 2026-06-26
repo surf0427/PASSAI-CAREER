@@ -106,4 +106,14 @@ export type CareerEsLog = {
   submitted?: boolean;
   // 将来の編集保存用（今回は型のみ用意し、UI からは未書き込み）。
   editedResult?: CareerEsResult;
+
+  // ── ログの出自（添削からの改善版保存など） ──────────────────────────
+  // 既存ログには存在しないため、欠損を前提に防御的に扱うこと。
+  //
+  // このログの生成元ログの ID（改善版保存のとき元ログを指す）。
+  sourceLogId?: string;
+  // ログの種別。未指定（欠損）は従来の生成ログ（'generated' 相当）として扱う。
+  //   - 'generated'      : ES生成（おまかせ / 設問モード）由来
+  //   - 'review_rewrite' : AI添削の rewriteExample を改善版として保存したもの
+  sourceType?: 'generated' | 'review_rewrite';
 };

@@ -32,6 +32,10 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
   if (r.editedResult && typeof r.editedResult === 'object') {
     log.editedResult = r.editedResult as CareerEsLog['editedResult'];
   }
+  if (typeof r.sourceLogId === 'string') log.sourceLogId = r.sourceLogId;
+  if (r.sourceType === 'generated' || r.sourceType === 'review_rewrite') {
+    log.sourceType = r.sourceType;
+  }
   return log;
 }
 
