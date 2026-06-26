@@ -35,6 +35,50 @@ export type CareerEsResult = {
   companyName?: string;
 };
 
+// ── AI添削（es-review）の型 ──────────────────────────────────────────
+// 既存の生成系（CareerEsResult / CareerEsLog）とは独立した追加型。
+// 既存型を一切変更しないため、後方互換は自明（新規 type の追加のみ）。
+// 今回は localStorage に保存せず画面 state のみで扱う（将来 Supabase 保存も可能な形）。
+
+// ランク（スコアから決定論で導出する。AI には決めさせない）。
+export type CareerEsRank = 'S' | 'A' | 'B' | 'C' | 'D';
+
+// 6 軸スコア（各 0〜100 の整数）。
+export type CareerEsReviewBreakdown = {
+  // 論理性。
+  logic: number;
+  // 具体性。
+  specificity: number;
+  // オリジナリティ。
+  originality: number;
+  // 読みやすさ。
+  readability: number;
+  // 説得力。
+  persuasion: number;
+  // 企業適合性。
+  companyFit: number;
+};
+
+// ES添削AI の出力（API route app/api/career/es-review/route.ts の出力と 1:1）。
+export type CareerEsReview = {
+  // 総合スコア（0〜100。breakdown 6 軸の平均から決定論で導出）。
+  overallScore: number;
+  // ランク（overallScore から決定論で導出）。
+  rank: CareerEsRank;
+  // 総評（全体所感）。
+  overallComment: string;
+  // 6 軸スコア。
+  breakdown: CareerEsReviewBreakdown;
+  // 良い点。
+  strengths: string[];
+  // 改善点。
+  improvements: string[];
+  // そのまま提出できる完成版（盛りすぎ禁止・事実の捏造禁止）。
+  rewriteExample: string;
+  // 優先的に直すべきアクション（重要な順）。
+  priorityActions: string[];
+};
+
 // 完了済み ES作成 1 件分の localStorage スナップショット。
 // 保存キーは 'careerEsLogs'（app/career/es/esStorage.ts）。
 export type CareerEsLog = {

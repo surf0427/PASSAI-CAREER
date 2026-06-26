@@ -15,8 +15,21 @@ import {
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Button } from '@/components/ui/Button';
 import { loadEsLogs, updateEsLog } from '../esStorage';
-import type { CareerEsLog, CareerEsResult } from '@/types/careerEs';
+import type {
+  CareerEsLog,
+  CareerEsResult,
+  CareerEsReview,
+} from '@/types/careerEs';
+
+// AI添削の画面 state（careerEsLogs には保存しない。将来 Supabase 保存時に拡張できる形）。
+type ReviewState = {
+  logId: string;
+  data: CareerEsReview | null;
+  loading: boolean;
+  error: string | null;
+};
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -65,6 +78,41 @@ export default function CareerEsResultPage() {
   const toggleSubmitted = useCallback((log: CareerEsLog) => {
     updateEsLog(log.id, { submitted: !log.submitted });
     setVersion((v) => v + 1);
+  }, []);
+
+  // AI添削。設問モード（answer あり）のログを対象に、その場で添削結果を取得する。
+  // ページ遷移なし・保存なし（画面 state のみ）。
+  const [review, setReview] = useState<ReviewState | null>(null);
+
+  const runReview = useCallback(async (log: CareerEsLog) => {
+    const answer = log.result.answer ?? '';
+    if (!answer) return;
+    setReview({ logId: log.id, data: null, loading: true, error: null });
+    try {
+      const res = await fetch('/api/career/es-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          answer,
+          question: log.question ?? log.result.question,
+          companyName: log.companyName ?? log.result.companyName,
+          charLimit: log.charLimit ?? log.result.charLimit,
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(data?.detail ?? 'ESの添削に失敗しました。');
+      }
+      const data = (await res.json()) as { review: CareerEsReview };
+      setReview({ logId: log.id, data: data.review, loading: false, error: null });
+    } catch (e) {
+      setReview({
+        logId: log.id,
+        data: null,
+        loading: false,
+        error: e instanceof Error ? e.message : 'ESの添削に失敗しました。',
+      });
+    }
   }, []);
 
   return (
@@ -173,13 +221,47 @@ export default function CareerEsResultPage() {
 
               {/* 設問モード（answer あり）は回答を優先表示。それ以外は従来の 7 フィールド。 */}
               {selected.result.answer ? (
-                <TextSection
-                  title="回答"
-                  body={selected.result.answer}
-                  copyKey={`${selected.id}-answer`}
-                  copiedKey={copiedKey}
-                  onCopy={handleCopy}
-                />
+                <>
+                  <TextSection
+                    title="回答"
+                    body={selected.result.answer}
+                    copyKey={`${selected.id}-answer`}
+                    copiedKey={copiedKey}
+                    onCopy={handleCopy}
+                  />
+
+                  {/* AI添削（その場で結果表示・ページ遷移なし・保存なし）。 */}
+                  <Card variant="soft" padding="md" className="mb-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900">AI添削</p>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          6軸でスコアリングし、改善後の完成例まで提示します。
+                        </p>
+                      </div>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => runReview(selected)}
+                        disabled={review?.logId === selected.id && review.loading}
+                        className="shrink-0"
+                      >
+                        {review?.logId === selected.id && review.loading
+                          ? '添削中…'
+                          : 'AI添削する'}
+                      </Button>
+                    </div>
+                    {review?.logId === selected.id && review.error && (
+                      <p className="mt-3 text-sm text-red-600" role="alert">
+                        {review.error}
+                      </p>
+                    )}
+                  </Card>
+
+                  {review?.logId === selected.id && review.data && (
+                    <ReviewPanel review={review.data} />
+                  )}
+                </>
               ) : (
                 <SevenFieldResult
                   result={selected.result}
@@ -247,6 +329,136 @@ function SevenFieldResult({
       <ListSection title="面接で深掘りされそうな点" items={result.interviewQuestions} />
       <ListSection title="改善点" items={result.improvements} />
     </>
+  );
+}
+
+// ── AI添削パネル ──────────────────────────────────────────────────
+// 表示順: 総合スコア / ランク / 総評 → 6軸スコア → 良い点 → 改善点 → 優先改善 → 完成例。
+
+const RANK_STYLE: Record<CareerEsReview['rank'], string> = {
+  S: 'bg-amber-100 text-amber-800 ring-amber-300',
+  A: 'bg-emerald-100 text-emerald-800 ring-emerald-300',
+  B: 'bg-blue-100 text-blue-800 ring-blue-300',
+  C: 'bg-slate-100 text-slate-700 ring-slate-300',
+  D: 'bg-rose-100 text-rose-800 ring-rose-300',
+};
+
+const BREAKDOWN_LABELS: Array<[keyof CareerEsReview['breakdown'], string]> = [
+  ['logic', '論理性'],
+  ['specificity', '具体性'],
+  ['originality', 'オリジナリティ'],
+  ['readability', '読みやすさ'],
+  ['persuasion', '説得力'],
+  ['companyFit', '企業適合性'],
+];
+
+function ReviewPanel({ review }: { review: CareerEsReview }) {
+  return (
+    <div className="mb-4">
+      {/* 総合スコア / ランク / 総評 */}
+      <Card variant="soft" padding="md" className="mb-4">
+        <div className="flex items-center gap-4 mb-3">
+          <div>
+            <p className="text-[11px] text-slate-500 mb-0.5">総合スコア</p>
+            <p className="text-3xl font-bold text-slate-900 leading-none">
+              {review.overallScore}
+              <span className="text-base text-slate-400"> / 100</span>
+            </p>
+          </div>
+          <span
+            className={`inline-flex h-12 w-12 items-center justify-center rounded-full text-xl font-bold ring-2 ${RANK_STYLE[review.rank]}`}
+            title="ランク"
+          >
+            {review.rank}
+          </span>
+        </div>
+        {review.overallComment ? (
+          <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+            {review.overallComment}
+          </p>
+        ) : (
+          <p className="text-sm text-slate-400">—</p>
+        )}
+      </Card>
+
+      {/* 6軸スコア */}
+      <Section title="6軸スコア">
+        <div className="flex flex-col gap-2.5">
+          {BREAKDOWN_LABELS.map(([key, label]) => (
+            <ScoreBar key={key} label={label} score={review.breakdown[key]} />
+          ))}
+        </div>
+      </Section>
+
+      <ReviewListSection title="良い点" items={review.strengths} />
+      <ReviewListSection title="改善点" items={review.improvements} ordered />
+      <ReviewListSection title="優先改善" items={review.priorityActions} ordered />
+
+      {/* 改善後の完成例 */}
+      <Section title="改善後の完成例">
+        {review.rewriteExample ? (
+          <>
+            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+              {review.rewriteExample}
+            </p>
+            <p className="mt-2 text-[11px] text-slate-400">
+              {review.rewriteExample.length} 字
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">—</p>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function ScoreBar({ label, score }: { label: string; score: number }) {
+  const pct = Math.max(0, Math.min(100, score));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-slate-600">{label}</span>
+        <span className="text-xs font-semibold text-slate-800">{score}</span>
+      </div>
+      <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+        <div className="h-full rounded-full bg-blue-500" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ReviewListSection({
+  title,
+  items,
+  ordered = false,
+}: {
+  title: string;
+  items: string[];
+  ordered?: boolean;
+}) {
+  return (
+    <Section title={title}>
+      {items.length === 0 ? (
+        <p className="text-sm text-slate-400">—</p>
+      ) : ordered ? (
+        <ol className="list-decimal pl-5 space-y-1.5">
+          {items.map((item, i) => (
+            <li key={i} className="text-sm text-slate-700 leading-relaxed">
+              {item}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <ul className="list-disc pl-5 space-y-1.5">
+          {items.map((item, i) => (
+            <li key={i} className="text-sm text-slate-700 leading-relaxed">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }
 
