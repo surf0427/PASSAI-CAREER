@@ -17,6 +17,7 @@ import { loadActivityData } from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
+import { loadPresentationResults } from '@/app/career/presentation/presentationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import {
   loadConsultationThreads,
@@ -50,6 +51,7 @@ function buildConsultationContext() {
   const selfLogs = loadSelfAnalysisLogs();
   const esLogs = loadEsLogs();
   const interviewResults = loadInterviewResults();
+  const presentationResults = loadPresentationResults();
   return {
     profile: loadBasicInfo(),
     activity: loadActivityData(),
@@ -57,6 +59,7 @@ function buildConsultationContext() {
     selfAnalysis: selfLogs.length > 0 ? selfLogs[0].result : null,
     es: esLogs.length > 0 ? esLogs[0].result : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
+    presentationResult: presentationResults.length > 0 ? presentationResults[0].result : null,
   };
 }
 

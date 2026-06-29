@@ -19,6 +19,7 @@ import type {
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
+import type { CareerPresentationFinalResult } from '@/types/careerPresentation';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -110,6 +111,26 @@ function renderInterview(r: CareerInterviewFinalResult | null | undefined): stri
   return lines.join('\n');
 }
 
+// 直近のプレゼン練習結果を可読テキストに整形（旧データ・欠損も guarded）。
+function renderPresentation(r: CareerPresentationFinalResult | null | undefined): string {
+  if (!r) return '';
+  const lines: string[] = [];
+  if (typeof r.totalScore === 'number' && r.rank) {
+    lines.push(`- 総合: ${r.totalScore}点（${r.rank}ランク）`);
+  }
+  if (str(r.overallComment)) lines.push(`- 総評: ${str(r.overallComment)}`);
+  if (r.goodPoints?.length) lines.push(`- 良かった点: ${r.goodPoints.join('、')}`);
+  if (r.improvements?.length) lines.push(`- 改善点: ${r.improvements.join('、')}`);
+  if (r.priorityImprovements?.length)
+    lines.push(`- 優先改善: ${r.priorityImprovements.join('、')}`);
+  if (r.nextPractice?.length) lines.push(`- 次の練習: ${r.nextPractice.join('、')}`);
+  if (r.expectedQuestions?.length)
+    lines.push(`- 想定質問: ${r.expectedQuestions.join('、')}`);
+  if (str(r.passLikelihood)) lines.push(`- 選考通過可能性: ${str(r.passLikelihood)}`);
+  if (str(r.companyFit)) lines.push(`- 企業/職種との相性: ${str(r.companyFit)}`);
+  return lines.join('\n');
+}
+
 // client から渡る会話履歴を {role, content} の交互列に整える（受験版 sanitizeTutorHistory 同型）。
 function sanitizeHistory(
   raw: unknown,
@@ -174,6 +195,7 @@ export async function POST(req: Request) {
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     interviewResult?: CareerInterviewFinalResult | null;
+    presentationResult?: CareerPresentationFinalResult | null;
   };
 
   const message = str(b.message);
@@ -198,6 +220,7 @@ export async function POST(req: Request) {
   const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
   const esBlock = renderEs(b.es);
   const interviewBlock = renderInterview(b.interviewResult);
+  const presentationBlock = renderPresentation(b.presentationResult);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -206,6 +229,7 @@ export async function POST(req: Request) {
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
+    presentationBlock ? `# 直近のプレゼン練習の結果\n${presentationBlock}` : '',
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

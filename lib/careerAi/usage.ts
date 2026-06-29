@@ -33,6 +33,7 @@ export const CAREER_PLAN_LIMITS: Record<
     'career-self-analysis': 30,
     'career-es': 30,
     'career-interview': 20,
+    'career-presentation': 20,
     'career-consultation': 30,
     'career-company-research': 30,
     'career-gd': 10,
