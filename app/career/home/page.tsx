@@ -59,7 +59,8 @@ const FEATURES = [
   {
     key: 'presentation',
     title: 'プレゼン対策',
-    description: '大学入試のプレゼンテーションを録画し、AIが構成力・説得力・具体性・時間配分を評価します。発表後の質疑応答も練習できます。',
+    description: '自己PR・ガクチカ・志望動機・ケース課題などの発表を、AIが構成・説得力・具体性・時間配分の観点で評価します。発表後の質疑応答も練習できます。',
+    href: '/career/presentation',
   },
 ] as const;
 
