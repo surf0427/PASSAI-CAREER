@@ -20,6 +20,8 @@ import {
   appendInterviewResult,
 } from '../interviewStorage';
 import { useVoice } from '../useVoice';
+import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
+import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
 import type {
   CareerInterviewSession,
   CareerInterviewResult,
@@ -74,6 +76,7 @@ export default function CareerInterviewSessionPage() {
     ttsSupported,
     listening,
     interimText,
+    speaking,
     startListening,
     stopListening,
     speak,
@@ -84,6 +87,18 @@ export default function CareerInterviewSessionPage() {
   const answered = countAnswers(session);
   const maxTurns = session?.maxTurns ?? 5;
   const isVoice = session?.mode === 'voice';
+  const interviewType = resolveInterviewType(session?.interviewType);
+  const modeConfig = getInterviewModeConfig(interviewType);
+
+  // アバターの状態（評価/思考 → thinking、録音中 → listening、読み上げ中 → speaking）。
+  const avatarState: AvatarState =
+    phase === 'thinking' || phase === 'evaluating'
+      ? 'thinking'
+      : listening
+        ? 'listening'
+        : speaking
+          ? 'speaking'
+          : 'idle';
 
   // 新しい質問が来たら（voice モードかつ TTS 対応時）読み上げる。
   const lastSpokenRef = useRef<string | null>(null);
@@ -124,7 +139,12 @@ export default function CareerInterviewSessionPage() {
       const res = await fetch('/api/career/interview/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...ctx, turns: turnsBefore, answer: trimmed }),
+        body: JSON.stringify({
+          ...ctx,
+          interviewType: session.interviewType,
+          turns: turnsBefore,
+          answer: trimmed,
+        }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -175,7 +195,11 @@ export default function CareerInterviewSessionPage() {
       const res = await fetch('/api/career/interview/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...ctx, turns: session.turns }),
+        body: JSON.stringify({
+          ...ctx,
+          interviewType: session.interviewType,
+          turns: session.turns,
+        }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -193,6 +217,7 @@ export default function CareerInterviewSessionPage() {
         id: session.id,
         createdAt: new Date().toISOString(),
         mode: session.mode,
+        interviewType: session.interviewType,
         turns: session.turns,
         result: data.result,
       });
@@ -229,6 +254,15 @@ export default function CareerInterviewSessionPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader title="面接中" description="面接官AIの質問に回答してください。" />
+
+      {/* 面接官アバター（状態表示） */}
+      <Card variant="soft" padding="md" className="mb-5">
+        <InterviewerAvatar
+          role={modeConfig.interviewerRole}
+          modeLabel={modeConfig.label}
+          state={avatarState}
+        />
+      </Card>
 
       {/* 進行バー */}
       <div className="mb-5">

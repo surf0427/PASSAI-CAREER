@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { loadInterviewResults } from '../interviewStorage';
+import { getInterviewModeConfig } from '../interviewModes';
 import type { CareerInterviewResult } from '@/types/careerInterview';
 
 const subscribeMount = () => () => {};
@@ -75,7 +76,8 @@ export default function CareerInterviewResultPage() {
                       <span className="font-semibold">{formatDate(r.createdAt)}</span>
                       <span className={active ? 'text-blue-100' : 'text-slate-400'}>
                         {' '}
-                        — {r.mode === 'voice' ? '音声' : 'テキスト'}・
+                        — {getInterviewModeConfig(r.interviewType).label}・
+                        {r.mode === 'voice' ? '音声' : 'テキスト'}・
                         {r.turns.filter((t) => t.role === 'answer').length}問回答
                       </span>
                     </button>
@@ -88,7 +90,8 @@ export default function CareerInterviewResultPage() {
           {selected && (
             <>
               <p className="text-xs text-slate-400 mb-4">
-                実施日時: {formatDate(selected.createdAt)}
+                実施日時: {formatDate(selected.createdAt)}・面接の種類:{' '}
+                {getInterviewModeConfig(selected.interviewType).label}
               </p>
 
               <Section title="総合評価">
@@ -102,6 +105,12 @@ export default function CareerInterviewResultPage() {
               <ListSection title="より良い回答例" items={selected.result.sampleAnswers} />
               <ListSection title="さらに深掘りされそうな論点" items={selected.result.deepDiveTopics} />
               <ListSection title="次にやるべきこと" items={selected.result.nextActions} />
+
+              <Section title="想定企業との相性（志望業界・職種・就活軸）">
+                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {selected.result.companyFit || '—'}
+                </p>
+              </Section>
 
               <Section title="面接のやり取り">
                 <ul className="flex flex-col gap-2">

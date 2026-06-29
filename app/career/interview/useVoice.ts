@@ -63,6 +63,8 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
   );
   const [listening, setListening] = useState(false);
   const [interimText, setInterimText] = useState('');
+  // TTS が読み上げ中かどうか（面接官アバターの「話しています」状態表示に使う）。
+  const [speaking, setSpeaking] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   // onFinalTranscript を ref に逃がし、recognition 再生成を避ける（ref 更新は effect 内で行う）。
@@ -147,13 +149,18 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
       const utterance = new SpeechSynthesisUtterance(trimmed);
       utterance.lang = 'ja-JP';
       utterance.rate = 1;
+      utterance.onstart = () => setSpeaking(true);
+      utterance.onend = () => setSpeaking(false);
+      utterance.onerror = () => setSpeaking(false);
       window.speechSynthesis.speak(utterance);
     } catch {
       // 読み上げ失敗は無視（面接はテキストで継続できる）。
+      setSpeaking(false);
     }
   }, []);
 
   const cancelSpeak = useCallback(() => {
+    setSpeaking(false);
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     try {
       window.speechSynthesis.cancel();
@@ -167,6 +174,7 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
     ttsSupported,
     listening,
     interimText,
+    speaking,
     startListening,
     stopListening,
     speak,

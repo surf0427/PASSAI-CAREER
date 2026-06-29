@@ -18,7 +18,15 @@ import type {
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
-import type { CareerInterviewTurn } from '@/types/careerInterview';
+import type {
+  CareerInterviewTurn,
+  CareerInterviewType,
+} from '@/types/careerInterview';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import {
+  getInterviewModeConfig,
+  SHARED_INTERVIEWER_RULES,
+} from '@/app/career/interview/interviewModes';
 
 // 機能キー（就活版共通基盤の出し分け）。
 const FEATURE_KEY = 'career-interview' as const;
@@ -58,22 +66,20 @@ const CAREER_DEEP_DIVE_AXES = [
   '興味のある業界・職種や就活軸との接続（この経験はどんな仕事で活きそうか）',
 ];
 
-// 面接官の人格・話し方（全モード共通）。TTS 読み上げ前提で自然な口語にする。
-const INTERVIEWER_PERSONA = [
-  'あなたは新卒就活の面接官です。大学生・大学院生の新卒採用面接を担当します。',
-  '大学受験（総合型選抜・学校推薦型選抜・一般入試）の文脈や、大学の評価軸は一切持ち込みません。',
-  '',
-  '【面接官の人格・話し方】',
-  '- 落ち着いて丁寧、かつ実際の面接らしい程よい緊張感を保つ。フレンドリーすぎず、雑談化させない。',
-  '- 出力は面接官が声に出して話す自然な日本語にする（音声読み上げ前提）。',
-  '- 質問は必ず1つだけ。毎回同じ言い回し・定型文を避け、表現を変える。',
-  '- 箇条書き・番号・記号の多用・長すぎる発話は禁止。',
-  '- 学生の実体験・具体的なエピソードに即して深掘りする（一般論で埋めない）。',
-  '- 抽象的すぎる質問・Yes/Noで終わる質問・既出の繰り返し・答えにくい質問・説教めいた質問は避け、答えやすく具体的で開かれた問いにする。',
-  '- 深掘りの狙いは「多く質問すること」ではなく、ES・面接・企業選びで再利用できる具体情報（行動の理由や判断基準・数字や変化・再現性・価値観・力を発揮できる/避けたい環境・キャリアや就活軸との接続）を、尋問にならない自然な会話で1つずつ引き出すこと。',
-  '- 事実確認が必要な情報（企業の事業内容・待遇・選考フロー等）は断定しない。',
-  '- 人格否定・侮辱・嘲笑・脅しは絶対に禁止（指摘は回答内容にのみ向ける）。',
-].join('\n');
+// 面接官の人格・話し方を、面接の種類（interviewType）に応じて組み立てる。
+// 「新卒就活の面接官」という土台 + モード固有の人格 + 全モード共通ルールをまとめる。
+function buildPersonaBlock(interviewType: CareerInterviewType | undefined): string {
+  const config = getInterviewModeConfig(interviewType);
+  return [
+    'あなたは新卒就活の面接官です。大学生・大学院生の新卒採用面接を担当します。',
+    '大学受験（総合型選抜・学校推薦型選抜・一般入試）の文脈や、大学の評価軸は一切持ち込みません。',
+    '',
+    `【今回の面接】${config.label}（担当: ${config.interviewerRole}）`,
+    config.persona,
+    '',
+    SHARED_INTERVIEWER_RULES,
+  ].join('\n');
+}
 
 // 直近の自己分析結果を可読テキストに整形（未提供なら空文字）。
 function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | undefined): string {
@@ -110,12 +116,47 @@ function renderEs(result: CareerEsResult | null | undefined): string {
   return lines.join('\n');
 }
 
+// 就活マッチング結果を可読テキストに整形（未提供なら空文字）。
+// 「想定企業との相性」を語るための材料として参照する（断定はしない）。
+function renderMatching(result: CareerMatchEngineResult | null | undefined): string {
+  if (!result) return '';
+  const lines: string[] = [];
+  const push = (label: string, value: string | undefined) => {
+    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
+  };
+  const pushList = (label: string, values: string[] | undefined, max: number) => {
+    if (values && values.length > 0) {
+      lines.push(`- ${label}: ${values.slice(0, max).join('、')}`);
+    }
+  };
+  push('適性タイプ', result.careerType);
+  pushList('相性の良い業界', result.recommendedIndustries, 5);
+  pushList('相性の良い職種', result.recommendedJobs, 5);
+  pushList('今後の伸ばしどころ', result.developmentAreas, 4);
+  return lines.join('\n');
+}
+
+// 相談AIでの最近の気づきを可読テキストに整形（参考程度・未提供なら空文字）。
+function renderConsultationInsights(insights: string[] | null | undefined): string {
+  if (!insights || insights.length === 0) return '';
+  return insights
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+    .slice(0, 5)
+    .map((s) => `- ${s}`)
+    .join('\n');
+}
+
 export type CareerInterviewContextInput = {
   profile?: CareerProfileInput | null;
   activity?: CareerActivityInput | null;
   values?: CareerValuesInput | null;
   selfAnalysis?: CareerSelfAnalysisResult | null;
   es?: CareerEsResult | null;
+  // 任意の参考データ（存在しなくても落ちない／プロンプトに出さないだけ）。
+  matching?: CareerMatchEngineResult | null;
+  consultationInsights?: string[] | null;
+  interviewType?: CareerInterviewType;
   userInput?: string;
 };
 
@@ -130,16 +171,22 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     userInput: input.userInput ?? '',
   });
 
+  const config = getInterviewModeConfig(input.interviewType);
   const selfAnalysisBlock = renderSelfAnalysis(input.selfAnalysis);
   const esBlock = renderEs(input.es);
+  const matchingBlock = renderMatching(input.matching);
+  const consultationBlock = renderConsultationInsights(input.consultationInsights);
 
   return [
-    INTERVIEWER_PERSONA,
+    buildPersonaBlock(input.interviewType),
     buildCareerSystemPrompt(context),
     buildCareerFeatureInstruction(FEATURE_KEY),
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
-    `# 面接で扱うテーマ（観点を変えて深掘りする）\n${CAREER_INTERVIEW_TOPICS.map((t) => `- ${t}`).join('\n')}`,
+    matchingBlock ? `# 就活マッチング結果（参考・断定しない）\n${matchingBlock}` : '',
+    consultationBlock ? `# 相談AIでの最近の気づき（参考程度）\n${consultationBlock}` : '',
+    `# この面接の狙い（${config.label}）\n${config.guidance}`,
+    `# 深掘りで扱える観点（毎回この中から最も価値が高い1点を選ぶ）\n${CAREER_INTERVIEW_TOPICS.map((t) => `- ${t}`).join('\n')}`,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
@@ -157,33 +204,41 @@ export function countAnswers(turns: CareerInterviewTurn[]): number {
   return turns.filter((t) => t.role === 'answer').length;
 }
 
-// seed（1問目）生成の user プロンプト。
-export function buildSeedUserPrompt(): string {
+// seed（1問目）生成の user プロンプト。面接の種類に応じて切り口を変える。
+export function buildSeedUserPrompt(interviewType?: CareerInterviewType): string {
+  const config = getInterviewModeConfig(interviewType);
   return [
-    '新卒就活の面接を始めます。',
-    `全${CAREER_INTERVIEW_MAX_TURNS}問程度で、上記テーマの観点を変えながら、後で具体を掘り下げられるように深掘りしていきます。`,
-    'まずは1問目として、ガクチカ・自己PR・志望動機のいずれかを切り口に、後から行動・成果・学びを深掘りしやすい「具体的な経験」を1つ話してもらえるような、答えやすく開かれた質問を1つだけ出してください。',
+    `新卒就活の面接（${config.label}）を始めます。`,
+    `全${CAREER_INTERVIEW_MAX_TURNS}問程度で、後から具体を掘り下げられるように深掘りしていきます。`,
+    `1問目の切り口: ${config.seedFocus}`,
     'いきなり数字や細部を問い詰めず、まずは経験の全体像を話しやすい入口にしてください。',
     '出力は質問文そのものだけ（前置き・説明・記号・引用符は付けない）。',
   ].join('\n');
 }
 
 // followup（回答を踏まえた次質問）生成の user プロンプト。JSON {reaction, question} を要求する。
-export function buildFollowupUserPrompt(turns: CareerInterviewTurn[]): string {
+export function buildFollowupUserPrompt(
+  turns: CareerInterviewTurn[],
+  interviewType?: CareerInterviewType,
+): string {
+  const config = getInterviewModeConfig(interviewType);
   const questionNumber = Math.min(countAnswers(turns) + 1, CAREER_INTERVIEW_MAX_TURNS);
   return [
     'これまでのやり取り:',
     buildTranscript(turns),
     '',
-    `これは${questionNumber}問目（全${CAREER_INTERVIEW_MAX_TURNS}問程度）です。`,
-    '学生の直前の回答に対して、まず一言リアクション（最大1文・褒めすぎない）をし、',
+    `これは${questionNumber}問目（全${CAREER_INTERVIEW_MAX_TURNS}問程度）です。面接の種類は「${config.label}」です。`,
+    `学生の直前の回答に対して、まず一言リアクション（最大1文・${config.reactionTone}）をし、`,
     'それを自然に踏まえて、次の質問を1つだけ作ってください。',
+    '',
+    `この面接の狙い: ${config.guidance}`,
     '',
     '深掘りの方針（重要）:',
     '- 直前の回答内容に合わせて、次の観点のうち「最も価値が高く、まだ十分に聞けていない1点」だけを選び、自然な会話の流れで1問だけ掘り下げる。',
     ...CAREER_DEEP_DIVE_AXES.map((axis) => `  ・${axis}`),
-    '- 文脈に合えば、数字・比較・Before/After・判断理由・学び・再現性まで自然に引き出す（ただし一度に複数を問い詰めず、尋問にしない）。',
-    '- 既に聞いた論点・聞き方は繰り返さない。抽象的すぎる質問・Yes/Noで終わる質問・答えにくい質問・説教めいた質問は避ける。',
+    '- 回答が抽象的・一般論なら具体例を求め、盛りすぎ・嘘っぽさを感じたら現実性（数字・事実・再現性）をやんわり確認する。',
+    '- 文脈に合えば、STAR（状況・課題・行動・結果）・数字・Before/After・判断理由・学び・再現性まで自然に引き出す（ただし一度に複数を問い詰めず、尋問にしない）。',
+    '- 既に聞いた論点・聞き方は繰り返さない。Yes/Noで終わる質問・答えにくい質問・説教めいた質問は避ける。',
     '- 目的は「多く質問すること」ではなく、ES・面接・マッチングで再利用できる具体的な情報を引き出すこと。',
     '',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
@@ -191,23 +246,34 @@ export function buildFollowupUserPrompt(turns: CareerInterviewTurn[]): string {
   ].join('\n');
 }
 
-// 最終評価 system prompt（JSON 出力スキーマを明示）。
-export const FINAL_FEEDBACK_INSTRUCTION = [
-  '# 最終フィードバック（出力形式・厳守）',
-  'これまでの面接のやり取り全体をもとに、新卒就活の観点で最終フィードバックを作成してください。',
-  '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
-  '各配列は2〜4個入れ、空配列にしない。実際の回答内容に即した具体的な指摘にし、テンプレ文を避ける。',
-  '事実確認が必要な企業・業界情報は断定しない。',
-  '',
-  '{',
-  '  "overallComment": string,      // 全体評価の総括（数文）',
-  '  "strengths": string[],         // 良かった点・強み',
-  '  "improvements": string[],      // 改善点',
-  '  "sampleAnswers": string[],     // より良い回答の例（具体的に）',
-  '  "deepDiveTopics": string[],    // さらに深掘りされそうな論点',
-  '  "nextActions": string[]        // 本番までに次にやるべきこと',
-  '}',
-].join('\n');
+// 最終評価 system prompt（JSON 出力スキーマを明示）。面接の種類に応じて重視点を足す。
+export function buildFinalFeedbackInstruction(
+  interviewType?: CareerInterviewType,
+): string {
+  const config = getInterviewModeConfig(interviewType);
+  return [
+    '# 最終フィードバック（出力形式・厳守）',
+    `これまでの面接（${config.label}）のやり取り全体をもとに、新卒就活の観点で最終フィードバックを作成してください。`,
+    '評価は「優しいが甘すぎない」面接官として、STAR（状況・課題・行動・結果）・結論ファースト・成果の具体性・強みの再現性・志望動機との一貫性を見て行ってください。',
+    `この面接の種類で特に重視する観点: ${config.feedbackEmphasis}`,
+    config.pressure
+      ? '圧迫面接の評価でも、指摘は厳しくてよいが、フィードバック自体は学生が次に改善できるよう建設的にすること（人格否定は禁止）。'
+      : '指摘は率直にしつつ、学生が次に改善できるよう建設的にすること。',
+    '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
+    '各配列は2〜4個入れ、空配列にしない。実際の回答内容に即した具体的な指摘にし、テンプレ文を避ける。',
+    '事実確認が必要な企業・業界情報は断定しない。companyFit は志望業界・職種・就活軸（あれば志望企業）との相性・接続を、回答内容に即して2〜4文で述べる。',
+    '',
+    '{',
+    '  "overallComment": string,      // 全体評価の総括（数文）',
+    '  "strengths": string[],         // 良かった点・強み',
+    '  "improvements": string[],      // 改善点',
+    '  "sampleAnswers": string[],     // より良い回答の例（具体的に）',
+    '  "deepDiveTopics": string[],    // さらに深掘りされそうな論点',
+    '  "nextActions": string[],       // 本番までに次にやるべきこと',
+    '  "companyFit": string           // 志望業界・職種・就活軸との相性・接続についての所見',
+    '}',
+  ].join('\n');
+}
 
 // 最終評価 user プロンプト。
 export function buildFinalUserPrompt(turns: CareerInterviewTurn[]): string {

@@ -16,7 +16,15 @@ import {
 } from '../contextSource';
 import { upsertInterviewSession } from '../interviewStorage';
 import { useVoice } from '../useVoice';
-import type { CareerInterviewMode, CareerInterviewSession } from '@/types/careerInterview';
+import {
+  CAREER_INTERVIEW_MODES,
+  DEFAULT_CAREER_INTERVIEW_TYPE,
+} from '../interviewModes';
+import type {
+  CareerInterviewMode,
+  CareerInterviewSession,
+  CareerInterviewType,
+} from '@/types/careerInterview';
 
 // 回答ターン上限（サーバ CAREER_INTERVIEW_MAX_TURNS=5 と一致。進行バー表示に使う）。
 const MAX_TURNS = 5;
@@ -35,6 +43,9 @@ function newId(): string {
 export default function CareerInterviewSetupPage() {
   const router = useRouter();
   const [mode, setMode] = useState<CareerInterviewMode>('text');
+  const [interviewType, setInterviewType] = useState<CareerInterviewType>(
+    DEFAULT_CAREER_INTERVIEW_TYPE,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +76,7 @@ export default function CareerInterviewSetupPage() {
       const res = await fetch('/api/career/interview/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ctx),
+        body: JSON.stringify({ ...ctx, interviewType }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -83,6 +94,7 @@ export default function CareerInterviewSetupPage() {
         updatedAt: now,
         status: 'in_progress',
         mode: effectiveMode,
+        interviewType,
         turns: [{ role: 'question', content: data.question }],
         maxTurns: MAX_TURNS,
       };
@@ -111,6 +123,24 @@ export default function CareerInterviewSetupPage() {
             基本情報または活動整理のいずれかを入力すると面接を始められます。
           </p>
         )}
+      </Card>
+
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">面接の種類</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {CAREER_INTERVIEW_MODES.map((m) => (
+            <TypeOption
+              key={m.type}
+              emoji={m.emoji}
+              label={m.label}
+              role={m.interviewerRole}
+              description={m.description}
+              recommended={m.recommendedData}
+              active={interviewType === m.type}
+              onClick={() => setInterviewType(m.type)}
+            />
+          ))}
+        </div>
       </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
@@ -175,6 +205,42 @@ function ReadyItem({ label, ready, href }: { label: string; ready: boolean; href
         </Link>
       )}
     </div>
+  );
+}
+
+function TypeOption({
+  emoji,
+  label,
+  role,
+  description,
+  recommended,
+  active,
+  onClick,
+}: {
+  emoji: string;
+  label: string;
+  role: string;
+  description: string;
+  recommended: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const base = 'w-full text-left rounded-xl ring-1 p-4 transition-colors';
+  const cls = active
+    ? `${base} ring-blue-500 bg-blue-50`
+    : `${base} ring-slate-200 bg-white hover:bg-slate-50`;
+  return (
+    <button type="button" onClick={onClick} className={cls}>
+      <p className="text-sm font-bold text-slate-900 mb-1">
+        <span aria-hidden className="mr-1">
+          {emoji}
+        </span>
+        {label}
+        <span className="ml-2 text-[11px] font-medium text-slate-500">{role}</span>
+      </p>
+      <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
+      <p className="mt-1.5 text-[11px] text-slate-400">活きるデータ: {recommended}</p>
+    </button>
   );
 }
 

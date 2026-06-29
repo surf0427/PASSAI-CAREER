@@ -13,6 +13,9 @@ import type {
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
+import type { CareerInterviewType } from '@/types/careerInterview';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import { resolveInterviewType } from '@/app/career/interview/interviewModes';
 import { anthropic } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
@@ -45,6 +48,9 @@ export async function POST(req: Request) {
     values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
+    matching?: CareerMatchEngineResult | null;
+    consultationInsights?: string[] | null;
+    interviewType?: CareerInterviewType;
     userInput?: string;
   };
 
@@ -57,12 +63,16 @@ export async function POST(req: Request) {
     );
   }
 
+  const interviewType = resolveInterviewType(b.interviewType);
   const system = buildInterviewBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
     values: b.values ?? null,
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
+    matching: b.matching ?? null,
+    consultationInsights: b.consultationInsights ?? null,
+    interviewType,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
 
@@ -73,7 +83,7 @@ export async function POST(req: Request) {
         max_tokens: 400,
         temperature: 0.6,
         system,
-        messages: [{ role: 'user', content: buildSeedUserPrompt() }],
+        messages: [{ role: 'user', content: buildSeedUserPrompt(interviewType) }],
       },
       { signal: createTimeoutSignal() },
     );

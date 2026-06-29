@@ -14,14 +14,17 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type {
   CareerInterviewTurn,
   CareerInterviewFinalResult,
+  CareerInterviewType,
 } from '@/types/careerInterview';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import { resolveInterviewType } from '@/app/career/interview/interviewModes';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
   CAREER_INTERVIEW_MODEL,
   buildInterviewBaseSystem,
   buildFinalUserPrompt,
-  FINAL_FEEDBACK_INSTRUCTION,
+  buildFinalFeedbackInstruction,
 } from '../interviewPrompt';
 
 export const maxDuration = 80;
@@ -58,6 +61,7 @@ function normalizeResult(raw: unknown): CareerInterviewFinalResult {
     sampleAnswers: strArray(r.sampleAnswers),
     deepDiveTopics: strArray(r.deepDiveTopics),
     nextActions: strArray(r.nextActions),
+    companyFit: str(r.companyFit),
   };
 }
 
@@ -75,6 +79,9 @@ export async function POST(req: Request) {
     values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
+    matching?: CareerMatchEngineResult | null;
+    consultationInsights?: string[] | null;
+    interviewType?: CareerInterviewType;
     userInput?: string;
     turns?: unknown;
   };
@@ -85,6 +92,7 @@ export async function POST(req: Request) {
     return Response.json({ error: '回答がありません。' }, { status: 409 });
   }
 
+  const interviewType = resolveInterviewType(b.interviewType);
   const system = [
     buildInterviewBaseSystem({
       profile: b.profile ?? null,
@@ -92,9 +100,12 @@ export async function POST(req: Request) {
       values: b.values ?? null,
       selfAnalysis: b.selfAnalysis ?? null,
       es: b.es ?? null,
+      matching: b.matching ?? null,
+      consultationInsights: b.consultationInsights ?? null,
+      interviewType,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',
     }),
-    FINAL_FEEDBACK_INSTRUCTION,
+    buildFinalFeedbackInstruction(interviewType),
   ].join('\n\n');
 
   try {

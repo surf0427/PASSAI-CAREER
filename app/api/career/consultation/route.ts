@@ -102,6 +102,11 @@ function renderInterview(r: CareerInterviewFinalResult | null | undefined): stri
   if (str(r.overallComment)) lines.push(`- 総合評価: ${str(r.overallComment)}`);
   if (r.strengths?.length) lines.push(`- 良かった点: ${r.strengths.join('、')}`);
   if (r.improvements?.length) lines.push(`- 改善点: ${r.improvements.join('、')}`);
+  if (r.deepDiveTopics?.length)
+    lines.push(`- さらに深掘りされそうな論点: ${r.deepDiveTopics.join('、')}`);
+  if (r.nextActions?.length)
+    lines.push(`- 次にやるべきこと: ${r.nextActions.join('、')}`);
+  if (str(r.companyFit)) lines.push(`- 想定企業との相性: ${str(r.companyFit)}`);
   return lines.join('\n');
 }
 
