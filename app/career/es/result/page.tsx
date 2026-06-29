@@ -45,12 +45,15 @@ type ReviewState = {
   saveError: string | null;
 };
 
-// 添削 1 件分の依頼内容（保存時の question/charLimit/companyName 引き継ぎにも使う）。
+// 添削 1 件分の依頼内容（保存時の question/charLimit/companyName 等の引き継ぎにも使う）。
 type ReviewRequest = {
   answer: string;
   question?: string;
   companyName?: string;
   charLimit?: number;
+  selectionType?: CareerEsLog['selectionType'];
+  industry?: string;
+  jobType?: string;
 };
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
@@ -125,6 +128,9 @@ export default function CareerEsResultPage() {
           question: request.question,
           companyName: request.companyName,
           charLimit: request.charLimit,
+          selectionType: request.selectionType,
+          industry: request.industry,
+          jobType: request.jobType,
         }),
       });
       if (!res.ok) {
@@ -173,12 +179,18 @@ export default function CareerEsResultPage() {
       const question = request.question;
       const charLimit = request.charLimit;
       const companyName = request.companyName;
+      const selectionType = request.selectionType;
+      const industry = request.industry;
+      const jobType = request.jobType;
 
       const result: CareerEsResult = {
         answer: rewrite,
         question,
         charLimit,
         companyName,
+        ...(selectionType ? { selectionType } : {}),
+        ...(industry ? { industry } : {}),
+        ...(jobType ? { jobType } : {}),
         // 7 フィールドは空（設問モードログと同形）。
         headline: '',
         gakuchika: '',
@@ -199,6 +211,9 @@ export default function CareerEsResultPage() {
         ...(companyName ? { companyName } : {}),
         ...(question ? { question } : {}),
         ...(charLimit ? { charLimit } : {}),
+        ...(selectionType ? { selectionType } : {}),
+        ...(industry ? { industry } : {}),
+        ...(jobType ? { jobType } : {}),
       };
 
       try {
@@ -329,10 +344,27 @@ export default function CareerEsResultPage() {
                     />
                   </div>
                 </div>
-                {(selected.companyName || selected.question || selected.charLimit) && (
+                {(selected.companyName ||
+                  selected.question ||
+                  selected.charLimit ||
+                  selected.selectionType ||
+                  selected.industry ||
+                  selected.jobType) && (
                   <div className="grid grid-cols-1 gap-1.5 pt-2 border-t border-slate-200">
+                    {selected.selectionType && (
+                      <MetaRow
+                        label="選考種別"
+                        value={selectionTypeLabel(selected.selectionType)}
+                      />
+                    )}
                     {selected.companyName && (
                       <MetaRow label="企業名" value={selected.companyName} />
+                    )}
+                    {selected.industry && (
+                      <MetaRow label="志望業界" value={selected.industry} />
+                    )}
+                    {selected.jobType && (
+                      <MetaRow label="志望職種" value={selected.jobType} />
                     )}
                     {selected.question && (
                       <MetaRow label="設問" value={selected.question} />
@@ -353,6 +385,9 @@ export default function CareerEsResultPage() {
                     question: selected.result.question ?? selected.question,
                     companyName: selected.result.companyName ?? selected.companyName,
                     charLimit: selected.result.charLimit ?? selected.charLimit,
+                    selectionType: selected.result.selectionType ?? selected.selectionType,
+                    industry: selected.result.industry ?? selected.industry,
+                    jobType: selected.result.jobType ?? selected.jobType,
                   };
                   return (
                     <>
@@ -410,12 +445,20 @@ function formatDate(iso: string): string {
   return d.toLocaleString('ja-JP');
 }
 
-// 一覧での 1 行ラベル。企業名 → 設問（先頭） → キャッチコピー の優先で短く表示する。
+// 選考種別の表示ラベル。未知の値（将来の追加・壊れたログ）は素通しせず空表示にしない。
+function selectionTypeLabel(type: CareerEsLog['selectionType']): string {
+  if (type === 'main') return '本選考';
+  if (type === 'internship') return 'インターン応募';
+  return '';
+}
+
+// 一覧での 1 行ラベル。選考種別を頭に付け、企業名 → 設問（先頭） → キャッチコピー の優先で短く表示する。
 function logLabel(log: CareerEsLog): string {
-  if (log.companyName) return log.companyName;
+  const prefix = log.selectionType ? `[${selectionTypeLabel(log.selectionType)}] ` : '';
+  if (log.companyName) return `${prefix}${log.companyName}`;
   const q = log.question ?? '';
-  if (q) return q.length > 24 ? `${q.slice(0, 24)}…` : q;
-  return log.result.headline ?? '';
+  if (q) return `${prefix}${q.length > 24 ? `${q.slice(0, 24)}…` : q}`;
+  return `${prefix}${log.result.headline ?? ''}`.trim();
 }
 
 // 7 フィールドのうち AI添削の対象にする独立 ES 項目。各項目を「1 つの ES」として扱う。
@@ -449,6 +492,9 @@ function SevenFieldResult({
 }) {
   const { result } = log;
   const companyName = result.companyName ?? log.companyName;
+  const selectionType = result.selectionType ?? log.selectionType;
+  const industry = result.industry ?? log.industry;
+  const jobType = result.jobType ?? log.jobType;
 
   return (
     <>
@@ -458,7 +504,14 @@ function SevenFieldResult({
         const body = result[field];
         const reviewKey = `${log.id}:${field}`;
         // 各項目を独立した ES として添削する。文字数指定は無し（未指定）。
-        const request: ReviewRequest = { answer: body, question, companyName };
+        const request: ReviewRequest = {
+          answer: body,
+          question,
+          companyName,
+          selectionType,
+          industry,
+          jobType,
+        };
         return (
           <div key={field}>
             <TextSection

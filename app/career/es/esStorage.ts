@@ -27,6 +27,11 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
   if (typeof r.companyName === 'string') log.companyName = r.companyName;
   if (typeof r.question === 'string') log.question = r.question;
   if (typeof r.charLimit === 'number') log.charLimit = r.charLimit;
+  if (r.selectionType === 'main' || r.selectionType === 'internship') {
+    log.selectionType = r.selectionType;
+  }
+  if (typeof r.industry === 'string') log.industry = r.industry;
+  if (typeof r.jobType === 'string') log.jobType = r.jobType;
   if (typeof r.favorite === 'boolean') log.favorite = r.favorite;
   if (typeof r.submitted === 'boolean') log.submitted = r.submitted;
   if (r.editedResult && typeof r.editedResult === 'object') {

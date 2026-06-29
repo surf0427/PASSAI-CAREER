@@ -175,6 +175,9 @@ export async function POST(req: Request) {
     question?: string;
     companyName?: string;
     charLimit?: number;
+    selectionType?: unknown;
+    industry?: string;
+    jobType?: string;
   };
 
   const answer = str(b.answer);
@@ -184,6 +187,15 @@ export async function POST(req: Request) {
     typeof b.charLimit === 'number' && Number.isFinite(b.charLimit) && b.charLimit > 0
       ? Math.floor(b.charLimit)
       : null;
+  // 応募メタ（添削時の企業適合性・整合性評価の文脈に使う）。未指定は許容する。
+  const selectionLabel =
+    b.selectionType === 'main'
+      ? '本選考'
+      : b.selectionType === 'internship'
+        ? 'インターン応募'
+        : '';
+  const industry = str(b.industry);
+  const jobType = str(b.jobType);
 
   // 添削対象が無ければ弾く。
   if (answer === '') {
@@ -196,7 +208,10 @@ export async function POST(req: Request) {
   // user メッセージ: 設問・企業名・文字数（あれば）+ 添削対象本文。
   const userMessage = [
     question ? `# ES設問\n${question}` : '',
+    selectionLabel ? `# 選考種別\n${selectionLabel}` : '',
     companyName ? `# 志望企業\n${companyName}` : '',
+    industry ? `# 志望業界\n${industry}` : '',
+    jobType ? `# 志望職種\n${jobType}` : '',
     charLimit ? `# 指定文字数\n${charLimit} 字（±10% 以内を目安）` : '',
     `# 添削対象の回答本文\n${answer}`,
     '',

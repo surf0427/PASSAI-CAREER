@@ -22,7 +22,7 @@ import type {
   CareerActivityInput,
   CareerValuesInput,
 } from '@/lib/careerAi';
-import type { CareerEsResult } from '@/types/careerEs';
+import type { CareerEsResult, CareerEsSelectionType } from '@/types/careerEs';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -96,6 +96,44 @@ function buildCompanyInstruction(companyName: string): string {
   ].join('\n');
 }
 
+// 選考種別・志望業界・志望職種が与えられたときの指示ブロック。
+// このES1本に限った応募文脈に寄せる。該当が無ければ空文字を返し、prompt に出さない。
+function buildTargetingInstruction(params: {
+  selectionType: CareerEsSelectionType | null;
+  industry: string;
+  jobType: string;
+}): string {
+  const lines: string[] = [];
+  if (params.selectionType === 'main') {
+    lines.push(
+      '# 選考種別: 本選考',
+      '- 入社を前提とした本選考向けのESです。入社後に中長期で活躍・貢献するイメージや、',
+      '  その企業・仕事で実現したいことが伝わる表現にしてください。',
+    );
+  } else if (params.selectionType === 'internship') {
+    lines.push(
+      '# 選考種別: インターン応募',
+      '- インターンシップ応募向けのESです。インターンで学びたいこと・挑戦したいこと、',
+      '  参加意欲と成長意欲が伝わる表現にしてください。',
+      '- 「入社後に長く働く」前提の表現に寄せすぎないでください（応募段階はインターン参加です）。',
+    );
+  }
+  if (params.industry) {
+    lines.push(
+      `# 志望業界: ${params.industry}`,
+      `- 「${params.industry}」で一般的に求められる素養・着眼点に接続した言い回しにしてください。`,
+      '  ただし業界の事実（市場規模・動向・各社事情など）は断定・捏造しないでください。',
+    );
+  }
+  if (params.jobType) {
+    lines.push(
+      `# 志望職種: ${params.jobType}`,
+      `- 「${params.jobType}」で活きる強み・経験が伝わるように、本人の経験から自然に接続してください。`,
+    );
+  }
+  return lines.join('\n');
+}
+
 // 任意の値を string に丸める。
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -120,24 +158,44 @@ function emptyResult(): CareerEsResult {
   };
 }
 
-// AI 出力（パース済み unknown）を CareerEsResult 形状に正規化する（おまかせ生成モード）。
-function normalizeResult(raw: unknown): CareerEsResult {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return {
-    gakuchika: str(r.gakuchika),
-    selfPr: str(r.selfPr),
-    motivation: str(r.motivation),
-    headline: str(r.headline),
-    appealPoints: strArray(r.appealPoints),
-    interviewQuestions: strArray(r.interviewQuestions),
-    improvements: strArray(r.improvements),
-  };
+// 生成時の応募メタ（企業・選考種別・業界・職種）。両モードで結果へ echo する。
+type EsMeta = {
+  companyName: string;
+  selectionType: CareerEsSelectionType | null;
+  industry: string;
+  jobType: string;
+};
+
+// 応募メタ（企業・選考種別・業界・職種）を結果へ echo する（存在する分だけ）。
+function applyMeta(result: CareerEsResult, meta: EsMeta): CareerEsResult {
+  if (meta.companyName) result.companyName = meta.companyName;
+  if (meta.selectionType) result.selectionType = meta.selectionType;
+  if (meta.industry) result.industry = meta.industry;
+  if (meta.jobType) result.jobType = meta.jobType;
+  return result;
 }
 
-// 設問モードの AI 出力を正規化する。answer を取り出し、設問・文字数・企業名を echo する。
+// AI 出力（パース済み unknown）を CareerEsResult 形状に正規化する（おまかせ生成モード）。
+function normalizeResult(raw: unknown, meta: EsMeta): CareerEsResult {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return applyMeta(
+    {
+      gakuchika: str(r.gakuchika),
+      selfPr: str(r.selfPr),
+      motivation: str(r.motivation),
+      headline: str(r.headline),
+      appealPoints: strArray(r.appealPoints),
+      interviewQuestions: strArray(r.interviewQuestions),
+      improvements: strArray(r.improvements),
+    },
+    meta,
+  );
+}
+
+// 設問モードの AI 出力を正規化する。answer を取り出し、設問・文字数・応募メタを echo する。
 function normalizeAnswerResult(
   raw: unknown,
-  meta: { question: string; charLimit: number | null; companyName: string },
+  meta: EsMeta & { question: string; charLimit: number | null },
 ): CareerEsResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const result: CareerEsResult = {
@@ -146,8 +204,7 @@ function normalizeAnswerResult(
     question: meta.question,
   };
   if (meta.charLimit) result.charLimit = meta.charLimit;
-  if (meta.companyName) result.companyName = meta.companyName;
-  return result;
+  return applyMeta(result, meta);
 }
 
 // 直近の自己分析結果を system prompt 用の可読テキストに整形する。
@@ -191,6 +248,9 @@ export async function POST(req: Request) {
     question?: string;
     charLimit?: number;
     companyName?: string;
+    selectionType?: unknown;
+    industry?: string;
+    jobType?: string;
   };
 
   const profile = b.profile ?? null;
@@ -206,6 +266,14 @@ export async function POST(req: Request) {
     typeof b.charLimit === 'number' && Number.isFinite(b.charLimit) && b.charLimit > 0
       ? Math.floor(b.charLimit)
       : null;
+  // 応募メタ（このES1本に限った文脈）。未指定は許容する。
+  const selectionType: CareerEsSelectionType | null =
+    b.selectionType === 'main' || b.selectionType === 'internship'
+      ? b.selectionType
+      : null;
+  const industry = typeof b.industry === 'string' ? b.industry.trim() : '';
+  const jobType = typeof b.jobType === 'string' ? b.jobType.trim() : '';
+  const meta: EsMeta = { companyName, selectionType, industry, jobType };
   const answerMode = question !== '';
 
   // 材料が何も無ければ ES を作れないので弾く。
@@ -231,6 +299,7 @@ export async function POST(req: Request) {
   // 設問モードでは設問ブロックと answer 用出力形式、それ以外は従来の 7 フィールド出力形式。
   const selfAnalysisBlock = renderSelfAnalysis(selfAnalysis);
   const companyBlock = companyName ? buildCompanyInstruction(companyName) : '';
+  const targetingBlock = buildTargetingInstruction({ selectionType, industry, jobType });
   const questionBlock = answerMode
     ? [
         '# ES設問（この設問に直接答えてください）',
@@ -247,6 +316,7 @@ export async function POST(req: Request) {
   const systemPrompt = [
     buildCareerSystemPrompt(context),
     companyBlock,
+    targetingBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     questionBlock,
     outputFormat,
@@ -291,8 +361,8 @@ export async function POST(req: Request) {
       try {
         const parsed = JSON.parse(extractJson(raw));
         result = answerMode
-          ? normalizeAnswerResult(parsed, { question, charLimit, companyName })
-          : normalizeResult(parsed);
+          ? normalizeAnswerResult(parsed, { ...meta, question, charLimit })
+          : normalizeResult(parsed, meta);
         break;
       } catch {
         if (attempt === 1) continue;

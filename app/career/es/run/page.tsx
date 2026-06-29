@@ -30,7 +30,7 @@ import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
-import type { CareerEsResult } from '@/types/careerEs';
+import type { CareerEsResult, CareerEsSelectionType } from '@/types/careerEs';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -52,6 +52,10 @@ export default function CareerEsRunPage() {
   const [question, setQuestion] = useState('');
   const [charLimitInput, setCharLimitInput] = useState('');
   const [companyName, setCompanyName] = useState('');
+  // 応募メタ（このES1本に限った文脈）。すべて任意。
+  const [selectionType, setSelectionType] = useState<CareerEsSelectionType | null>(null);
+  const [industry, setIndustry] = useState('');
+  const [jobType, setJobType] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,6 +101,8 @@ export default function CareerEsRunPage() {
     // 設問モードの入力を正規化する。空なら従来のおまかせ生成にフォールバック。
     const trimmedQuestion = question.trim();
     const trimmedCompany = companyName.trim();
+    const trimmedIndustry = industry.trim();
+    const trimmedJobType = jobType.trim();
     const parsedLimit = Number.parseInt(charLimitInput, 10);
     const charLimit =
       Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
@@ -115,6 +121,9 @@ export default function CareerEsRunPage() {
           question: trimmedQuestion || undefined,
           charLimit,
           companyName: trimmedCompany || undefined,
+          selectionType: selectionType ?? undefined,
+          industry: trimmedIndustry || undefined,
+          jobType: trimmedJobType || undefined,
         }),
       });
 
@@ -133,6 +142,9 @@ export default function CareerEsRunPage() {
         ...(trimmedCompany ? { companyName: trimmedCompany } : {}),
         ...(trimmedQuestion ? { question: trimmedQuestion } : {}),
         ...(charLimit ? { charLimit } : {}),
+        ...(selectionType ? { selectionType } : {}),
+        ...(trimmedIndustry ? { industry: trimmedIndustry } : {}),
+        ...(trimmedJobType ? { jobType: trimmedJobType } : {}),
       });
 
       router.push('/career/es/result');
@@ -171,11 +183,35 @@ export default function CareerEsRunPage() {
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
-          設問に合わせて作る（任意）
+          企業・選考に合わせて作る（任意）
         </p>
         <p className="text-xs text-slate-500 leading-relaxed mb-4">
-          ES設問を入力すると、その設問への回答を生成します。空のままだと、ガクチカ・自己PR・志望動機などを一括で下書きします。
+          ES設問を入力すると、その設問への回答を生成します。空のままだと、ガクチカ・自己PR・志望動機などを一括で下書きします。選考種別・業界・職種・企業名を指定すると、その応募先に合わせた表現に調整します。
         </p>
+
+        <label className="block text-sm font-bold text-slate-800 mb-2">
+          選考種別（任意）
+        </label>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <SelectionTypeButton
+            label="指定なし"
+            active={selectionType === null}
+            onClick={() => setSelectionType(null)}
+            disabled={loading}
+          />
+          <SelectionTypeButton
+            label="本選考"
+            active={selectionType === 'main'}
+            onClick={() => setSelectionType('main')}
+            disabled={loading}
+          />
+          <SelectionTypeButton
+            label="インターン応募"
+            active={selectionType === 'internship'}
+            onClick={() => setSelectionType('internship')}
+            disabled={loading}
+          />
+        </div>
 
         <label className="block text-sm font-bold text-slate-800 mb-2">
           ES設問
@@ -212,6 +248,28 @@ export default function CareerEsRunPage() {
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               placeholder="例: 〇〇株式会社"
+              disabled={loading}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-2">
+              志望業界（任意）
+            </label>
+            <Input
+              value={industry}
+              onChange={(e) => setIndustry(e.target.value)}
+              placeholder="例: IT・Web、メーカー、商社 など"
+              disabled={loading}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-slate-800 mb-2">
+              志望職種（任意）
+            </label>
+            <Input
+              value={jobType}
+              onChange={(e) => setJobType(e.target.value)}
+              placeholder="例: 営業、エンジニア、企画 など"
               disabled={loading}
             />
           </div>
@@ -255,6 +313,34 @@ export default function CareerEsRunPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+function SelectionTypeButton({
+  label,
+  active,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 ${
+        active
+          ? 'bg-blue-600 text-white'
+          : 'bg-white ring-1 ring-slate-300 text-slate-600 hover:bg-slate-50'
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

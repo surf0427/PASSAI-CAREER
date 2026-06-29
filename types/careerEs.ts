@@ -3,6 +3,12 @@
 // 受験版の志望理由書（statement）系の型には依存しない（新卒就活向けに新規定義）。
 // DB / Supabase には接続せず localStorage のみで扱う。
 
+// 選考種別（応募する選考の種類）。
+//   - 'main'       : 本選考（入社を前提とした選考）
+//   - 'internship' : インターン応募
+// 未指定（undefined）は「選考種別の指定なし」を表す。後方互換のため optional 運用。
+export type CareerEsSelectionType = 'main' | 'internship';
+
 // 就活版 ES作成AI が返す JSON 構造。
 // API route（app/api/career/es/route.ts）の出力と 1:1 で対応する。
 export type CareerEsResult = {
@@ -33,6 +39,12 @@ export type CareerEsResult = {
   charLimit?: number;
   // 生成時に与えられた企業名（任意）。
   companyName?: string;
+  // 生成時に与えられた選考種別（本選考 / インターン）。任意。
+  selectionType?: CareerEsSelectionType;
+  // 生成時に与えられた志望業界（このESに限った指定。任意）。
+  industry?: string;
+  // 生成時に与えられた志望職種（このESに限った指定。任意）。
+  jobType?: string;
 };
 
 // ── AI添削（es-review）の型 ──────────────────────────────────────────
@@ -100,6 +112,12 @@ export type CareerEsLog = {
   question?: string;
   // 生成に使った文字数指定。
   charLimit?: number;
+  // 生成に使った選考種別（本選考 / インターン）。
+  selectionType?: CareerEsSelectionType;
+  // 生成に使った志望業界（このESに限った指定）。
+  industry?: string;
+  // 生成に使った志望職種（このESに限った指定）。
+  jobType?: string;
   // お気に入りフラグ（結果画面でトグル）。
   favorite?: boolean;
   // 提出済みフラグ（結果画面でトグル）。
