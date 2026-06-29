@@ -20,6 +20,11 @@ import {
   appendInterviewResult,
 } from '../interviewStorage';
 import { useVoice } from '../useVoice';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import {
+  upsertCareerInterviewSessionsToSupabase,
+  upsertCareerInterviewResultsToSupabase,
+} from '@/lib/supabase/careerInterview';
 import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
 import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
 import type {
@@ -52,6 +57,12 @@ function formatElapsed(sec: number): string {
 
 export default function CareerInterviewSessionPage() {
   const router = useRouter();
+  // Supabase mirror 用。useCallback の deps を変えないよう ref で最新 userId を参照する。
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
   const isMounted = useSyncExternalStore(
     subscribeMount,
     getMountedSnapshot,
@@ -159,6 +170,8 @@ export default function CareerInterviewSessionPage() {
       if (data.done || !data.question) {
         // 上限到達 = 面接終了。回答だけ確定して評価フェーズへ。
         upsertInterviewSession(withAnswer);
+        if (userIdRef.current)
+          void upsertCareerInterviewSessionsToSupabase(userIdRef.current, [withAnswer]);
         setSession(withAnswer);
         setReaction(data.reaction ?? '');
         setAnswer('');
@@ -172,6 +185,8 @@ export default function CareerInterviewSessionPage() {
         updatedAt: new Date().toISOString(),
       };
       upsertInterviewSession(next);
+      if (userIdRef.current)
+        void upsertCareerInterviewSessionsToSupabase(userIdRef.current, [next]);
       setSession(next);
       setReaction(data.reaction ?? '');
       setAnswer('');
@@ -213,14 +228,20 @@ export default function CareerInterviewSessionPage() {
         updatedAt: new Date().toISOString(),
       };
       upsertInterviewSession(completed);
-      appendInterviewResult({
+      const resultLog: CareerInterviewResult = {
         id: session.id,
         createdAt: new Date().toISOString(),
         mode: session.mode,
         interviewType: session.interviewType,
         turns: session.turns,
         result: data.result,
-      });
+      };
+      appendInterviewResult(resultLog);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userIdRef.current) {
+        void upsertCareerInterviewSessionsToSupabase(userIdRef.current, [completed]);
+        void upsertCareerInterviewResultsToSupabase(userIdRef.current, [resultLog]);
+      }
       router.push('/career/interview/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : '評価の生成に失敗しました。');

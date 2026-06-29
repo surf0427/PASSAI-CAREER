@@ -2793,3 +2793,245 @@ CREATE POLICY "career_values owner delete"
   FOR DELETE
   TO authenticated
   USING (auth.uid() = user_id);
+
+-- ============================================================
+-- 81–91. career_* feature mirrors（STEP-CAREER-SUPABASE-01）
+--
+--   就活版（PASSAI CAREER）の既存機能を localStorage canonical のまま、ログイン済み
+--   （member）ユーザーの durable mirror として Supabase に永続化する table 群。
+--   career_values §80 / self_prs §35 / interview_practice_records §53 と同じ auth-scoped
+--   永続層（mirror_events 系統ではない）。受験版データには一切関与しない。
+--
+--   単一レコード系（profiles / activities）は UNIQUE(user_id) で 1 ユーザー 1 行・upsert。
+--   履歴系は natural key UNIQUE(user_id, client_id)（client_id=localStorage のレコード id）で
+--   再保存・login 時 backfill を冪等にする。AI 出力は jsonb（schema_boundary_policy §10）。
+--   検索/状態だけ通常カラムに昇格する。
+--
+--   trigger（set_updated_at / §3 共有）と RLS（owner 4 policy / authenticated）は本節末尾の
+--   DO ブロックでまとめて張る（career_values §81 と同形）。
+--   idempotent apply の正写しは supabase/career_features_apply.sql。
+-- ============================================================
+
+-- 81. career_profiles — 基本情報/プロフィール（/career/profile）。LS key=careerBasicFormData。
+CREATE TABLE career_profiles (
+  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name             text        NOT NULL DEFAULT '',
+  university       text        NOT NULL DEFAULT '',
+  faculty          text        NOT NULL DEFAULT '',
+  department       text        NOT NULL DEFAULT '',
+  grade            text        NOT NULL DEFAULT '',
+  graduation_year  text        NOT NULL DEFAULT '',
+  gender           text        NOT NULL DEFAULT '',
+  data             jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_profiles_user_unique UNIQUE (user_id)
+);
+
+-- 82. career_activities — 活動整理/ガクチカ素材（/career/activity）。LS key=careerActivityData。
+CREATE TABLE career_activities (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  data        jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_activities_user_unique UNIQUE (user_id)
+);
+
+-- 83. career_self_analysis_results — 自己分析の結果履歴。LS key=careerSelfAnalysisLogs。
+CREATE TABLE career_self_analysis_results (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id   text        NOT NULL,
+  user_input  jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  result      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_self_analysis_results_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_self_analysis_results_user_created_idx
+  ON career_self_analysis_results (user_id, created_at DESC);
+
+-- 84. career_self_prs — 自己 PR カード。LS key=careerSelfPRs（共有型 SelfPR）。受験版 self_prs §35 と別。
+CREATE TABLE career_self_prs (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id   text        NOT NULL,
+  data        jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_self_prs_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_self_prs_user_created_idx
+  ON career_self_prs (user_id, created_at DESC);
+
+-- 85. career_matching_results — 企業マッチング結果履歴。LS key=careerMatchingResults。
+CREATE TABLE career_matching_results (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id   text        NOT NULL,
+  user_input  jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  result      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_matching_results_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_matching_results_user_created_idx
+  ON career_matching_results (user_id, created_at DESC);
+
+-- 86. career_es_logs — ES 生成/添削ログ。LS key=careerEsLogs。favorite/submitted を昇格。
+CREATE TABLE career_es_logs (
+  id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id      text        NOT NULL,
+  user_input     jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  result         jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  edited_result  jsonb,
+  favorite       boolean     NOT NULL DEFAULT false,
+  submitted      boolean     NOT NULL DEFAULT false,
+  meta           jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_es_logs_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_es_logs_user_created_idx
+  ON career_es_logs (user_id, created_at DESC);
+
+-- 87. career_interview_sessions — 面接セッション（進行中 upsert）。LS key=careerInterviewSessions。
+CREATE TABLE career_interview_sessions (
+  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id       text        NOT NULL,
+  status          text        NOT NULL DEFAULT 'in_progress',
+  mode            text        NOT NULL DEFAULT '',
+  interview_type  text        NOT NULL DEFAULT '',
+  turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  max_turns       integer,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_interview_sessions_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_interview_sessions_user_updated_idx
+  ON career_interview_sessions (user_id, updated_at DESC);
+
+-- 88. career_interview_results — 面接の最終評価履歴。LS key=careerInterviewResults。
+CREATE TABLE career_interview_results (
+  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id       text        NOT NULL,
+  mode            text        NOT NULL DEFAULT '',
+  interview_type  text        NOT NULL DEFAULT '',
+  turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  result          jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_interview_results_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_interview_results_user_created_idx
+  ON career_interview_results (user_id, created_at DESC);
+
+-- 89. career_presentation_sessions — プレゼンセッション（upsert）。LS key=careerPresentationSessions。
+--     受験版 presentation_sessions §63 と別（録画/Storage/課金は未移植）。
+CREATE TABLE career_presentation_sessions (
+  id                 uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id            uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id          text        NOT NULL,
+  status             text        NOT NULL DEFAULT 'in_progress',
+  presentation_type  text        NOT NULL DEFAULT '',
+  mode               text        NOT NULL DEFAULT '',
+  theme              text        NOT NULL DEFAULT '',
+  time_limit_sec     integer,
+  duration_sec       integer,
+  transcript         text        NOT NULL DEFAULT '',
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_presentation_sessions_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_presentation_sessions_user_updated_idx
+  ON career_presentation_sessions (user_id, updated_at DESC);
+
+-- 90. career_presentation_results — プレゼン評価履歴。LS key=careerPresentationResults。
+CREATE TABLE career_presentation_results (
+  id                 uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id            uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id          text        NOT NULL,
+  presentation_type  text        NOT NULL DEFAULT '',
+  mode               text        NOT NULL DEFAULT '',
+  theme              text        NOT NULL DEFAULT '',
+  time_limit_sec     integer,
+  duration_sec       integer,
+  transcript         text        NOT NULL DEFAULT '',
+  result             jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  qa                 jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_presentation_results_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_presentation_results_user_created_idx
+  ON career_presentation_results (user_id, created_at DESC);
+
+-- 91. career_consultation_threads — 就活相談 AI のスレッド（upsert）。LS key=careerConsultationLogs。
+CREATE TABLE career_consultation_threads (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id   text        NOT NULL,
+  title       text        NOT NULL DEFAULT '',
+  messages    jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_consultation_threads_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_consultation_threads_user_updated_idx
+  ON career_consultation_threads (user_id, updated_at DESC);
+
+-- 81–91 共通: updated_at trigger（set_updated_at / §3）を全 career_* feature table に張る。
+DO $$
+DECLARE
+  t text;
+  tables text[] := ARRAY[
+    'career_profiles','career_activities','career_self_analysis_results','career_self_prs',
+    'career_matching_results','career_es_logs','career_interview_sessions','career_interview_results',
+    'career_presentation_sessions','career_presentation_results','career_consultation_threads'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_trigger
+      WHERE tgname = t || '_set_updated_at' AND tgrelid = ('public.' || t)::regclass
+    ) THEN
+      EXECUTE format(
+        'CREATE TRIGGER %I BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION set_updated_at()',
+        t || '_set_updated_at', t
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+-- 81–91 共通: RLS（owner 直接判定 / 全 CRUD / authenticated）。career_values §81 と同形。
+--   public / anon から直接全件読み書きできる policy は作らない。
+DO $$
+DECLARE
+  t text;
+  tables text[] := ARRAY[
+    'career_profiles','career_activities','career_self_analysis_results','career_self_prs',
+    'career_matching_results','career_es_logs','career_interview_sessions','career_interview_results',
+    'career_presentation_sessions','career_presentation_results','career_consultation_threads'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename=t AND policyname=t||' owner select') THEN
+      EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (auth.uid() = user_id)', t||' owner select', t);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename=t AND policyname=t||' owner insert') THEN
+      EXECUTE format('CREATE POLICY %I ON public.%I FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id)', t||' owner insert', t);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename=t AND policyname=t||' owner update') THEN
+      EXECUTE format('CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id)', t||' owner update', t);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename=t AND policyname=t||' owner delete') THEN
+      EXECUTE format('CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING (auth.uid() = user_id)', t||' owner delete', t);
+    END IF;
+  END LOOP;
+END $$;

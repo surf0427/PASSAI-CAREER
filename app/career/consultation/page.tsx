@@ -26,6 +26,8 @@ import {
   appendMessageToThread,
   deleteThread,
 } from './consultationStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerConsultationThreadsToSupabase } from '@/lib/supabase/careerConsultation';
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
@@ -69,6 +71,8 @@ export default function CareerConsultationPage() {
     getMountedSnapshot,
     getMountedServerSnapshot,
   );
+
+  const userId = useCurrentUserId();
 
   // localStorage から lazy 取得（SSR では空）。出力は isMounted で gate する。
   const [threads, setThreads] = useState<CareerConsultationThread[]>(
@@ -129,6 +133,11 @@ export default function CareerConsultationPage() {
     setThreads(afterUser);
     setInput('');
     setLoading(true);
+    // Supabase durable mirror（best-effort / member のみ / 送信ごと）。当該スレッドのみ upsert。
+    if (userId) {
+      const t = afterUser.find((x) => x.id === threadId);
+      if (t) void upsertCareerConsultationThreadsToSupabase(userId, [t]);
+    }
 
     const ctx = buildConsultationContext();
     try {
@@ -150,6 +159,11 @@ export default function CareerConsultationPage() {
         result: data.result,
       });
       setThreads(afterAssistant);
+      // Supabase durable mirror（受信ごと）。当該スレッドのみ upsert。
+      if (userId) {
+        const t = afterAssistant.find((x) => x.id === threadId);
+        if (t) void upsertCareerConsultationThreadsToSupabase(userId, [t]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '相談の生成に失敗しました。');
     } finally {

@@ -15,6 +15,8 @@ import {
   type CareerPresentationContextPayload,
 } from '../contextSource';
 import { upsertPresentationSession } from '../presentationStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerPresentationSessionsToSupabase } from '@/lib/supabase/careerPresentation';
 import { useVoice } from '@/app/career/interview/useVoice';
 import {
   CAREER_PRESENTATION_MODES,
@@ -41,6 +43,7 @@ function newId(): string {
 
 export default function CareerPresentationSetupPage() {
   const router = useRouter();
+  const userId = useCurrentUserId();
   const [presentationType, setPresentationType] = useState<CareerPresentationType>(
     DEFAULT_CAREER_PRESENTATION_TYPE,
   );
@@ -114,6 +117,8 @@ export default function CareerPresentationSetupPage() {
       transcript: '',
     };
     upsertPresentationSession(session);
+    // Supabase durable mirror（best-effort / member のみ）。
+    if (userId) void upsertCareerPresentationSessionsToSupabase(userId, [session]);
     router.push('/career/presentation/session');
   }
 

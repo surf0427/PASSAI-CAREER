@@ -56,7 +56,20 @@ export type BackfillFeature =
   | 'essayWorkspaces'
   // 面接練習記録（interview_records）の上り backfill。restore / delete 伝播は別 STEP
   // （delete resurrection 回避。STEP-INTERVIEW-AI-PR1/PR2）。
-  | 'interviewPracticeRecords';
+  | 'interviewPracticeRecords'
+  // STEP-CAREER-SUPABASE-01: 就活版（career）各機能の上り backfill（LS→Supabase 初回一括同期）。
+  // いずれも localStorage canonical の durable mirror。restore（下り）は実装しない。
+  | 'careerProfile'
+  | 'careerActivity'
+  | 'careerSelfAnalysis'
+  | 'careerSelfPRs'
+  | 'careerMatching'
+  | 'careerEs'
+  | 'careerInterviewSessions'
+  | 'careerInterviewResults'
+  | 'careerPresentationSessions'
+  | 'careerPresentationResults'
+  | 'careerConsultation';
 
 // backfill ロジックの世代。ロジックを変えて再 backfill させたいときに +1 する。
 export const BACKFILL_VERSION = 1;

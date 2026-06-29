@@ -26,6 +26,8 @@ import {
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
 import { appendEsLog } from '../esStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -47,6 +49,7 @@ function newId(): string {
 
 export default function CareerEsRunPage() {
   const router = useRouter();
+  const userId = useCurrentUserId();
   const [userInput, setUserInput] = useState('');
   // 設問モード用の入力。すべて任意。設問が空なら従来の「おまかせ生成」になる。
   const [question, setQuestion] = useState('');
@@ -133,7 +136,7 @@ export default function CareerEsRunPage() {
       }
 
       const data = (await res.json()) as { result: CareerEsResult };
-      appendEsLog({
+      const log = {
         id: newId(),
         createdAt: new Date().toISOString(),
         userInput: userInput.trim(),
@@ -145,7 +148,10 @@ export default function CareerEsRunPage() {
         ...(selectionType ? { selectionType } : {}),
         ...(trimmedIndustry ? { industry: trimmedIndustry } : {}),
         ...(trimmedJobType ? { jobType: trimmedJobType } : {}),
-      });
+      };
+      appendEsLog(log);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userId) void upsertCareerEsLogsToSupabase(userId, [log]);
 
       router.push('/career/es/result');
     } catch (e) {

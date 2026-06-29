@@ -7,7 +7,7 @@
 // Web Speech API でライブ文字起こしする（動画保存はしない）。テキスト貼り付けにもフォールバックできる。
 // 文字起こしは送信前に自由に編集できる（音声認識の誤りを直せる）。
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
@@ -22,6 +22,11 @@ import {
 } from '../presentationStorage';
 import { getPresentationModeConfig } from '../presentationModes';
 import { useVoice } from '@/app/career/interview/useVoice';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import {
+  upsertCareerPresentationSessionsToSupabase,
+  upsertCareerPresentationResultsToSupabase,
+} from '@/lib/supabase/careerPresentation';
 import type {
   CareerPresentationSession,
   CareerPresentationResult,
@@ -39,6 +44,12 @@ function formatClock(sec: number): string {
 
 export default function CareerPresentationSessionPage() {
   const router = useRouter();
+  // Supabase mirror 用。useCallback の deps を変えないよう ref で最新 userId を参照する。
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
   const isMounted = useSyncExternalStore(
     subscribeMount,
     getMountedSnapshot,
@@ -123,7 +134,7 @@ export default function CareerPresentationSessionPage() {
         updatedAt: new Date().toISOString(),
       };
       upsertPresentationSession(completed);
-      appendPresentationResult({
+      const resultLog: CareerPresentationResult = {
         id: session.id,
         createdAt: new Date().toISOString(),
         presentationType: session.presentationType,
@@ -133,7 +144,13 @@ export default function CareerPresentationSessionPage() {
         durationSec,
         transcript: text,
         result: data.result,
-      });
+      };
+      appendPresentationResult(resultLog);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userIdRef.current) {
+        void upsertCareerPresentationSessionsToSupabase(userIdRef.current, [completed]);
+        void upsertCareerPresentationResultsToSupabase(userIdRef.current, [resultLog]);
+      }
       router.push('/career/presentation/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : '評価の生成に失敗しました。');

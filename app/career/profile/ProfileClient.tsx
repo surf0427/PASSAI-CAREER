@@ -1,9 +1,14 @@
 'use client';
 
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CareerProfile } from '@/types/careerProfile';
 import { saveBasicInfo, loadBasicInfo } from './profileStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import {
+  loadCareerProfileFromSupabase,
+  saveCareerProfileToSupabase,
+} from '@/lib/supabase/careerProfile';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { FormField } from '@/components/ui/FormField';
@@ -124,10 +129,36 @@ export default function ProfileClient() {
   const [form, setForm] = useState<ProfileForm>(() => toForm(loadBasicInfo()));
   const [errors, setErrors] = useState<FormErrors>({});
 
+  const userId = useCurrentUserId();
+  // 初期表示時点で localStorage が空だったか（down-sync を 1 回だけ許可する条件）。
+  const [localWasEmpty] = useState(() => loadBasicInfo() === null);
+  // ユーザーが編集を始めたら true。Supabase からの遅延 down-sync で上書きしない。
+  const dirtyRef = useRef(false);
+
+  // localStorage が空 + ログイン済みなら、Supabase の durable mirror から 1 回だけ復元する
+  // （別端末で保存したプロフィールの取り込み）。career_values ページと同形。
+  useEffect(() => {
+    if (!userId || !localWasEmpty) return;
+    let cancelled = false;
+    (async () => {
+      const result = await loadCareerProfileFromSupabase(userId);
+      if (cancelled || dirtyRef.current) return;
+      if (result.kind === 'ok') {
+        saveBasicInfo(result.profile); // LS canonical に揃える（normalize は load 側）
+        const reloaded = loadBasicInfo();
+        if (reloaded) setForm(toForm(reloaded));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, localWasEmpty]);
+
   function handleChange(
     event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) {
     const { name, value } = event.target;
+    dirtyRef.current = true;
     setForm((prev) => ({ ...prev, [name]: value }));
     setErrors((prev) => ({ ...prev, [name]: undefined }));
   }
@@ -159,7 +190,10 @@ export default function ProfileClient() {
       setErrors(newErrors);
       return;
     }
-    saveBasicInfo(toProfile(form));
+    const profile = toProfile(form);
+    saveBasicInfo(profile);
+    // Supabase durable mirror（best-effort / member のみ）。失敗しても遷移は止めない。
+    if (userId) void saveCareerProfileToSupabase(userId, profile);
     router.push('/career/home');
   }
 

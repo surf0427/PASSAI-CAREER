@@ -63,6 +63,11 @@ import {
   newSnsEntry,
   newPortfolioEntry,
 } from '@/types/careerActivity';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import {
+  loadCareerActivityFromSupabase,
+  saveCareerActivityToSupabase,
+} from '@/lib/supabase/careerActivity';
 
 // SSR-stable mount flag（home/values と同形）。
 const subscribeMount = () => () => {};
@@ -102,6 +107,19 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
   );
   const [dirty, setDirty] = useState(false);
 
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
+  // 初期表示時点で localStorage が空だったか（down-sync を 1 回だけ許可する条件）。
+  const localWasEmpty = initial === null;
+  // ユーザーが編集を始めたら true。Supabase からの遅延 down-sync で上書きしない。
+  const editedRef = useRef(false);
+  // Supabase mirror の debounce（自動保存のたびに送らず、入力が落ち着いてから 1 回送る）。
+  const mirrorPendingRef = useRef<CareerActivity | null>(null);
+  const mirrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 入力のたびに自動保存（初回マウントはスキップ）。effect 内では setState しない
   // （react-hooks/set-state-in-effect 回避。dirty フラグは編集ハンドラ側で立てる）。
   const didMount = useRef(false);
@@ -110,10 +128,53 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
       didMount.current = true;
       return;
     }
-    saveActivityData({ ...activity, updatedAt: new Date().toISOString() });
+    const toSave = { ...activity, updatedAt: new Date().toISOString() };
+    saveActivityData(toSave); // localStorage canonical
+    // Supabase durable mirror（best-effort / member のみ / debounce）。
+    if (userIdRef.current) {
+      mirrorPendingRef.current = toSave;
+      if (mirrorTimerRef.current) clearTimeout(mirrorTimerRef.current);
+      mirrorTimerRef.current = setTimeout(() => {
+        const pending = mirrorPendingRef.current;
+        mirrorPendingRef.current = null;
+        mirrorTimerRef.current = null;
+        if (pending && userIdRef.current) {
+          void saveCareerActivityToSupabase(userIdRef.current, pending);
+        }
+      }, 1500);
+    }
   }, [activity]);
 
+  // アンマウント時に未送信の mirror を flush する（高速に離脱しても取りこぼさない）。
+  useEffect(() => {
+    return () => {
+      if (mirrorTimerRef.current) clearTimeout(mirrorTimerRef.current);
+      const pending = mirrorPendingRef.current;
+      if (pending && userIdRef.current) {
+        void saveCareerActivityToSupabase(userIdRef.current, pending);
+      }
+    };
+  }, []);
+
+  // localStorage が空 + ログイン済みなら、Supabase の durable mirror から 1 回だけ復元する。
+  useEffect(() => {
+    if (!userId || !localWasEmpty) return;
+    let cancelled = false;
+    (async () => {
+      const result = await loadCareerActivityFromSupabase(userId);
+      if (cancelled || editedRef.current) return;
+      if (result.kind === 'ok') {
+        saveActivityData(result.activity); // LS canonical に揃える
+        setActivity(result.activity);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, localWasEmpty]);
+
   const update = useCallback((updater: (prev: CareerActivity) => CareerActivity) => {
+    editedRef.current = true;
     setDirty(true);
     setActivity(updater);
   }, []);

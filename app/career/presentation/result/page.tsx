@@ -6,7 +6,9 @@
 
 import {
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -22,6 +24,8 @@ import {
   updatePresentationResult,
 } from '../presentationStorage';
 import { getPresentationModeConfig } from '../presentationModes';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerPresentationResultsToSupabase } from '@/lib/supabase/careerPresentation';
 import type {
   CareerPresentationResult,
   CareerPresentationRank,
@@ -46,6 +50,13 @@ export default function CareerPresentationResultPage() {
     getMountedSnapshot,
     getMountedServerSnapshot,
   );
+
+  // Supabase mirror 用。useCallback の deps を変えないよう ref で最新 userId を参照する。
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   const results = useMemo<CareerPresentationResult[] | null>(
     () => (isMounted ? loadPresentationResults() : null),
@@ -73,7 +84,11 @@ export default function CareerPresentationResultPage() {
     (turns: CareerPresentationQaTurn[]) => {
       if (!selected) return;
       // localStorage に追記保存（画面表示はライブの qaTurns が担うため再読込はしない）。
-      updatePresentationResult({ ...selected, qa: turns });
+      const updated = { ...selected, qa: turns };
+      updatePresentationResult(updated);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userIdRef.current)
+        void upsertCareerPresentationResultsToSupabase(userIdRef.current, [updated]);
     },
     [selected],
   );

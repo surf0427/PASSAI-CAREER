@@ -7,6 +7,7 @@
 
 import {
   useMemo,
+  useRef,
   useState,
   useCallback,
   useSyncExternalStore,
@@ -17,6 +18,8 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { loadEsLogs, updateEsLog, appendEsLog } from '../esStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import type {
   CareerEsLog,
   CareerEsResult,
@@ -68,6 +71,11 @@ export default function CareerEsResultPage() {
     getMountedServerSnapshot,
   );
 
+  // Supabase mirror 用。useCallback の deps を変えないよう ref で最新 userId を参照する。
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
+
   // localStorage 書き込み（お気に入り / 提出済みトグル）後に再読込するためのバージョン。
   const [version, setVersion] = useState(0);
 
@@ -99,13 +107,17 @@ export default function CareerEsResultPage() {
   }, []);
 
   const toggleFavorite = useCallback((log: CareerEsLog) => {
-    updateEsLog(log.id, { favorite: !log.favorite });
+    const next = { ...log, favorite: !log.favorite };
+    updateEsLog(log.id, { favorite: next.favorite });
     setVersion((v) => v + 1);
+    if (userIdRef.current) void upsertCareerEsLogsToSupabase(userIdRef.current, [next]);
   }, []);
 
   const toggleSubmitted = useCallback((log: CareerEsLog) => {
-    updateEsLog(log.id, { submitted: !log.submitted });
+    const next = { ...log, submitted: !log.submitted };
+    updateEsLog(log.id, { submitted: next.submitted });
     setVersion((v) => v + 1);
+    if (userIdRef.current) void upsertCareerEsLogsToSupabase(userIdRef.current, [next]);
   }, []);
 
   // AI添削。添削対象（設問モードの answer / 7 フィールドの各項目）ごとに 1 件保持する。
@@ -221,6 +233,8 @@ export default function CareerEsResultPage() {
 
       try {
         appendEsLog(newLog);
+        // Supabase durable mirror（best-effort / member のみ）。
+        if (userIdRef.current) void upsertCareerEsLogsToSupabase(userIdRef.current, [newLog]);
         setSelectedId(newLog.id); // 保存したログを自動選択
         setLastSavedId(newLog.id); // 保存成功表示を保存先ログに紐づける
         setVersion((v) => v + 1); // 一覧（先頭）へ即時反映

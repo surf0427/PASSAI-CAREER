@@ -15,6 +15,8 @@ import {
   type CareerInterviewContextPayload,
 } from '../contextSource';
 import { upsertInterviewSession } from '../interviewStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerInterviewSessionsToSupabase } from '@/lib/supabase/careerInterview';
 import { useVoice } from '../useVoice';
 import {
   CAREER_INTERVIEW_MODES,
@@ -42,6 +44,7 @@ function newId(): string {
 
 export default function CareerInterviewSetupPage() {
   const router = useRouter();
+  const userId = useCurrentUserId();
   const [mode, setMode] = useState<CareerInterviewMode>('text');
   const [interviewType, setInterviewType] = useState<CareerInterviewType>(
     DEFAULT_CAREER_INTERVIEW_TYPE,
@@ -99,6 +102,8 @@ export default function CareerInterviewSetupPage() {
         maxTurns: MAX_TURNS,
       };
       upsertInterviewSession(session);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userId) void upsertCareerInterviewSessionsToSupabase(userId, [session]);
       router.push('/career/interview/session');
     } catch (e) {
       setError(e instanceof Error ? e.message : '面接の開始に失敗しました。');

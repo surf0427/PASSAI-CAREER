@@ -27,6 +27,8 @@ import {
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
 import { appendSelfAnalysisLog } from '../selfAnalysisStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerSelfAnalysisResultsToSupabase } from '@/lib/supabase/careerSelfAnalysis';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -63,6 +65,7 @@ function currentQuestion(turns: CareerSelfAnalysisTurn[]): string | null {
 
 export default function CareerSelfAnalysisRunPage() {
   const router = useRouter();
+  const userId = useCurrentUserId();
   const [phase, setPhase] = useState<Phase>('intro');
   const [turns, setTurns] = useState<CareerSelfAnalysisTurn[]>([]);
   const [answer, setAnswer] = useState('');
@@ -198,12 +201,15 @@ export default function CareerSelfAnalysisRunPage() {
         throw new Error(data?.detail ?? '自己分析の生成に失敗しました。');
       }
       const data = (await res.json()) as { result: CareerSelfAnalysisResult };
-      appendSelfAnalysisLog({
+      const log = {
         id: newId(),
         createdAt: new Date().toISOString(),
         userInput: '',
         result: data.result,
-      });
+      };
+      appendSelfAnalysisLog(log);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userId) void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
       router.push('/career/self-analysis/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : '自己分析の生成に失敗しました。');

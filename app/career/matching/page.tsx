@@ -22,6 +22,8 @@ import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { appendMatchingLog } from './matchingStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 
@@ -75,6 +77,7 @@ type Readiness = {
 
 export default function CareerMatchingStartPage() {
   const router = useRouter();
+  const userId = useCurrentUserId();
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,12 +121,15 @@ export default function CareerMatchingStartPage() {
         throw new Error(data?.detail ?? 'マッチングの生成に失敗しました。');
       }
       const data = (await res.json()) as { result: CareerMatchEngineResult };
-      appendMatchingLog({
+      const log = {
         id: newId(),
         createdAt: new Date().toISOString(),
         userInput: userInput.trim(),
         result: data.result,
-      });
+      };
+      appendMatchingLog(log);
+      // Supabase durable mirror（best-effort / member のみ）。
+      if (userId) void upsertCareerMatchingResultsToSupabase(userId, [log]);
       router.push('/career/matching/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'マッチングの生成に失敗しました。');
