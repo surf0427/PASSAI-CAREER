@@ -109,8 +109,11 @@ export default function CareerHomePage() {
           こんにちは、{basicInfo.name}さん
         </h1>
         <p className="text-gray-600 text-sm leading-relaxed mb-4">
-          就職活動の準備をAIがサポートします。<br />
-          活動整理から自己分析・ES作成・面接対策まで、一歩ずつ進めましょう。
+          自己分析からES・面接対策まで、<br />
+          AIが就職活動をサポートします。<br />
+          <br />
+          あなたに合った企業探しと選考対策を<br />
+          一歩ずつ進めましょう。
         </p>
         <CareerProfileSummary profile={basicInfo} />
         <Link
@@ -121,40 +124,87 @@ export default function CareerHomePage() {
         </Link>
       </div>
 
-      {/* 受験タイプ診断（準備中）
-          受験版では DiagnosisTypeCard / DiagnosisCtaCard が診断結果や /diagnosis への
-          導線を表示するが、就活版では診断機能をまだコピーしていないため、視覚スロットは
-          残しつつ準備中プレースホルダーとして無効化する（受験版データは読まない）。 */}
+      {/* 内定獲得までの進捗 — 就活フロー全体の道筋を示すステップカード（固定表示）。
+          既存の Card / 配色トークンに合わせ、横並び（wrap）のステッパーで表示する。 */}
+      <Card variant="soft" padding="md" className="mb-8">
+        <p className="text-xs font-semibold text-brand-600 mb-3">内定獲得までの進捗</p>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+          {['プロフィール', '活動整理', '就活軸整理', '自己分析', 'ES', '面接', '内定'].map(
+            (step, i, arr) => (
+              <span key={step} className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-full px-3 py-1">
+                  {step}
+                </span>
+                {i < arr.length - 1 && <span className="text-gray-400 text-sm">→</span>}
+              </span>
+            ),
+          )}
+        </div>
+      </Card>
+
+      {/* AIからの分析コメント（就活版・固定文）＋ 自己分析への CTA。
+          受験版の診断フィードバックは参照せず、就活版の固定メッセージを表示する。 */}
+      <Card variant="default" padding="md" className="mb-8">
+        <p className="text-xs font-semibold text-brand-600 mb-2">AIからの分析コメント</p>
+        <div className="space-y-3 text-sm text-gray-700 leading-relaxed mb-4">
+          <p>
+            今回の内容からは、<br />
+            主体的に行動し経験から学びを得るタイプという特徴が見えます。
+          </p>
+          <p>
+            これまでの活動経験は、<br />
+            ESや面接で活用できる強みになる可能性があります。
+          </p>
+          <p>
+            今後は自己分析や就活軸整理を進めることで、<br />
+            企業選びや志望動機の精度をさらに高められます。
+          </p>
+        </div>
+        <LinkButton href="/career/self-analysis" variant="primary" size="md">
+          自己分析を始める →
+        </LinkButton>
+      </Card>
+
+      {/* キャリア適性診断。強み・価値観から向いている業界・職種の傾向を分析する導線。
+          既存の企業マッチング（/career/matching）へ接続する。 */}
       <Card variant="soft" padding="md" className="mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex-1">
-            <h2 className="text-base font-bold text-gray-800 mb-1.5">受験タイプ診断</h2>
+            <h2 className="text-base font-bold text-gray-800 mb-1.5">キャリア適性診断</h2>
             <p className="text-sm text-gray-600 leading-relaxed">
-              就活版の診断機能は準備中です。順次公開予定です。
+              あなたの強みや価値観から、向いている業界・職種の傾向を分析します。
             </p>
           </div>
           <div className="shrink-0 sm:self-center">
-            <Button variant="outline" size="md" disabled>
-              準備中
-            </Button>
+            <LinkButton href="/career/matching" variant="primary" size="md">
+              キャリア適性診断を受ける
+            </LinkButton>
           </div>
         </div>
       </Card>
 
-      {/* 今日やるべきこと（準備中）
-          受験版では進捗ステータス（localStorage）から次に進む機能を案内するが、
-          就活版の各機能ページ／進捗ストレージはまだ無いため、まずは基本情報整備へ誘導する。 */}
+      {/* 今日やるべきこと（就活版）。各ステップを既存の機能ページへの導線として固定表示する。 */}
       <Card variant="soft" padding="md" className="mb-8">
         <p className="text-xs font-semibold text-brand-600 mb-2">今日やるべきこと</p>
-        <p className="text-base font-bold text-gray-800 mb-1">
-          まずは基本情報を整えておきましょう。
-        </p>
-        <p className="text-sm text-gray-600 mb-4">
-          各機能は順次公開予定です。基本情報を最新にしておくと、公開後すぐに使い始められます。
-        </p>
-        <LinkButton href="/career/profile" variant="primary" size="md">
-          基本情報を編集する
-        </LinkButton>
+        <ul className="space-y-2">
+          {[
+            { label: '基本情報を入力する', href: '/career/profile' },
+            { label: '活動整理を完了する', href: '/career/activity' },
+            { label: '就活軸を整理する', href: '/career/values' },
+            { label: '自己分析を実施する', href: '/career/self-analysis' },
+            { label: 'おすすめ企業を確認する', href: '/career/matching' },
+          ].map((task) => (
+            <li key={task.label}>
+              <Link
+                href={task.href}
+                className="flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                <span className="text-gray-400">□</span>
+                {task.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
       </Card>
 
       {/* 機能カード一覧（受験版のメイン機能をそのまま並べる。Phase2 では全て準備中） */}
