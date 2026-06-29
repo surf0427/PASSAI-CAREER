@@ -19,7 +19,7 @@ import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
-import type { BasicInfo } from '@/types/basicInfo';
+import type { CareerProfile } from '@/types/careerProfile';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
@@ -27,7 +27,7 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 
 export type CareerInterviewContextPayload = {
-  profile: BasicInfo | null;
+  profile: CareerProfile | null;
   activity: CareerActivity | null;
   values: CareerValues | null;
   selfAnalysis: CareerSelfAnalysisResult | null;

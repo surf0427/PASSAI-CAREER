@@ -72,8 +72,11 @@ export default function CareerEsResultPage() {
   const [version, setVersion] = useState(0);
 
   // null = hydration 前 / 未読込。読み込み後は配列（最新が先頭）。
+  // version は localStorage 書き込み後に再読込を強制するための意図的な依存
+  // （loadEsLogs は外部可変ストアを読むため eslint は不要依存と誤検知する）。
   const logs = useMemo<CareerEsLog[] | null>(
     () => (isMounted ? loadEsLogs() : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [isMounted, version],
   );
 
