@@ -26,6 +26,11 @@ import {
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
 import { appendEsLog } from '../esStorage';
+import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
+import {
+  buildCompanyResearchSnapshot,
+  SINGLE_VERIFIED_PREVIEW,
+} from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import type { BasicInfo } from '@/types/basicInfo';
@@ -33,6 +38,8 @@ import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult, CareerEsSelectionType } from '@/types/careerEs';
+import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
+import { CAREER_COMPANY_INTEREST_LABELS } from '@/types/careerCompanyResearch';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -59,6 +66,8 @@ export default function CareerEsRunPage() {
   const [selectionType, setSelectionType] = useState<CareerEsSelectionType | null>(null);
   const [industry, setIndustry] = useState('');
   const [jobType, setJobType] = useState('');
+  // 任意: 参照する企業研究ログ（ユーザー本人が確認した企業研究）。null = 使わない。
+  const [researchLogId, setResearchLogId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +97,26 @@ export default function CareerEsRunPage() {
     const logs = loadSelfAnalysisLogs();
     return logs.length > 0 ? logs[0].result : null;
   }, [isMounted]);
+  // 保存済み企業研究ログ（最新更新順）。選択でこの企業向けに ES を寄せる。
+  const researchLogs = useMemo<CareerCompanyResearchLog[]>(() => {
+    if (!isMounted) return [];
+    return [...loadCompanyResearchLogs()].sort((a, b) =>
+      (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''),
+    );
+  }, [isMounted]);
+  const selectedResearchLog = useMemo<CareerCompanyResearchLog | null>(
+    () => researchLogs.find((l) => l.id === researchLogId) ?? null,
+    [researchLogs, researchLogId],
+  );
+
+  // 企業研究ログを選ぶと、その企業に ES を寄せる（企業名・業界を引き継ぐ）。
+  function pickResearchLog(log: CareerCompanyResearchLog | null) {
+    setResearchLogId(log?.id ?? null);
+    if (log) {
+      if (log.companyName) setCompanyName(log.companyName);
+      if (log.industry) setIndustry(log.industry);
+    }
+  }
 
   const profileReady = !!basicInfo;
   const activityReady = hasAnyActivity(activity);
@@ -110,6 +139,13 @@ export default function CareerEsRunPage() {
     const charLimit =
       Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
 
+    // 企業研究ログを選んでいれば、軽量スナップショットを根拠として渡す（1 件・抜粋）。
+    const researchSnapshot = selectedResearchLog
+      ? buildCompanyResearchSnapshot(selectedResearchLog, {
+          verifiedTextMaxChars: SINGLE_VERIFIED_PREVIEW,
+        })
+      : null;
+
     try {
       const res = await fetch('/api/career/es', {
         method: 'POST',
@@ -127,6 +163,7 @@ export default function CareerEsRunPage() {
           selectionType: selectionType ?? undefined,
           industry: trimmedIndustry || undefined,
           jobType: trimmedJobType || undefined,
+          companyResearchContext: researchSnapshot ?? undefined,
         }),
       });
 
@@ -148,6 +185,13 @@ export default function CareerEsRunPage() {
         ...(selectionType ? { selectionType } : {}),
         ...(trimmedIndustry ? { industry: trimmedIndustry } : {}),
         ...(trimmedJobType ? { jobType: trimmedJobType } : {}),
+        // 参照した企業研究ログ（traceability・添削での再利用）。
+        ...(researchSnapshot
+          ? {
+              companyResearchLogId: researchSnapshot.logId,
+              companyResearchSnapshot: researchSnapshot,
+            }
+          : {}),
       };
       appendEsLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
@@ -186,6 +230,36 @@ export default function CareerEsRunPage() {
           </p>
         )}
       </Card>
+
+      {researchLogs.length > 0 && (
+        <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+            企業研究ログを使う（任意）
+          </p>
+          <p className="text-xs text-slate-500 leading-relaxed mb-4">
+            あなたが保存した企業研究を選ぶと、その企業に合わせて志望動機などを下書きします（AIが企業情報を作るのではなく、あなたの研究を根拠にします）。
+          </p>
+          <div className="flex flex-col gap-2">
+            <ResearchOption
+              label="企業研究なしで進める"
+              sub="登録済みの基本情報・活動・自己分析だけで作成します。"
+              active={researchLogId === null}
+              onClick={() => setResearchLogId(null)}
+              disabled={loading}
+            />
+            {researchLogs.map((log) => (
+              <ResearchOption
+                key={log.id}
+                label={log.companyName || '（企業名なし）'}
+                sub={researchSummary(log)}
+                active={researchLogId === log.id}
+                onClick={() => pickResearchLog(log)}
+                disabled={loading}
+              />
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
@@ -346,6 +420,57 @@ function SelectionTypeButton({
       }`}
     >
       {label}
+    </button>
+  );
+}
+
+// 企業研究ログの 1 行サマリ（志望度・更新日・理解度スコア・メモ抜粋）。
+function researchSummary(log: CareerCompanyResearchLog): string {
+  const parts: string[] = [];
+  if (log.interestLevel) parts.push(CAREER_COMPANY_INTEREST_LABELS[log.interestLevel]);
+  const d = new Date(log.updatedAt || log.createdAt);
+  if (!Number.isNaN(d.getTime())) parts.push(`更新 ${d.toLocaleDateString('ja-JP')}`);
+  if (log.review?.overallScore) parts.push(`理解度${log.review.overallScore}点`);
+  const head = parts.join('・');
+  const memo = (log.input?.verifiedResearchText || log.input?.manualMemo || '').trim();
+  const memoPreview = memo ? `｜${memo.slice(0, 40)}${memo.length > 40 ? '…' : ''}` : '';
+  return `${head}${memoPreview}`;
+}
+
+function ResearchOption({
+  label,
+  sub,
+  active,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  sub?: string;
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`w-full text-left rounded-xl px-3 py-2.5 ring-1 transition-colors disabled:opacity-50 ${
+        active ? 'bg-blue-50 ring-blue-400' : 'bg-white ring-slate-200 hover:bg-slate-50'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+            active ? 'border-blue-600' : 'border-slate-300'
+          }`}
+        >
+          {active && <span className="h-2 w-2 rounded-full bg-blue-600" />}
+        </span>
+        <span className="text-sm font-semibold text-slate-800 truncate">{label}</span>
+      </div>
+      {sub && <p className="mt-1 pl-6 text-xs text-slate-500 leading-relaxed">{sub}</p>}
     </button>
   );
 }

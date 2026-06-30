@@ -21,6 +21,11 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerPresentationFinalResult } from '@/types/careerPresentation';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
+import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
+import {
+  normalizeCompanyResearchSnapshot,
+  formatCompanyResearchContextForPrompt,
+} from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -42,7 +47,8 @@ const COMMANDER_PERSONA = [
   '- 回答を押し付けず、複数の選択肢とその判断軸を提示します。',
   '- 一般論で埋めず、本人の実体験・具体的なエピソードの言語化を促します。',
   '- 助言の精度を上げるために、本人から引き出すべき不足情報を質問します。',
-  '- 企業の事業内容・待遇・選考フロー等、事実確認が必要な情報は断定しません（企業マッチングは未実装のため一般論に留める）。',
+  '- 企業の事業内容・待遇・選考フロー等、事実確認が必要な情報は断定しません。保存済みの企業研究があれば',
+  '  それ（ユーザー本人が確認した一次情報）を根拠にし、無ければ「まず企業研究機能でメモを作ると精度が上がります」と案内します。',
   '- 必ず「次の具体的な行動」に落とし込みます。',
 ].join('\n');
 
@@ -167,6 +173,23 @@ function sanitizeHistory(
   return truncated;
 }
 
+// 保存済み企業研究（複数）を相談AI用の指示ブロックに整形する。空なら空文字。
+function renderCompanyResearch(snapshots: CompanyResearchSnapshot[]): string {
+  const formatted = formatCompanyResearchContextForPrompt(snapshots);
+  if (!formatted) return '';
+  return [
+    '# 保存済みの企業研究（ユーザー本人が作成・確認したもの）',
+    formatted,
+    '',
+    '企業について聞かれたら（例:「この企業どう思う？」「A社とB社どっちが合う？」「志望動機どう作る？」',
+    '「企業研究で足りないところある？」）、この保存済み企業研究を根拠に答えてください。',
+    '- 「保存済みの企業研究を見る限り」「あなたのメモでは」「PASSAI上に保存されている情報では」という文体にする。',
+    '- 保存されていない企業情報を断定せず、AIが勝手に最新の企業情報を生成しない。',
+    '- 根拠なく「この会社は合う/合わない」と断定しない。不足情報・自己分析/活動整理/就活軸とのギャップ・',
+    '  ES/面接で使える観点を示し、「断定はできませんが追加確認すべき点は」と公式情報・説明会資料での確認を促す。',
+  ].join('\n');
+}
+
 function normalizeResult(raw: unknown): CareerConsultationResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
@@ -196,6 +219,7 @@ export async function POST(req: Request) {
     es?: CareerEsResult | null;
     interviewResult?: CareerInterviewFinalResult | null;
     presentationResult?: CareerPresentationFinalResult | null;
+    companyResearch?: unknown;
   };
 
   const message = str(b.message);
@@ -221,6 +245,14 @@ export async function POST(req: Request) {
   const esBlock = renderEs(b.es);
   const interviewBlock = renderInterview(b.interviewResult);
   const presentationBlock = renderPresentation(b.presentationResult);
+  // 保存済み企業研究（最大5件・軽量スナップショット）。
+  const companyResearch: CompanyResearchSnapshot[] = Array.isArray(b.companyResearch)
+    ? b.companyResearch
+        .map((s) => normalizeCompanyResearchSnapshot(s))
+        .filter((s): s is CompanyResearchSnapshot => s !== null)
+        .slice(0, 5)
+    : [];
+  const companyResearchBlock = renderCompanyResearch(companyResearch);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -230,6 +262,7 @@ export async function POST(req: Request) {
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
     presentationBlock ? `# 直近のプレゼン練習の結果\n${presentationBlock}` : '',
+    companyResearchBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

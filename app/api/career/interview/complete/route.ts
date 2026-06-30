@@ -18,6 +18,7 @@ import type {
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import { resolveInterviewType } from '@/app/career/interview/interviewModes';
+import { normalizeInterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
@@ -54,7 +55,7 @@ function normalizeTurns(value: unknown): CareerInterviewTurn[] {
 
 function normalizeResult(raw: unknown): CareerInterviewFinalResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return {
+  const result: CareerInterviewFinalResult = {
     overallComment: str(r.overallComment),
     strengths: strArray(r.strengths),
     improvements: strArray(r.improvements),
@@ -63,6 +64,10 @@ function normalizeResult(raw: unknown): CareerInterviewFinalResult {
     nextActions: strArray(r.nextActions),
     companyFit: str(r.companyFit),
   };
+  // 企業研究ログを使った面接でのみ AI が返す（未使用なら空文字は付けない）。
+  const companyResearchFit = str(r.companyResearchFit);
+  if (companyResearchFit) result.companyResearchFit = companyResearchFit;
+  return result;
 }
 
 export async function POST(req: Request) {
@@ -81,6 +86,7 @@ export async function POST(req: Request) {
     es?: CareerEsResult | null;
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
+    companyResearch?: unknown;
     interviewType?: CareerInterviewType;
     userInput?: string;
     turns?: unknown;
@@ -93,6 +99,7 @@ export async function POST(req: Request) {
   }
 
   const interviewType = resolveInterviewType(b.interviewType);
+  const companyResearch = normalizeInterviewCompanyResearchContext(b.companyResearch);
   const system = [
     buildInterviewBaseSystem({
       profile: b.profile ?? null,
@@ -102,10 +109,11 @@ export async function POST(req: Request) {
       es: b.es ?? null,
       matching: b.matching ?? null,
       consultationInsights: b.consultationInsights ?? null,
+      companyResearch,
       interviewType,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',
     }),
-    buildFinalFeedbackInstruction(interviewType),
+    buildFinalFeedbackInstruction(interviewType, !!companyResearch),
   ].join('\n\n');
 
   try {

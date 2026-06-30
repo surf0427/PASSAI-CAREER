@@ -138,7 +138,8 @@ export default function CareerInterviewSessionPage() {
     setPhase('thinking');
     setError(null);
 
-    const ctx = buildInterviewContextPayload();
+    // セッションが企業研究ログを参照しているなら、その文脈も毎ターン渡す。
+    const ctx = buildInterviewContextPayload(session.companyResearchLogId);
     const turnsBefore = session.turns;
     const withAnswer: CareerInterviewSession = {
       ...session,
@@ -205,7 +206,7 @@ export default function CareerInterviewSessionPage() {
     setError(null);
     cancelSpeak();
 
-    const ctx = buildInterviewContextPayload();
+    const ctx = buildInterviewContextPayload(session.companyResearchLogId);
     try {
       const res = await fetch('/api/career/interview/complete', {
         method: 'POST',
@@ -235,6 +236,13 @@ export default function CareerInterviewSessionPage() {
         interviewType: session.interviewType,
         turns: session.turns,
         result: data.result,
+        // 参照した企業研究ログ（あれば結果からも辿れるよう保持）。
+        ...(session.companyResearchLogId
+          ? {
+              companyResearchLogId: session.companyResearchLogId,
+              companyResearchSnapshot: session.companyResearchSnapshot,
+            }
+          : {}),
       };
       appendInterviewResult(resultLog);
       // Supabase durable mirror（best-effort / member のみ）。

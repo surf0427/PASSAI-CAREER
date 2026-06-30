@@ -19,6 +19,11 @@ import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
+import { loadCompanyResearchLog } from '@/app/career/company-research/companyResearchStorage';
+import {
+  buildInterviewCompanyResearchContext,
+  type InterviewCompanyResearchContext,
+} from '@/lib/careerCompanyResearch/context';
 import type { CareerProfile } from '@/types/careerProfile';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -35,6 +40,8 @@ export type CareerInterviewContextPayload = {
   // 任意の参考データ（存在しないユーザーでは null / 空配列。プロンプトに出さないだけで落ちない）。
   matching: CareerMatchEngineResult | null;
   consultationInsights: string[];
+  // 選択された企業研究ログの面接用コンテキスト（未選択なら null）。
+  companyResearch: InterviewCompanyResearchContext | null;
 };
 
 // 相談AIスレッドから最近の気づき（keyInsights）を最大 maxItems 件、新しい順に集める。
@@ -71,8 +78,24 @@ function collectConsultationInsights(maxItems = 5): string[] {
 // （interview/page.tsx・interview/setup/page.tsx が本モジュール経由で参照する）。
 export { hasAnyActivity };
 
+// 選択された企業研究ログ（id）を面接用コンテキストに変換する。未選択・不存在なら null。
+function resolveCompanyResearch(
+  companyResearchLogId?: string | null,
+): InterviewCompanyResearchContext | null {
+  if (!companyResearchLogId) return null;
+  try {
+    const log = loadCompanyResearchLog(companyResearchLogId);
+    return log ? buildInterviewCompanyResearchContext(log) : null;
+  } catch {
+    return null;
+  }
+}
+
 // 面接AI API に渡す入力コンテキストを localStorage から組み立てる。
-export function buildInterviewContextPayload(): CareerInterviewContextPayload {
+// companyResearchLogId を渡すと、その企業研究ログを面接用コンテキストとして含める（任意）。
+export function buildInterviewContextPayload(
+  companyResearchLogId?: string | null,
+): CareerInterviewContextPayload {
   const selfAnalysisLogs = loadSelfAnalysisLogs();
   const esLogs = loadEsLogs();
   let matching: CareerMatchEngineResult | null = null;
@@ -90,5 +113,6 @@ export function buildInterviewContextPayload(): CareerInterviewContextPayload {
     es: esLogs.length > 0 ? esLogs[0].result : null,
     matching,
     consultationInsights: collectConsultationInsights(),
+    companyResearch: resolveCompanyResearch(companyResearchLogId),
   };
 }

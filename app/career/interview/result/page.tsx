@@ -94,6 +94,20 @@ export default function CareerInterviewResultPage() {
                 {getInterviewModeConfig(selected.interviewType).label}
               </p>
 
+              {selected.companyResearchLogId && (
+                <Card variant="soft" padding="md" className="mb-4">
+                  <div className="flex gap-2 text-xs">
+                    <span className="shrink-0 text-slate-400">使用した企業研究</span>
+                    <Link
+                      href={`/career/company-research/view?id=${encodeURIComponent(selected.companyResearchLogId)}`}
+                      className="text-blue-600 hover:underline break-words"
+                    >
+                      {selected.companyResearchSnapshot?.companyName || '保存済みの企業研究'} を見る →
+                    </Link>
+                  </div>
+                </Card>
+              )}
+
               <Section title="総合評価">
                 <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
                   {selected.result.overallComment || '—'}
@@ -111,6 +125,14 @@ export default function CareerInterviewResultPage() {
                   {selected.result.companyFit || '—'}
                 </p>
               </Section>
+
+              {selected.result.companyResearchFit && (
+                <Section title="企業研究との接続評価">
+                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                    {selected.result.companyResearchFit}
+                  </p>
+                </Section>
+              )}
 
               <Section title="面接のやり取り">
                 <ul className="flex flex-col gap-2">

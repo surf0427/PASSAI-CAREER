@@ -41,6 +41,12 @@ function toMeta(log: CareerEsLog): Record<string, unknown> {
   if (log.jobType !== undefined) meta.jobType = log.jobType;
   if (log.sourceLogId !== undefined) meta.sourceLogId = log.sourceLogId;
   if (log.sourceType !== undefined) meta.sourceType = log.sourceType;
+  if (log.companyResearchLogId !== undefined) {
+    meta.companyResearchLogId = log.companyResearchLogId;
+  }
+  if (log.companyResearchSnapshot !== undefined) {
+    meta.companyResearchSnapshot = log.companyResearchSnapshot;
+  }
   return meta;
 }
 
@@ -115,6 +121,11 @@ export async function listCareerEsLogsFromSupabase(userId: string): Promise<Care
       if (typeof meta.sourceLogId === "string") log.sourceLogId = meta.sourceLogId;
       if (meta.sourceType === "generated" || meta.sourceType === "review_rewrite")
         log.sourceType = meta.sourceType;
+      if (typeof meta.companyResearchLogId === "string")
+        log.companyResearchLogId = meta.companyResearchLogId;
+      if (meta.companyResearchSnapshot && typeof meta.companyResearchSnapshot === "object")
+        log.companyResearchSnapshot =
+          meta.companyResearchSnapshot as CareerEsLog["companyResearchSnapshot"];
       return log;
     });
   } catch (err) {

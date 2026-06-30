@@ -4,6 +4,8 @@
 // 就活版は「ステートレスAPI + localStorage セッション」で動かすため、専用の軽量な型を持つ。
 // 受験版の AO・推薦・大学受験・大学評価軸の文脈は持ち込まない（新卒就活専用）。
 
+import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
+
 // 会話 1 発話。質問（面接官）/ 回答（学生）の交互列で会話履歴を表す。
 export type CareerInterviewTurn = {
   role: 'question' | 'answer';
@@ -47,6 +49,10 @@ export type CareerInterviewFinalResult = {
   nextActions: string[];
   // 志望業界・職種・就活軸（あれば志望企業）との相性・接続についての所見。
   companyFit: string;
+  // 企業研究ログを使った面接のときの「企業研究との接続評価」（任意・後方互換）。
+  //   企業理解の活用度 / 志望理由との接続 / 自己分析との接続 / 入社後ビジョンの具体性 を所見にする。
+  //   企業研究ログ未選択の面接では未設定（空文字）。
+  companyResearchFit?: string;
 };
 
 // 進行中 / 完了済みの面接セッション（localStorage: careerInterviewSessions）。
@@ -64,6 +70,12 @@ export type CareerInterviewSession = {
   turns: CareerInterviewTurn[];
   // 回答ターン上限（これに達したら面接終了）。
   maxTurns: number;
+
+  // ── 企業研究ログ連携（すべて optional・後方互換） ──────────────────────
+  // 面接開始時に選んだ「ユーザー本人の企業研究ログ」。turn / complete でも文脈として使う。
+  companyResearchLogId?: string;
+  // 参照時点の軽量スナップショット（traceability・表示用）。
+  companyResearchSnapshot?: CompanyResearchSnapshot;
 };
 
 // 完了済み面接 1 件分の最終結果（localStorage: careerInterviewResults）。
@@ -77,4 +89,8 @@ export type CareerInterviewResult = {
   // 評価対象になった会話のスナップショット。
   turns: CareerInterviewTurn[];
   result: CareerInterviewFinalResult;
+
+  // 企業研究ログ連携（optional・後方互換）。結果一覧から参照元へリンクするのに使う。
+  companyResearchLogId?: string;
+  companyResearchSnapshot?: CompanyResearchSnapshot;
 };

@@ -186,10 +186,15 @@ CREATE TABLE IF NOT EXISTS career_interview_sessions (
   interview_type  text        NOT NULL DEFAULT '',
   turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
   max_turns       integer,
+  company_research_log_id   text,
+  company_research_snapshot jsonb,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT career_interview_sessions_natural_key UNIQUE (user_id, client_id)
 );
+-- 企業研究ログ連携（後から追加した列・再実行安全）。
+ALTER TABLE career_interview_sessions ADD COLUMN IF NOT EXISTS company_research_log_id   text;
+ALTER TABLE career_interview_sessions ADD COLUMN IF NOT EXISTS company_research_snapshot jsonb;
 CREATE INDEX IF NOT EXISTS career_interview_sessions_user_updated_idx
   ON career_interview_sessions (user_id, updated_at DESC);
 COMMENT ON TABLE career_interview_sessions IS
@@ -208,10 +213,15 @@ CREATE TABLE IF NOT EXISTS career_interview_results (
   interview_type  text        NOT NULL DEFAULT '',
   turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
   result          jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  company_research_log_id   text,
+  company_research_snapshot jsonb,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT career_interview_results_natural_key UNIQUE (user_id, client_id)
 );
+-- 企業研究ログ連携（後から追加した列・再実行安全）。companyResearchFit は result jsonb 内に含まれる。
+ALTER TABLE career_interview_results ADD COLUMN IF NOT EXISTS company_research_log_id   text;
+ALTER TABLE career_interview_results ADD COLUMN IF NOT EXISTS company_research_snapshot jsonb;
 CREATE INDEX IF NOT EXISTS career_interview_results_user_created_idx
   ON career_interview_results (user_id, created_at DESC);
 COMMENT ON TABLE career_interview_results IS
@@ -292,6 +302,40 @@ COMMENT ON TABLE career_consultation_threads IS
   'STEP-CAREER-SUPABASE-01. 就活相談 AI のスレッド mirror。LS key=careerConsultationLogs canonical。'
   'messages=スレッド内メッセージ配列（jsonb）。MVP では別 messages テーブルに分割しない。';
 
+-- ------------------------------------------------------------
+-- §92 career_company_research_logs — 企業研究の添削ログ（/career/company-research）。
+--     localStorage key='careerCompanyResearchLogs'（CareerCompanyResearchLog[]）。
+--     本機能は「AI が企業情報を生成する」のではなく、ユーザー自身の企業研究メモ（一次データ）を
+--     AI が添削する。input にユーザーの研究メモ原文、review に AI 添削、fit_analysis に
+--     本人情報とのすり合わせ、interview_context_summary に面接連携用要約を保持する。
+--     company_name / industry / interest_level / favorite は絞り込み用に昇格。
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS career_company_research_logs (
+  id                         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                    uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id                  text        NOT NULL,
+  company_name               text        NOT NULL DEFAULT '',
+  industry                   text        NOT NULL DEFAULT '',
+  interest_level             text,
+  input                      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  review                     jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  fit_analysis               jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  interview_context_summary  text        NOT NULL DEFAULT '',
+  revision_history           jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  favorite                   boolean     NOT NULL DEFAULT false,
+  created_at                 timestamptz NOT NULL DEFAULT now(),
+  updated_at                 timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_company_research_logs_natural_key UNIQUE (user_id, client_id)
+);
+-- 既存テーブルに後から列を足す再実行安全 ALTER（idempotent）。
+ALTER TABLE career_company_research_logs ADD COLUMN IF NOT EXISTS revision_history jsonb NOT NULL DEFAULT '[]'::jsonb;
+CREATE INDEX IF NOT EXISTS career_company_research_logs_user_created_idx
+  ON career_company_research_logs (user_id, created_at DESC);
+COMMENT ON TABLE career_company_research_logs IS
+  'STEP-CAREER-SUPABASE-02. 企業研究の添削ログ mirror。LS key=careerCompanyResearchLogs canonical。'
+  'input=ユーザーの研究メモ原文（一次データ）。review=AI 添削。fit_analysis=本人情報とのすり合わせ。'
+  'interview_context_summary=面接連携用要約。company_name/industry/interest_level/favorite は昇格カラム。';
+
 -- ============================================================
 -- updated_at trigger（全テーブル）— set_updated_at()（schema.sql §3）を冪等に張る。
 -- ============================================================
@@ -309,7 +353,8 @@ DECLARE
     'career_interview_results',
     'career_presentation_sessions',
     'career_presentation_results',
-    'career_consultation_threads'
+    'career_consultation_threads',
+    'career_company_research_logs'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -346,7 +391,8 @@ DECLARE
     'career_interview_results',
     'career_presentation_sessions',
     'career_presentation_results',
-    'career_consultation_threads'
+    'career_consultation_threads',
+    'career_company_research_logs'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP

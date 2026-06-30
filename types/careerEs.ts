@@ -3,6 +3,8 @@
 // 受験版の志望理由書（statement）系の型には依存しない（新卒就活向けに新規定義）。
 // DB / Supabase には接続せず localStorage のみで扱う。
 
+import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
+
 // 選考種別（応募する選考の種類）。
 //   - 'main'       : 本選考（入社を前提とした選考）
 //   - 'internship' : インターン応募
@@ -134,4 +136,13 @@ export type CareerEsLog = {
   //   - 'generated'      : ES生成（おまかせ / 設問モード）由来
   //   - 'review_rewrite' : AI添削の rewriteExample を改善版として保存したもの
   sourceType?: 'generated' | 'review_rewrite';
+
+  // ── 企業研究ログ連携（すべて optional・後方互換） ──────────────────────
+  // 生成/添削時に参照した「ユーザー本人の企業研究ログ」を記録する。
+  // 後から企業研究ログが更新されても、当時何を参照したか分かるよう snapshot を保存する。
+  //
+  // 参照した企業研究ログの ID（view へのリンク等に使う）。
+  companyResearchLogId?: string;
+  // 参照時点の軽量スナップショット（traceability・添削時の再利用に使う）。
+  companyResearchSnapshot?: CompanyResearchSnapshot;
 };

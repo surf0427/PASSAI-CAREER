@@ -2908,6 +2908,8 @@ CREATE TABLE career_interview_sessions (
   interview_type  text        NOT NULL DEFAULT '',
   turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
   max_turns       integer,
+  company_research_log_id   text,   -- 企業研究ログ連携（任意）
+  company_research_snapshot jsonb,  -- 参照時点の軽量スナップショット（任意）
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT career_interview_sessions_natural_key UNIQUE (user_id, client_id)
@@ -2923,7 +2925,9 @@ CREATE TABLE career_interview_results (
   mode            text        NOT NULL DEFAULT '',
   interview_type  text        NOT NULL DEFAULT '',
   turns           jsonb       NOT NULL DEFAULT '[]'::jsonb,
-  result          jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  result          jsonb       NOT NULL DEFAULT '{}'::jsonb,  -- companyResearchFit を含む
+  company_research_log_id   text,   -- 企業研究ログ連携（任意）
+  company_research_snapshot jsonb,  -- 参照時点の軽量スナップショット（任意）
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT career_interview_results_natural_key UNIQUE (user_id, client_id)
@@ -2985,14 +2989,39 @@ CREATE TABLE career_consultation_threads (
 CREATE INDEX career_consultation_threads_user_updated_idx
   ON career_consultation_threads (user_id, updated_at DESC);
 
--- 81–91 共通: updated_at trigger（set_updated_at / §3）を全 career_* feature table に張る。
+-- 92. career_company_research_logs — 企業研究の添削ログ。LS key=careerCompanyResearchLogs。
+--     AI は企業情報の生成者ではなく添削者。input=ユーザーの研究メモ原文（一次データ）、
+--     review=AI 添削、fit_analysis=本人情報とのすり合わせ、interview_context_summary=面接連携用要約。
+--     company_name/industry/interest_level/favorite を絞り込み用に昇格。
+CREATE TABLE career_company_research_logs (
+  id                         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                    uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  client_id                  text        NOT NULL,
+  company_name               text        NOT NULL DEFAULT '',
+  industry                   text        NOT NULL DEFAULT '',
+  interest_level             text,
+  input                      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  review                     jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  fit_analysis               jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  interview_context_summary  text        NOT NULL DEFAULT '',
+  revision_history           jsonb       NOT NULL DEFAULT '[]'::jsonb,
+  favorite                   boolean     NOT NULL DEFAULT false,
+  created_at                 timestamptz NOT NULL DEFAULT now(),
+  updated_at                 timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT career_company_research_logs_natural_key UNIQUE (user_id, client_id)
+);
+CREATE INDEX career_company_research_logs_user_created_idx
+  ON career_company_research_logs (user_id, created_at DESC);
+
+-- 81–92 共通: updated_at trigger（set_updated_at / §3）を全 career_* feature table に張る。
 DO $$
 DECLARE
   t text;
   tables text[] := ARRAY[
     'career_profiles','career_activities','career_self_analysis_results','career_self_prs',
     'career_matching_results','career_es_logs','career_interview_sessions','career_interview_results',
-    'career_presentation_sessions','career_presentation_results','career_consultation_threads'
+    'career_presentation_sessions','career_presentation_results','career_consultation_threads',
+    'career_company_research_logs'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP
@@ -3008,7 +3037,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- 81–91 共通: RLS（owner 直接判定 / 全 CRUD / authenticated）。career_values §81 と同形。
+-- 81–92 共通: RLS（owner 直接判定 / 全 CRUD / authenticated）。career_values §81 と同形。
 --   public / anon から直接全件読み書きできる policy は作らない。
 DO $$
 DECLARE
@@ -3016,7 +3045,8 @@ DECLARE
   tables text[] := ARRAY[
     'career_profiles','career_activities','career_self_analysis_results','career_self_prs',
     'career_matching_results','career_es_logs','career_interview_sessions','career_interview_results',
-    'career_presentation_sessions','career_presentation_results','career_consultation_threads'
+    'career_presentation_sessions','career_presentation_results','career_consultation_threads',
+    'career_company_research_logs'
   ];
 BEGIN
   FOREACH t IN ARRAY tables LOOP

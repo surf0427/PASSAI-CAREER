@@ -15,6 +15,8 @@ import {
   type CareerInterviewContextPayload,
 } from '../contextSource';
 import { upsertInterviewSession } from '../interviewStorage';
+import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
+import { buildCompanyResearchSnapshot } from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerInterviewSessionsToSupabase } from '@/lib/supabase/careerInterview';
 import { useVoice } from '../useVoice';
@@ -27,6 +29,10 @@ import type {
   CareerInterviewSession,
   CareerInterviewType,
 } from '@/types/careerInterview';
+import {
+  CAREER_COMPANY_INTEREST_LABELS,
+  type CareerCompanyResearchLog,
+} from '@/types/careerCompanyResearch';
 
 // 回答ターン上限（サーバ CAREER_INTERVIEW_MAX_TURNS=5 と一致。進行バー表示に使う）。
 const MAX_TURNS = 5;
@@ -49,6 +55,8 @@ export default function CareerInterviewSetupPage() {
   const [interviewType, setInterviewType] = useState<CareerInterviewType>(
     DEFAULT_CAREER_INTERVIEW_TYPE,
   );
+  // 任意: 参照する企業研究ログ。null = 使わない（従来どおり）。
+  const [researchLogId, setResearchLogId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +72,17 @@ export default function CareerInterviewSetupPage() {
     () => (isMounted ? buildInterviewContextPayload() : null),
     [isMounted],
   );
+  // 保存済み企業研究ログ（最新更新順）。面接で深掘りの根拠に使える。
+  const researchLogs = useMemo<CareerCompanyResearchLog[]>(() => {
+    if (!isMounted) return [];
+    return [...loadCompanyResearchLogs()].sort((a, b) =>
+      (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''),
+    );
+  }, [isMounted]);
+  const selectedResearchLog = useMemo<CareerCompanyResearchLog | null>(
+    () => researchLogs.find((l) => l.id === researchLogId) ?? null,
+    [researchLogs, researchLogId],
+  );
 
   const profileReady = !!ctx?.profile;
   const activityReady = hasAnyActivity(ctx?.activity ?? null);
@@ -75,11 +94,13 @@ export default function CareerInterviewSetupPage() {
     if (!canStart || loading || !ctx) return;
     setLoading(true);
     setError(null);
+    // 企業研究ログ選択時は、その面接用コンテキストを含めて payload を作る（未選択なら null）。
+    const payload = buildInterviewContextPayload(researchLogId);
     try {
       const res = await fetch('/api/career/interview/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...ctx, interviewType }),
+        body: JSON.stringify({ ...payload, interviewType }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -100,6 +121,13 @@ export default function CareerInterviewSetupPage() {
         interviewType,
         turns: [{ role: 'question', content: data.question }],
         maxTurns: MAX_TURNS,
+        // 企業研究ログ連携（選択時のみ）。turn / complete でも同じログを文脈に使う。
+        ...(selectedResearchLog
+          ? {
+              companyResearchLogId: selectedResearchLog.id,
+              companyResearchSnapshot: buildCompanyResearchSnapshot(selectedResearchLog),
+            }
+          : {}),
       };
       upsertInterviewSession(session);
       // Supabase durable mirror（best-effort / member のみ）。
@@ -129,6 +157,34 @@ export default function CareerInterviewSetupPage() {
           </p>
         )}
       </Card>
+
+      {researchLogs.length > 0 && (
+        <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+            企業研究ログを使う（任意）
+          </p>
+          <p className="text-xs text-slate-500 leading-relaxed mb-4">
+            保存した企業研究を選ぶと、面接官AIがその内容を前提に「なぜ興味を持ったか」「自分の経験との接続」「入社後の活かし方」を深掘りします（企業情報の暗記確認はしません）。
+          </p>
+          <div className="flex flex-col gap-2">
+            <ResearchOption
+              label="企業研究なしで進める"
+              sub="登録済みの基本情報・活動・自己分析・ESをもとに面接します。"
+              active={researchLogId === null}
+              onClick={() => setResearchLogId(null)}
+            />
+            {researchLogs.map((log) => (
+              <ResearchOption
+                key={log.id}
+                label={log.companyName || '（企業名なし）'}
+                sub={researchSummary(log)}
+                active={researchLogId === log.id}
+                onClick={() => setResearchLogId(log.id)}
+              />
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">面接の種類</p>
@@ -195,6 +251,51 @@ export default function CareerInterviewSetupPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+// 企業研究ログの 1 行サマリ（志望度・更新日・理解度スコア・メモ抜粋）。
+function researchSummary(log: CareerCompanyResearchLog): string {
+  const parts: string[] = [];
+  if (log.interestLevel) parts.push(CAREER_COMPANY_INTEREST_LABELS[log.interestLevel]);
+  const d = new Date(log.updatedAt || log.createdAt);
+  if (!Number.isNaN(d.getTime())) parts.push(`更新 ${d.toLocaleDateString('ja-JP')}`);
+  if (log.review?.overallScore) parts.push(`理解度${log.review.overallScore}点`);
+  return parts.join('・');
+}
+
+function ResearchOption({
+  label,
+  sub,
+  active,
+  onClick,
+}: {
+  label: string;
+  sub?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`w-full text-left rounded-xl px-3 py-2.5 ring-1 transition-colors ${
+        active ? 'bg-blue-50 ring-blue-400' : 'bg-white ring-slate-200 hover:bg-slate-50'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+            active ? 'border-blue-600' : 'border-slate-300'
+          }`}
+        >
+          {active && <span className="h-2 w-2 rounded-full bg-blue-600" />}
+        </span>
+        <span className="text-sm font-semibold text-slate-800 truncate">{label}</span>
+      </div>
+      {sub && <p className="mt-1 pl-6 text-xs text-slate-500 leading-relaxed">{sub}</p>}
+    </button>
   );
 }
 

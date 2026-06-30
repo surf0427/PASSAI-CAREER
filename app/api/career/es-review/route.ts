@@ -18,6 +18,10 @@ import type {
   CareerEsReviewBreakdown,
   CareerEsRank,
 } from '@/types/careerEs';
+import {
+  normalizeCompanyResearchSnapshot,
+  formatCompanyResearchContextForPrompt,
+} from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -178,6 +182,7 @@ export async function POST(req: Request) {
     selectionType?: unknown;
     industry?: string;
     jobType?: string;
+    companyResearchContext?: unknown;
   };
 
   const answer = str(b.answer);
@@ -196,6 +201,11 @@ export async function POST(req: Request) {
         : '';
   const industry = str(b.industry);
   const jobType = str(b.jobType);
+  // 保存済み企業研究（任意・1 件）。あれば回答との整合性評価に使う。
+  const researchSnapshot = normalizeCompanyResearchSnapshot(b.companyResearchContext);
+  const researchBlock = researchSnapshot
+    ? formatCompanyResearchContextForPrompt([researchSnapshot])
+    : '';
 
   // 添削対象が無ければ弾く。
   if (answer === '') {
@@ -205,7 +215,22 @@ export async function POST(req: Request) {
     );
   }
 
-  // user メッセージ: 設問・企業名・文字数（あれば）+ 添削対象本文。
+  // 保存済み企業研究を使う場合の評価指示（断定を避けた添削者の文体を維持）。
+  const researchInstruction = researchBlock
+    ? [
+        '# 保存済みの企業研究（ユーザー本人が作成・確認したもの）',
+        researchBlock,
+        '',
+        'この企業研究はユーザー自身が確認・保存した一次情報です。添削では次も評価してください:',
+        '- 企業研究で注目している点が、回答（特に志望動機）に活かされているか（企業理解の深さ・志望動機の具体性）。',
+        '- 企業研究ログで「不足・根拠不足」と指摘された点（競合比較など）が放置されていないか。',
+        '- 自己分析 / 活動整理 / 就活軸との接続が取れているか。',
+        'コメントは「あなたの企業研究メモを見る限り」「保存済み企業研究によると」という文体にし、',
+        '企業情報を断定せず、根拠不足は公式情報・説明会資料での再確認を促してください。',
+      ].join('\n')
+    : '';
+
+  // user メッセージ: 設問・企業名・文字数（あれば）+ 企業研究（あれば）+ 添削対象本文。
   const userMessage = [
     question ? `# ES設問\n${question}` : '',
     selectionLabel ? `# 選考種別\n${selectionLabel}` : '',
@@ -213,6 +238,7 @@ export async function POST(req: Request) {
     industry ? `# 志望業界\n${industry}` : '',
     jobType ? `# 志望職種\n${jobType}` : '',
     charLimit ? `# 指定文字数\n${charLimit} 字（±10% 以内を目安）` : '',
+    researchInstruction,
     `# 添削対象の回答本文\n${answer}`,
     '',
     '上記の回答本文を、指定の JSON 形式で添削してください。事実を捏造しないでください。',

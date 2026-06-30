@@ -24,6 +24,10 @@ import type {
 } from '@/lib/careerAi';
 import type { CareerEsResult, CareerEsSelectionType } from '@/types/careerEs';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
+import {
+  normalizeCompanyResearchSnapshot,
+  formatCompanyResearchContextForPrompt,
+} from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -132,6 +136,22 @@ function buildTargetingInstruction(params: {
     );
   }
   return lines.join('\n');
+}
+
+// 保存済み企業研究（ユーザー本人が確認したもの）を使うときの指示ブロック。
+// AI が企業情報を補完・断定しないよう、「ユーザーの企業研究に基づくと」という扱いに固定する。
+function buildCompanyResearchInstruction(formatted: string): string {
+  return [
+    '# 保存済みの企業研究（ユーザー本人が作成・確認したもの）',
+    formatted,
+    '',
+    'この企業研究は、ユーザー自身が調べて確認・保存した一次情報です。志望動機・企業別設問・',
+    '入社後にやりたいこと・自己PRと企業の接続に、この内容を根拠として活用してください。',
+    '- 「ユーザーの企業研究に基づくと」という扱いにし、AI が企業情報を補完・断定しないでください。',
+    '- 企業研究で注目している点を志望理由に自然につなげてください。',
+    '- 企業研究で不足・根拠不足と指摘されている点は、断定で埋めず「公式情報や説明会資料での',
+    '  再確認」を前提にした表現にとどめてください。',
+  ].join('\n');
 }
 
 // 任意の値を string に丸める。
@@ -251,6 +271,7 @@ export async function POST(req: Request) {
     selectionType?: unknown;
     industry?: string;
     jobType?: string;
+    companyResearchContext?: unknown;
   };
 
   const profile = b.profile ?? null;
@@ -300,6 +321,11 @@ export async function POST(req: Request) {
   const selfAnalysisBlock = renderSelfAnalysis(selfAnalysis);
   const companyBlock = companyName ? buildCompanyInstruction(companyName) : '';
   const targetingBlock = buildTargetingInstruction({ selectionType, industry, jobType });
+  // 保存済み企業研究（任意・1 件）。あれば「ユーザー本人の根拠」として優先的に使う。
+  const researchSnapshot = normalizeCompanyResearchSnapshot(b.companyResearchContext);
+  const researchBlock = researchSnapshot
+    ? buildCompanyResearchInstruction(formatCompanyResearchContextForPrompt([researchSnapshot]))
+    : '';
   const questionBlock = answerMode
     ? [
         '# ES設問（この設問に直接答えてください）',
@@ -317,6 +343,7 @@ export async function POST(req: Request) {
     buildCareerSystemPrompt(context),
     companyBlock,
     targetingBlock,
+    researchBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     questionBlock,
     outputFormat,

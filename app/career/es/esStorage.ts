@@ -41,6 +41,13 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
   if (r.sourceType === 'generated' || r.sourceType === 'review_rewrite') {
     log.sourceType = r.sourceType;
   }
+  // 企業研究ログ連携（optional・後方互換）。snapshot は object のみ採用する。
+  if (typeof r.companyResearchLogId === 'string') {
+    log.companyResearchLogId = r.companyResearchLogId;
+  }
+  if (r.companyResearchSnapshot && typeof r.companyResearchSnapshot === 'object') {
+    log.companyResearchSnapshot = r.companyResearchSnapshot as CareerEsLog['companyResearchSnapshot'];
+  }
   return log;
 }
 

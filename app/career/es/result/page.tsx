@@ -57,6 +57,8 @@ type ReviewRequest = {
   selectionType?: CareerEsLog['selectionType'];
   industry?: string;
   jobType?: string;
+  // 生成時に参照した企業研究スナップショット（あれば添削でも整合性評価に使う）。
+  companyResearchContext?: CareerEsLog['companyResearchSnapshot'];
 };
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
@@ -146,6 +148,7 @@ export default function CareerEsResultPage() {
           selectionType: request.selectionType,
           industry: request.industry,
           jobType: request.jobType,
+          companyResearchContext: request.companyResearchContext,
         }),
       });
       if (!res.ok) {
@@ -391,6 +394,23 @@ export default function CareerEsResultPage() {
                     )}
                   </div>
                 )}
+                {(selected.companyResearchSnapshot || selected.companyResearchLogId) && (
+                  <div className="mt-2 pt-2 border-t border-slate-200 flex gap-2 text-xs">
+                    <span className="shrink-0 text-slate-400">使用した企業研究</span>
+                    {selected.companyResearchLogId ? (
+                      <Link
+                        href={`/career/company-research/view?id=${encodeURIComponent(selected.companyResearchLogId)}`}
+                        className="text-blue-600 hover:underline break-words"
+                      >
+                        {selected.companyResearchSnapshot?.companyName || '保存済みの企業研究'} を見る →
+                      </Link>
+                    ) : (
+                      <span className="text-slate-700 break-words">
+                        {selected.companyResearchSnapshot?.companyName || '保存済みの企業研究'}
+                      </span>
+                    )}
+                  </div>
+                )}
               </Card>
 
               {/* 設問モード（answer あり）は回答を優先表示。それ以外は従来の 7 フィールド。 */}
@@ -405,6 +425,7 @@ export default function CareerEsResultPage() {
                     selectionType: selected.result.selectionType ?? selected.selectionType,
                     industry: selected.result.industry ?? selected.industry,
                     jobType: selected.result.jobType ?? selected.jobType,
+                    companyResearchContext: selected.companyResearchSnapshot,
                   };
                   return (
                     <>
@@ -528,6 +549,7 @@ function SevenFieldResult({
           selectionType,
           industry,
           jobType,
+          companyResearchContext: log.companyResearchSnapshot,
         };
         return (
           <div key={field}>

@@ -19,6 +19,8 @@ import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadPresentationResults } from '@/app/career/presentation/presentationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
+import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
+import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import {
   loadConsultationThreads,
   saveConsultationThreads,
@@ -62,6 +64,8 @@ function buildConsultationContext() {
     es: esLogs.length > 0 ? esLogs[0].result : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
     presentationResult: presentationResults.length > 0 ? presentationResults[0].result : null,
+    // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
+    companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
   };
 }
 

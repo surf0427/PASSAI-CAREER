@@ -40,6 +40,12 @@ const FEATURES = [
     href: '/career/matching',
   },
   {
+    key: 'company-research',
+    title: '企業研究',
+    description: '自分で調べた企業研究メモをAIが家庭教師として添削し、不足や思い込みを指摘します。',
+    href: '/career/company-research',
+  },
+  {
     key: 'es',
     title: 'ES作成',
     description: 'AIのサポートで、ガクチカ・自己PR・志望動機などのESを書き上げます。',

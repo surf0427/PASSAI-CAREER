@@ -20,6 +20,12 @@ import type {
   CareerInterviewTurn,
   CareerInterviewType,
 } from "@/types/careerInterview";
+import type { CompanyResearchSnapshot } from "@/types/careerCompanyResearch";
+
+// jsonb 列に保存した企業研究スナップショットを防御的に取り出す。
+function snapshotOf(value: unknown): CompanyResearchSnapshot | undefined {
+  return value && typeof value === "object" ? (value as CompanyResearchSnapshot) : undefined;
+}
 
 const SESSIONS_TABLE = "career_interview_sessions";
 const RESULTS_TABLE = "career_interview_results";
@@ -33,6 +39,8 @@ type InterviewSessionRow = {
   interview_type: string;
   turns: unknown;
   max_turns: number | null;
+  company_research_log_id: string | null;
+  company_research_snapshot: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -58,6 +66,8 @@ export async function upsertCareerInterviewSessionsToSupabase(
     interview_type: s.interviewType ?? "real",
     turns: s.turns ?? [],
     max_turns: s.maxTurns,
+    company_research_log_id: s.companyResearchLogId ?? null,
+    company_research_snapshot: s.companyResearchSnapshot ?? null,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
   }));
@@ -83,23 +93,33 @@ export async function listCareerInterviewSessionsFromSupabase(
   try {
     const { data, error } = await supabase
       .from(SESSIONS_TABLE)
-      .select("client_id, status, mode, interview_type, turns, max_turns, created_at, updated_at")
+      .select(
+        "client_id, status, mode, interview_type, turns, max_turns, company_research_log_id, company_research_snapshot, created_at, updated_at",
+      )
       .eq("user_id", userId)
       .order("updated_at", { ascending: false });
     if (error) {
       devWarn("[careerInterview] sessions list error", error);
       return [];
     }
-    return ((data ?? []) as InterviewSessionRow[]).map((row) => ({
-      id: row.client_id,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      status: row.status === "completed" ? "completed" : "in_progress",
-      mode: row.mode as CareerInterviewMode,
-      interviewType: row.interview_type as CareerInterviewType,
-      turns: turnsOf(row.turns),
-      maxTurns: row.max_turns ?? 0,
-    }));
+    return ((data ?? []) as InterviewSessionRow[]).map((row) => {
+      const session: CareerInterviewSession = {
+        id: row.client_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        status: row.status === "completed" ? "completed" : "in_progress",
+        mode: row.mode as CareerInterviewMode,
+        interviewType: row.interview_type as CareerInterviewType,
+        turns: turnsOf(row.turns),
+        maxTurns: row.max_turns ?? 0,
+      };
+      if (typeof row.company_research_log_id === "string") {
+        session.companyResearchLogId = row.company_research_log_id;
+      }
+      const snap = snapshotOf(row.company_research_snapshot);
+      if (snap) session.companyResearchSnapshot = snap;
+      return session;
+    });
   } catch (err) {
     devWarn("[careerInterview] sessions list threw", err);
     return [];
@@ -114,6 +134,8 @@ type InterviewResultRow = {
   interview_type: string;
   turns: unknown;
   result: unknown;
+  company_research_log_id: string | null;
+  company_research_snapshot: unknown;
   created_at: string;
 };
 
@@ -133,6 +155,8 @@ export async function upsertCareerInterviewResultsToSupabase(
     interview_type: r.interviewType ?? "real",
     turns: r.turns ?? [],
     result: r.result ?? {},
+    company_research_log_id: r.companyResearchLogId ?? null,
+    company_research_snapshot: r.companyResearchSnapshot ?? null,
     created_at: r.createdAt,
   }));
 
@@ -157,21 +181,31 @@ export async function listCareerInterviewResultsFromSupabase(
   try {
     const { data, error } = await supabase
       .from(RESULTS_TABLE)
-      .select("client_id, mode, interview_type, turns, result, created_at")
+      .select(
+        "client_id, mode, interview_type, turns, result, company_research_log_id, company_research_snapshot, created_at",
+      )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error) {
       devWarn("[careerInterview] results list error", error);
       return [];
     }
-    return ((data ?? []) as InterviewResultRow[]).map((row) => ({
-      id: row.client_id,
-      createdAt: row.created_at,
-      mode: row.mode as CareerInterviewMode,
-      interviewType: row.interview_type as CareerInterviewType,
-      turns: turnsOf(row.turns),
-      result: (row.result ?? {}) as CareerInterviewFinalResult,
-    }));
+    return ((data ?? []) as InterviewResultRow[]).map((row) => {
+      const result: CareerInterviewResult = {
+        id: row.client_id,
+        createdAt: row.created_at,
+        mode: row.mode as CareerInterviewMode,
+        interviewType: row.interview_type as CareerInterviewType,
+        turns: turnsOf(row.turns),
+        result: (row.result ?? {}) as CareerInterviewFinalResult,
+      };
+      if (typeof row.company_research_log_id === "string") {
+        result.companyResearchLogId = row.company_research_log_id;
+      }
+      const snap = snapshotOf(row.company_research_snapshot);
+      if (snap) result.companyResearchSnapshot = snap;
+      return result;
+    });
   } catch (err) {
     devWarn("[careerInterview] results list threw", err);
     return [];

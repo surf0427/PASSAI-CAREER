@@ -24,6 +24,10 @@ import type {
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import {
+  type InterviewCompanyResearchContext,
+  formatInterviewCompanyResearchForPrompt,
+} from '@/lib/careerCompanyResearch/context';
+import {
   getInterviewModeConfig,
   SHARED_INTERVIEWER_RULES,
 } from '@/app/career/interview/interviewModes';
@@ -156,6 +160,8 @@ export type CareerInterviewContextInput = {
   // 任意の参考データ（存在しなくても落ちない／プロンプトに出さないだけ）。
   matching?: CareerMatchEngineResult | null;
   consultationInsights?: string[] | null;
+  // 保存済み企業研究（選択時のみ）。ユーザー本人の企業研究を根拠に深掘りする。
+  companyResearch?: InterviewCompanyResearchContext | null;
   interviewType?: CareerInterviewType;
   userInput?: string;
 };
@@ -176,6 +182,8 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
   const esBlock = renderEs(input.es);
   const matchingBlock = renderMatching(input.matching);
   const consultationBlock = renderConsultationInsights(input.consultationInsights);
+  // 企業研究ログが選択されているときのみブロックを出す（未選択なら従来どおり）。
+  const companyResearchBlock = formatInterviewCompanyResearchForPrompt(input.companyResearch);
 
   return [
     buildPersonaBlock(input.interviewType),
@@ -185,6 +193,7 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     matchingBlock ? `# 就活マッチング結果（参考・断定しない）\n${matchingBlock}` : '',
     consultationBlock ? `# 相談AIでの最近の気づき（参考程度）\n${consultationBlock}` : '',
+    companyResearchBlock,
     `# この面接の狙い（${config.label}）\n${config.guidance}`,
     `# 深掘りで扱える観点（毎回この中から最も価値が高い1点を選ぶ）\n${CAREER_INTERVIEW_TOPICS.map((t) => `- ${t}`).join('\n')}`,
   ]
@@ -247,11 +256,14 @@ export function buildFollowupUserPrompt(
 }
 
 // 最終評価 system prompt（JSON 出力スキーマを明示）。面接の種類に応じて重視点を足す。
+// hasCompanyResearch=true（企業研究ログを使った面接）のときは、企業研究との接続評価
+// （companyResearchFit）も出力させる。未使用なら従来どおり companyFit までで完結する。
 export function buildFinalFeedbackInstruction(
   interviewType?: CareerInterviewType,
+  hasCompanyResearch = false,
 ): string {
   const config = getInterviewModeConfig(interviewType);
-  return [
+  const lines = [
     '# 最終フィードバック（出力形式・厳守）',
     `これまでの面接（${config.label}）のやり取り全体をもとに、新卒就活の観点で最終フィードバックを作成してください。`,
     '評価は「優しいが甘すぎない」面接官として、STAR（状況・課題・行動・結果）・結論ファースト・成果の具体性・強みの再現性・志望動機との一貫性を見て行ってください。',
@@ -262,6 +274,17 @@ export function buildFinalFeedbackInstruction(
     '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
     '各配列は2〜4個入れ、空配列にしない。実際の回答内容に即した具体的な指摘にし、テンプレ文を避ける。',
     '事実確認が必要な企業・業界情報は断定しない。companyFit は志望業界・職種・就活軸（あれば志望企業）との相性・接続を、回答内容に即して2〜4文で述べる。',
+  ];
+  if (hasCompanyResearch) {
+    lines.push(
+      'この面接ではユーザー本人の保存済み企業研究を文脈に使いました。companyResearchFit に「企業研究との接続評価」を',
+      '2〜4文で述べてください。観点は ①企業理解の活用度（企業研究で注目した点を面接で活かせたか）',
+      '②志望理由との接続 ③自己分析・活動経験との接続 ④入社後ビジョンの具体性。',
+      '文体は「企業研究で注目していた○○を面接で十分に活用できています」「企業研究内容はありますが志望理由への接続が弱いです」',
+      '「自己分析と企業研究がうまく結びついています」のように、保存済み企業研究を根拠にする。企業情報は断定しない。',
+    );
+  }
+  lines.push(
     '',
     '{',
     '  "overallComment": string,      // 全体評価の総括（数文）',
@@ -270,9 +293,15 @@ export function buildFinalFeedbackInstruction(
     '  "sampleAnswers": string[],     // より良い回答の例（具体的に）',
     '  "deepDiveTopics": string[],    // さらに深掘りされそうな論点',
     '  "nextActions": string[],       // 本番までに次にやるべきこと',
-    '  "companyFit": string           // 志望業界・職種・就活軸との相性・接続についての所見',
-    '}',
-  ].join('\n');
+    `  "companyFit": string${hasCompanyResearch ? ',' : ''}           // 志望業界・職種・就活軸との相性・接続についての所見`,
+  );
+  if (hasCompanyResearch) {
+    lines.push(
+      '  "companyResearchFit": string   // 保存済み企業研究との接続評価（企業理解の活用度・志望理由/自己分析との接続・入社後ビジョンの具体性）',
+    );
+  }
+  lines.push('}');
+  return lines.join('\n');
 }
 
 // 最終評価 user プロンプト。
