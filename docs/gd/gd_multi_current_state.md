@@ -209,6 +209,22 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - hub: 4 導線（1人練習を始める / ルーム作成 / 合言葉で参加 / 結果・履歴）に整理。
       - solo=`careerGdResults` / multi=`careerGdRoomLogs` の分離維持（key 追加なし・Supabase 変更なし・採点ロジック不変）。
       - STEP-GD-17 の consultation/matching 連携は非破壊（context 連携はそのまま）。
-- [ ] STEP-GD-19 以降: Supabase 履歴同期 / 面接・ES 連携 / Realtime（Phase3）。
+- [x] STEP-GD-19: マルチGD履歴の **Supabase durable mirror → localStorage hydrate**（別デバイス閲覧）。
+      - GD履歴表示時に **1 回だけ**、ログイン済みユーザーのみ `career_gd_room_results` を **RLS 経由**（authenticated・
+        `getBrowserSupabaseClient`）で自分の行(`user_id=auth.uid()`)を取得（service_role 不使用・必要列のみ select）。
+      - 取得 → `mergeGdRoomLogs`（**merge only**・local を消さない・重複判定キー=**roomId**・両方あれば richer な local 優先）
+        → `careerGdRoomLogs`（既存 key・新 key 追加なし）。UI に「クラウド同期済み」を控えめ表示。
+      - **localStorage canonical + Supabase durable mirror は不変**（Supabase canonical 化しない）。
+      - 失敗（未ログイン / env 未設定 / ネットワーク / RLS 拒否）は never throw・[] で localStorage 表示を継続。
+      - hydrate 行はテーマ/所要時間を持たない（結果 table に無い）ため既定値になるが、評価・ランキング・
+        matchingHints・サマリー・スコア/ランク/企業コミュ適性は self_feedback 等から復元される。
+      - STEP-17 の consultation/matching 連携は `careerGdRoomLogs` を読むだけなので hydrate 後もそのまま動作。
+      - **⚠ 運用前提（本 STEP では変更しない）**: 現状 `career_gd_*` は service_role のみ table 権限を持つため、
+        authenticated の直接 SELECT は `42501 permission denied` になる（実機確認済み）。別デバイス hydrate を有効化するには
+        運用者が `career_gd_room_results` に対し **(1) `GRANT SELECT ... TO authenticated`** と
+        **(2) owner-select RLS policy `USING (auth.uid() = user_id)`**（apply SQL 内にコメントで用意済み）を適用する必要がある。
+        いずれも本 STEP では適用しない（コードは 42501/0 行でも never throw・localStorage 表示を継続）。
+        GD-14.5 の RPC と同じ「コード先行・運用者が SQL 適用」方式。
+- [ ] STEP-GD-20 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

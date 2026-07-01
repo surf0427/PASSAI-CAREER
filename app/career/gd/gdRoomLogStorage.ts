@@ -105,7 +105,7 @@ function normMatching(raw: unknown): CareerGdMatchingHints {
   return { hints: strArray(r.hints), summary: str(r.summary) };
 }
 
-function normalizeLog(raw: unknown): CareerGdRoomLog | null {
+export function normalizeGdRoomLog(raw: unknown): CareerGdRoomLog | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const id = str(r.id) || str(r.roomId);
@@ -127,11 +127,15 @@ function normalizeLog(raw: unknown): CareerGdRoomLog | null {
   };
 }
 
+function sortNewestFirst(logs: CareerGdRoomLog[]): CareerGdRoomLog[] {
+  return logs.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+}
+
 export function loadGdRoomLogs(): CareerGdRoomLog[] {
   const raw = safeGetStorage<unknown[]>(KEY, []);
-  const logs = raw.map(normalizeLog).filter((l): l is CareerGdRoomLog => l !== null);
+  const logs = raw.map(normalizeGdRoomLog).filter((l): l is CareerGdRoomLog => l !== null);
   // 新しい順（createdAt 降順）。
-  return logs.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+  return sortNewestFirst(logs);
 }
 
 export function saveGdRoomLogs(logs: CareerGdRoomLog[]): void {
@@ -146,4 +150,33 @@ export function appendGdRoomLog(log: CareerGdRoomLog): void {
 
 export function removeGdRoomLog(id: string): void {
   saveGdRoomLogs(loadGdRoomLogs().filter((l) => l.id !== id));
+}
+
+// STEP-GD-19: Supabase（career_gd_room_results）から取得した履歴を localStorage へ **merge only** する。
+//   - localStorage は絶対に消さない（canonical を維持）。
+//   - 重複判定キーは roomId（= career_gd_room_results の (room_id, user_id) UNIQUE に対応。
+//     1 ユーザー 1 room 1 結果なので roomId で一意に定まる）。
+//   - 両方に存在する room は **local を残す**（local はテーマ・所要時間まで持つ richer な行）。
+//   - Supabase のみ存在する room だけを新規追加する。
+//   返り値: マージ後の全ログ（新しい順）。新規追加が無ければ storage を書き換えない。
+export function mergeGdRoomLogs(incoming: CareerGdRoomLog[]): {
+  logs: CareerGdRoomLog[];
+  added: number;
+} {
+  const local = loadGdRoomLogs();
+  if (!Array.isArray(incoming) || incoming.length === 0) return { logs: local, added: 0 };
+
+  const seen = new Set(local.map((l) => l.roomId || l.id));
+  const added: CareerGdRoomLog[] = [];
+  for (const log of incoming) {
+    const key = log.roomId || log.id;
+    if (!key || seen.has(key)) continue; // local 優先（richer）。重複は追加しない。
+    seen.add(key);
+    added.push(log);
+  }
+  if (added.length === 0) return { logs: local, added: 0 };
+
+  const merged = sortNewestFirst([...local, ...added]);
+  saveGdRoomLogs(merged);
+  return { logs: merged, added: added.length };
 }

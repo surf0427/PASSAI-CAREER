@@ -8,11 +8,13 @@
 //   - 詳細（GdEvaluationDetail 共用）
 // を表示する。空状態は「まだGD履歴がありません」。
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Card } from '@/components/ui/Card';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { GD_FORMAT_LABELS } from './gdRoles';
 import { GdEvaluationDetail, GD_GRADE_STYLE } from './GdEvaluationDetail';
-import { loadGdRoomLogs, removeGdRoomLog } from './gdRoomLogStorage';
+import { loadGdRoomLogs, removeGdRoomLog, mergeGdRoomLogs } from './gdRoomLogStorage';
+import { listCareerGdRoomResultsFromSupabase } from '@/lib/supabase/careerGdRoomResults';
 import type { CareerGdRoomLog, GdCompanyGrade } from '@/types/careerGd';
 
 const subscribeMount = () => () => {};
@@ -52,6 +54,30 @@ export function MultiGdHistorySection() {
   const [rankFilter, setRankFilter] = useState<GdCompanyGrade | 'all'>('all');
   const [scoreBand, setScoreBand] = useState<(typeof SCORE_BANDS)[number]['key']>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // STEP-GD-19: 初回表示時に 1 回だけ Supabase（durable mirror）から自分の結果を hydrate → merge。
+  // localStorage canonical は維持（merge only・local は消さない）。失敗は無視して localStorage 表示を継続。
+  const userId = useCurrentUserId();
+  const [synced, setSynced] = useState(false);
+  const hydrateRan = useRef(false);
+  useEffect(() => {
+    if (!isMounted || !userId || hydrateRan.current) return;
+    hydrateRan.current = true; // 無限ループ・再取得を防ぐ（この session で 1 回だけ）。
+    let cancelled = false;
+    void (async () => {
+      // listCareerGdRoomResultsFromSupabase は never throw（失敗時 []）。
+      const remote = await listCareerGdRoomResultsFromSupabase(userId);
+      if (cancelled || remote.length === 0) return;
+      const { added } = mergeGdRoomLogs(remote);
+      if (cancelled) return;
+      setSynced(true);
+      // 新規追加があったときだけ再読込（loadGdRoomLogs を version で読み直す）。
+      if (added > 0) setVersion((v) => v + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isMounted, userId]);
 
   const stats = useMemo(() => {
     const scored = (logs ?? []).filter((l) => l.evaluation.scored);
@@ -100,7 +126,14 @@ export function MultiGdHistorySection() {
     <div className="mb-6">
       {/* 統計 */}
       <Card variant="soft" padding="md" className="mb-4">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">ルームGD（マルチ）の履歴</p>
+        <div className="flex items-center gap-2 mb-3">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest">ルームGD（マルチ）の履歴</p>
+          {synced && (
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+              クラウド同期済み
+            </span>
+          )}
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="実施回数" value={`${stats.count}`} unit="回" />
           <Stat label="平均スコア" value={`${stats.avg}`} unit="点" />

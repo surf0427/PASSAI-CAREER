@@ -245,22 +245,37 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   TO service_role;
 
 -- ------------------------------------------------------------
--- 【将来案・現時点では有効化しない】本人結果のみ直接 SELECT を許可する場合の policy。
---   MVP は結果取得も API route 経由に統一するため、下記はコメントのまま残す。
---   もし client から自分の結果を直接読ませたくなったら、この 1 本だけ有効化する。
+-- 本人結果のみ authenticated が直接 SELECT できるようにする（STEP-GD-19.5）。
+--
+--   目的: マルチGD履歴の別デバイス hydrate（STEP-GD-19）を実運用で有効化する。
+--     クライアント（app/career/gd + lib/supabase/careerGdRoomResults.ts）は
+--     getBrowserSupabaseClient()（anon key + user session = authenticated ロール）で
+--     career_gd_room_results を user_id=auth.uid() で読み、careerGdRoomLogs へ merge する。
+--
+--   方針（最小権限・deny-by-default 維持）:
+--     - **career_gd_room_results だけ** に authenticated の **SELECT のみ** を付与する
+--       （rooms / members / messages には付与しない。INSERT/UPDATE/DELETE も付与しない）。
+--     - RLS の owner-select policy `USING (auth.uid() = user_id)` で、authenticated は
+--       **自分の行だけ** SELECT できる（他人の結果は読めない）。
+--     - anon には一切付与しない（GRANT も policy も無し → 引き続き 42501/0 で拒否）。
+--     - service_role は従来どおり（RLS bypass・CRUD 保持）。
+--   idempotent（GRANT は no-op 再実行安全、policy は存在チェック付き）。
 -- ------------------------------------------------------------
--- DO $$
--- BEGIN
---   IF NOT EXISTS (
---     SELECT 1 FROM pg_policies
---     WHERE schemaname='public' AND tablename='career_gd_room_results'
---       AND policyname='career_gd_room_results owner select'
---   ) THEN
---     EXECUTE 'CREATE POLICY "career_gd_room_results owner select"
---              ON public.career_gd_room_results
---              FOR SELECT TO authenticated USING (auth.uid() = user_id)';
---   END IF;
--- END $$;
+GRANT USAGE ON SCHEMA public TO authenticated;   -- Supabase 既定で付与済みだが冪等に明示
+GRANT SELECT ON public.career_gd_room_results TO authenticated;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname='public' AND tablename='career_gd_room_results'
+      AND policyname='career_gd_room_results owner select'
+  ) THEN
+    EXECUTE 'CREATE POLICY "career_gd_room_results owner select"
+             ON public.career_gd_room_results
+             FOR SELECT TO authenticated USING (auth.uid() = user_id)';
+  END IF;
+END $$;
 
 -- ============================================================
 -- career_gd_post_message — 発言の atomic 保存 RPC（STEP-GD-14）。
