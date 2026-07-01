@@ -12,7 +12,11 @@ STEP: GD-10（DB 基盤準備）
 ## 0. 適用方針（前提の再確認）
 
 - Phase2 マルチは **member ログイン必須**。guest 参加不可（`auth.uid()` を持つ user のみ）。
-- 合言葉は 6 桁数字コード。**平文は DB に保存しない**（`join_code_hash = digest(normalized_code || room_salt)`）。
+- 合言葉は 6 桁数字コード。**平文は DB に保存しない**。
+  `join_code_hash = HMAC_SHA256(normalized_code, server_side_pepper)`（deterministic）。
+  pepper は server-only env `CAREER_GD_JOIN_CODE_PEPPER`（無ければ `SUPABASE_SERVICE_ROLE_KEY` を fallback）。
+  deterministic なので同じ 6 桁は同じ hash になり、waiting 中の `UNIQUE(join_code_hash)` が平文重複を防ぐ
+  （STEP-GD-12 で per-room salt 方式から変更。`room_salt` 列は廃止）。
 - `code_expires_at`（作成から 30 分想定）後、および `status != 'waiting'` の room には **join 不可**。
 - RLS は **API ゲートウェイ方式**。クライアントから `career_gd_*` テーブルを直接叩かない。
   DB 操作は **service-role を使う API route（`app/api/career/gd/room/**`）のみ**。認証・参加権限・
@@ -37,7 +41,11 @@ STEP: GD-10（DB 基盤準備）
 - [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY` が設定されている。
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` が **サーバ環境にのみ** 設定されている（クライアントに露出しない）。
   - room 系 API route は service-role でしか DB 操作できないため必須。
-  - 未設定だと Phase2 の room API は 500（supabase-unavailable 相当）になる。
+  - 未設定だと Phase2 の room API は 503（SERVER_DB_UNCONFIGURED）になる。
+- [ ] `CAREER_GD_JOIN_CODE_PEPPER`（server-only）を設定する（推奨）。
+  - 6桁コードの HMAC pepper。未設定なら `SUPABASE_SERVICE_ROLE_KEY` を fallback pepper に使う。
+  - `NEXT_PUBLIC_` を付けない。実値はコード/docs に書かず `.env.local` / Vercel Environment Variables にのみ設定する。
+  - どちらも未設定だと create / join は 503（SERVER_DB_UNCONFIGURED）になる。
 
 ## 3. テーブル存在確認（適用後）
 
@@ -123,7 +131,11 @@ where tablename like 'career_gd_room%';   -- MVP では 0 行（将来案の own
 
 ## 10. Phase2 実装前の確認事項（次 STEP へ引き継ぎ）
 
-- [ ] 6 桁コードの total attack 対策：join API の **レート制限**（連続失敗のクールダウン）を設計する。
+- [ ] **【本番公開前 必須】join attempt rate limit の強化**：現状 join API は
+      `lib/serverRateLimit.ts`（IP ベース・in-memory・best-effort）のみ。Vercel の多インスタンス /
+      cold start では実効上限が緩むため、**per-user または DB / KV（Upstash / Vercel KV / Supabase）
+      ベースの永続 join attempt 制限**へ置き換える（6桁コードの総当り対策）。新規テーブルが必要なら
+      別 STEP で設計する（今回は追加しない）。
 - [ ] `seq` 採番の原子性（service-role で `max(seq)+1`、または room ごとのカウンタ）を設計する。
 - [ ] AI 補完の確定タイミング＝host の start。`buildAiParticipants` / `assignRoles` を server で流用する。
 - [ ] feedback は 1 room 1 回で全員分生成し、`career_gd_room_results` に人間ぶんだけ UPSERT する。

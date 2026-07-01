@@ -13,7 +13,11 @@
 ## 確定方針
 
 - マルチは **member ログイン必須**。guest 参加不可。
-- 合言葉は **6 桁数字コード**（MVP）。DB には平文を保存せず `join_code_hash`（`room_salt` 込み）で保存。
+- 合言葉は **6 桁数字コード**（MVP）。DB に平文は保存せず、
+  `join_code_hash = HMAC_SHA256(normalizedCode, pepper)`（deterministic）で保存。
+  pepper は server-only `CAREER_GD_JOIN_CODE_PEPPER`（無ければ `SUPABASE_SERVICE_ROLE_KEY` を fallback）。
+  deterministic なので「同じ6桁＝同じ hash」となり、waiting 中の `UNIQUE(join_code_hash)` が平文重複を防ぐ
+  （STEP-GD-12 で per-room salt 方式から変更。`room_salt` 列は廃止）。
 - 有効期限は作成から **30 分**。**waiting のみ join 可**。active / finished / cancelled は join 不可。
 - RLS は **API ゲートウェイ方式**：クライアントは `career_gd_*` を直接叩かない。service-role を使う
   API route（`app/api/career/gd/room/**`）が認証・参加権限・host 権限を検証して DB 操作する。
@@ -64,17 +68,29 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
 
 ## API（実装済み）
 
-- `POST /api/career/gd/room/create`（STEP-GD-11）
-  - 入力: `{format, plannedParticipantCount(2〜8), timeLimitSec(300〜1800), displayName?}`
-  - 出力: `{roomId, joinCode(平文・1回のみ), codeExpiresAt, status, format, plannedParticipantCount, timeLimitSec}`
-  - member 認証必須（guest/匿名は 401/403）。service-role で `career_gd_rooms`＋host member を insert。
-  - 6桁コードは `join_code_hash`(sha256)＋`room_salt` で保存し、平文は DB に残さない。
-  - env/service-role/テーブル未整備は 503 で分かりやすく失敗。
+- `POST /api/career/gd/room/create`（STEP-GD-11）— room 作成＋6桁コード発行。member 必須。
+  - `join_code_hash`(HMAC)のみ保存、平文コードは応答で1回のみ。
+- `POST /api/career/gd/room/join`（STEP-GD-12）
+  - 入力: `{joinCode, displayName?}` / 出力: `{roomId, status, joinedMember, members, codeExpiresAt}`
+  - IP レート制限→member 認証→6桁 normalize/検証→HMAC hash で waiting・未期限 room 検索→
+    既参加は冪等成功 / 満員は 409 / 未参加は member insert。該当なしは 404（詳細を出さない）。
+- `GET /api/career/gd/room/[roomId]?afterSeq=<n>`（STEP-GD-12）
+  - 出力: `{room, members, messages, isHost, currentUserMember, status}`。参加者本人のみ（非参加者 403）。
+  - messages は STEP-GD-14 まで空。`afterSeq` でポーリング差分取得に対応。
+
+## UI（実装済み）
+
+- `/career/gd/room/create`（STEP-GD-11）— 作成→6桁コード表示。
+- `/career/gd/room/join`（STEP-GD-12）— 6桁コード入力→参加→ロビーへ。
+- `/career/gd/room/[roomId]`（STEP-GD-12）— ロビー（room情報・参加者一覧・手動更新）。開始/進行は近日公開。
 
 ## 進捗
 
 - [x] STEP-GD-10: DDL / RLS 設計ファイル・post-apply checklist 追加（**Supabase へは未適用**）。
-- [x] STEP-GD-11: room 作成・6桁コード発行（create API＋UI＋roomCode util＋型追加）。**join 以降は未実装**。
-- [ ] STEP-GD-12 以降: join・ロビー / start・AI補完 / 進行 / feedback・順位 / view 統合 / 連携確認。
+- [x] STEP-GD-11: room 作成・6桁コード発行。
+- [x] STEP-GD-12: 合言葉入力による参加（join）・room 取得・ロビー。join_code_hash を HMAC(pepper) 方式へ修正。
+      **start / session / message / ai-turn / feedback は未実装**。
+- [ ] STEP-GD-13: AI 補完して開始（`start` API：`/theme`＋`buildAiParticipants`＋`assignRoles` 再利用）。
+- [ ] STEP-GD-14 以降: 進行 / feedback・順位 / view 統合 / 連携確認。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

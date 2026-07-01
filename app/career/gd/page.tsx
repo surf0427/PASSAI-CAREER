@@ -109,9 +109,12 @@ export default function CareerGdEntryPage() {
             >
               ルームを作成 →
             </Link>
-            <span className="inline-flex items-center justify-center rounded-xl bg-gray-100 px-5 py-2.5 text-sm font-semibold text-gray-500">
-              合言葉で参加（近日公開）
-            </span>
+            <Link
+              href="/career/gd/room/join"
+              className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-indigo-700 ring-1 ring-indigo-200 shadow-sm transition-colors hover:bg-indigo-50"
+            >
+              合言葉で参加 →
+            </Link>
           </div>
         </Card>
       </div>

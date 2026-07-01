@@ -9,7 +9,10 @@
 -- 【Phase2 確定方針（本 DDL の前提）】
 --   - Phase2 マルチは member ログイン必須。guest 参加は不可（auth.uid() を持つ user のみ）。
 --   - 合言葉は MVP では 6 桁数字コード。DB には平文を保存しない。
---       join_code_hash = digest(normalized_code || room_salt) を保存（room_salt は行ごとに生成）。
+--       join_code_hash = HMAC_SHA256(normalized_code, server_side_pepper) を保存（deterministic）。
+--       pepper は server-only env（CAREER_GD_JOIN_CODE_PEPPER、無ければ SUPABASE_SERVICE_ROLE_KEY）。
+--       deterministic なので「同じ 6 桁コード＝同じ hash」となり、waiting 中の
+--       UNIQUE(join_code_hash) が平文コードの重複を正しく防ぐ（room ごとの salt は使わない）。
 --       平文コードは作成 API 応答で 1 回だけ host に返す（表示・共有用。DB には残さない）。
 --   - code_expires_at（作成から 30 分想定）を過ぎた waiting room は join 不可。
 --   - join 可能なのは status='waiting' のみ。active / finished / cancelled には join 不可。
@@ -26,7 +29,8 @@
 --     CREATE INDEX IF NOT EXISTS / trigger・RLS は存在チェック付き DO ブロック。
 --   - DROP TABLE / TRUNCATE / 既存データ削除は一切行わない。
 --   - 既存テーブル（受験版・既存 career_*）への ALTER は行わない（新規テーブルのみ）。
---   - 前提: pgcrypto（gen_random_uuid / digest）/ set_updated_at()（schema.sql §3）/
+--     （join_code_hash はアプリ層で HMAC 生成するため DB 側 digest は使わない）
+--   - 前提: pgcrypto（gen_random_uuid）/ set_updated_at()（schema.sql §3）/
 --     auth.users が既存であること。
 --
 -- 注意: 本ファイルはまだ Supabase へ適用しない（STEP-GD-10 は DDL / checklist 追加のみ）。
@@ -45,8 +49,7 @@ CREATE TABLE IF NOT EXISTS career_gd_rooms (
   theme                     jsonb       NOT NULL DEFAULT '{}'::jsonb,   -- GdTheme（start 時に確定）
   time_limit_sec            int         NOT NULL DEFAULT 900,
   planned_participant_count int         NOT NULL DEFAULT 4,
-  join_code_hash            text        NOT NULL,                       -- 平文は保存しない（room_salt 込み hash）
-  room_salt                 text        NOT NULL,                       -- 行ごとの salt（hash 生成に使用）
+  join_code_hash            text        NOT NULL,                       -- HMAC(code, pepper)。平文は保存しない
   code_expires_at           timestamptz NOT NULL,
   started_at                timestamptz,
   finished_at               timestamptz,

@@ -1,33 +1,53 @@
 // PASSAI 就活版 — GD Phase2 マルチGD 参加コード（合言葉）ユーティリティ（server-only）。
 //
-// - 6 桁数字コードを生成・正規化し、room_salt 込みで sha256 ハッシュ化する。
-// - 平文コードは DB に保存しない（create API 応答で 1 回だけ返す）。DB には hash と salt を保存。
-// - hash / salt の秘密ロジックをクライアントへ出さないため、本ファイルは server-only とする。
-//   （node:crypto を使うためどのみち client では動かないが、多段防御で 'server-only' を付ける）
+// STEP-GD-12 で hash 方式を修正:
+//   - 旧: sha256(code + room_salt)。room_salt が部屋ごとに異なると、同じ 6 桁コードでも
+//     hash が変わり `UNIQUE(join_code_hash) WHERE status='waiting'` が平文重複を防げなかった。
+//   - 新: HMAC-SHA256(normalizedCode, serverSidePepper)。**deterministic**（同じコード＝同じ hash）。
+//     → waiting 中の一意制約が平文 6 桁コードの重複を正しく防ぎ、join でも hash 一致検索できる。
+//   - room_salt は廃止（DDL からも削除）。DB には平文コードを保存しない（hash のみ）。
+//
+// pepper（server-side secret）:
+//   - CAREER_GD_JOIN_CODE_PEPPER を優先。無ければ SUPABASE_SERVICE_ROLE_KEY を fallback。
+//   - どちらも未設定なら hashJoinCode は null を返す（呼び出し側で 503 にする）。
+//   - pepper 実値はログ出力・クライアント露出しない（本ファイルは server-only）。
 
 import 'server-only';
 
-import { randomInt, randomBytes, createHash } from 'node:crypto';
+import { randomInt, createHmac } from 'node:crypto';
+import { getSupabaseServiceRoleKey } from '@/lib/supabase/env';
 
 // 6 桁数字コードを生成する（"000000"〜"999999"）。暗号学的乱数を使う。
 export function generateSixDigitJoinCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
-// 入力コードを正規化する（全角→半角は呼び出し側で済ませる前提。ここでは数字のみ抽出）。
-// 空白・ハイフン等を除去し、数字だけを連結して返す。join（STEP-GD-12）でも再利用する。
+// 入力コードを正規化する（数字だけを抽出。空白・ハイフン・全角等の非数字を除去）。
 export function normalizeJoinCode(input: unknown): string {
   if (typeof input !== 'string') return '';
   return input.replace(/[^0-9]/g, '');
 }
 
-// room ごとの salt（hex 32 文字）。行ごとに異なる値を生成する。
-export function createRoomSalt(): string {
-  return randomBytes(16).toString('hex');
+// 6 桁数字として妥当か（normalize 済みの前提で長さ 6）。
+export function isValidJoinCode(normalized: string): boolean {
+  return /^[0-9]{6}$/.test(normalized);
 }
 
-// join_code_hash = sha256(normalizedCode + room_salt)。DB に保存するのはこの値。
-export function hashJoinCode(code: string, salt: string): string {
+// server-side pepper を取得（実値は絶対にログ/レスポンスへ出さない）。
+function getJoinCodePepper(): string | null {
+  const explicit = process.env.CAREER_GD_JOIN_CODE_PEPPER;
+  if (explicit && explicit.trim() !== '') return explicit;
+  // fallback: service-role key（env.ts 経由でのみ読む規約に従う）。
+  const fallback = getSupabaseServiceRoleKey();
+  if (fallback && fallback.trim() !== '') return fallback;
+  return null;
+}
+
+// join_code_hash = HMAC-SHA256(normalizedCode, pepper)。deterministic。
+// pepper 未設定なら null（呼び出し側で 503 を返すこと）。DB に保存するのはこの値のみ。
+export function hashJoinCode(code: string): string | null {
+  const pepper = getJoinCodePepper();
+  if (!pepper) return null;
   const normalized = normalizeJoinCode(code);
-  return createHash('sha256').update(`${normalized}${salt}`).digest('hex');
+  return createHmac('sha256', pepper).update(normalized).digest('hex');
 }

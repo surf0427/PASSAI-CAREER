@@ -58,9 +58,38 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
 - **影響範囲**: `app/career/gd/room/**`・`app/api/career/gd/room/**`・`types/careerGd.ts`（追加）・
   `app/career/gd/page.tsx`（career）・`docs/gd/*` のみ。受験版・Phase1 ソロGD・既存テーブルに影響なし。
 
-## STEP-GD-12 以降（予定）
+## STEP-GD-12: 合言葉入力による参加・ロビー＋join_code_hash 修正（完了）
 
-- **GD-12**: 合言葉入力による参加・待機画面（`room/join`・`room/[roomId]` ＋ join / GET room API）。
+- **課題1（設計修正）**: 旧 `join_code_hash = sha256(code + room_salt)` は room ごとに salt が異なり、
+  同じ 6 桁でも hash が変わるため `UNIQUE(join_code_hash) WHERE status='waiting'` が平文重複を防げなかった。
+- **対応1**: `hashJoinCode(code)` を **HMAC-SHA256(normalizedCode, server-side pepper)** の deterministic 方式へ変更。
+  - pepper = `CAREER_GD_JOIN_CODE_PEPPER`（無ければ `SUPABASE_SERVICE_ROLE_KEY` fallback、`env.ts` 経由で読む）。
+    実値はログ/クライアントに出さない。未設定なら hash=null → 呼び出し側が 503。
+  - `room_salt` を廃止（`career_gd_multi_apply.sql` から列削除・`createRoomSalt` 削除・create route から除去）。
+  - `.env.example` に `CAREER_GD_JOIN_CODE_PEPPER`（名前のみ）を追加。
+- **対応2（参加）**: `POST /api/career/gd/room/join`。
+  - `checkServerRateLimit`（IP・best-effort）→ member 認証 → 6桁 normalize/検証 → HMAC hash →
+    `career_gd_rooms` を hash一致 & status='waiting' & code_expires_at>now() で検索。
+  - 該当なし=404（詳細を出さない）/ 既参加=冪等成功 / 満員(planned到達)=409 / 未参加=member insert。
+  - レース時（UNIQUE(room_id,user_id) 違反）は既参加として冪等成功に倒す。
+- **対応3（取得）**: `GET /api/career/gd/room/[roomId]?afterSeq=`。member 認証 → 参加者本人のみ（非参加者 403）→
+  room/members/messages を返す（`join_code_hash` は返さない）。messages は GD-14 まで空。
+- **対応4（UI）**: `room/join`（6桁入力・空白/ハイフン除去・member gate）、`room/[roomId]`（ロビー・手動更新・
+  参加者一覧・host バッジ・開始/進行は近日公開）。ハブに「合言葉で参加」導線追加。
+- **共通**: `roomAuth.ts`（member 認証 / service-role 取得 / 42P01・23505 判定）、`roomMappers.ts`（行→client 型）。
+- **rate limit 課題**: 現状は IP ベース best-effort のみ。**本番公開前に per-user / DB or KV ベースの
+  join attempt 制限へ置き換える**（checklist §10 に明記）。新テーブルは今回追加しない。
+- **非対象**: start（AI補完開始）/ session / message / ai-turn / feedback / ranking / Realtime / 音声 /
+  ランダムマッチングは未実装。Supabase への実適用もしない。
+- **影響範囲**: `app/career/gd/room/**`・`app/api/career/gd/room/**`・`types/careerGd.ts`（追加）・
+  `app/career/gd/page.tsx`（career）・`supabase/career_gd_multi_apply.sql`（未適用DDL）・`.env.example`・
+  `docs/gd/*` のみ。受験版・Phase1 ソロGD・既存テーブルに影響なし。
+
+## STEP-GD-13 以降（予定）
+
+- **GD-13**: 合言葉入力による参加ではなく「AI 補完して開始」（`start` API：host のみ・
+  `planned - 参加人数` を `buildAiParticipants` で補完・`assignRoles` で役割割当・`/theme` でテーマ確定・
+  rooms を active へ CAS 更新）。
 - **GD-13**: AI 補完して開始（`start` API：`/theme`＋`buildAiParticipants`＋`assignRoles` 再利用）。
 - **GD-14**: テキストGD 進行（`message` / `ai-turn` API ＋ ポーリング）。
 - **GD-15**: 終了・feedback・順位（`finish` / `feedback` API：Phase1 feedback の multi 経路を流用）。

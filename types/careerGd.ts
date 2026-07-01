@@ -176,6 +176,18 @@ export type CareerGdRoomMember = {
   leftAt?: string | null;
 };
 
+// career_gd_room_messages のクライアント表現（STEP-GD-14 まで空配列でよい）。
+export type CareerGdRoomMessage = {
+  id: string;
+  roomId: string;
+  participantId: string;
+  senderUserId?: string | null; // AI は null
+  seq: number;
+  content: string;
+  kind: 'speech' | 'system';
+  createdAt: string;
+};
+
 // create API のレスポンス（平文 joinCode はここでのみ受け取る）。
 export type CareerGdRoomCreateResponse = {
   roomId: string;
@@ -185,6 +197,25 @@ export type CareerGdRoomCreateResponse = {
   format: GdFormat;
   plannedParticipantCount: number;
   timeLimitSec: number;
+};
+
+// join API のレスポンス。
+export type CareerGdRoomJoinResponse = {
+  roomId: string;
+  status: GdRoomStatus;
+  joinedMember: CareerGdRoomMember;
+  members: CareerGdRoomMember[];
+  codeExpiresAt: string;
+};
+
+// GET room API のレスポンス（ロビー / 進行のポーリングで使う）。
+export type CareerGdRoomDetailResponse = {
+  room: CareerGdRoom;
+  members: CareerGdRoomMember[];
+  messages: CareerGdRoomMessage[];
+  isHost: boolean;
+  currentUserMember: CareerGdRoomMember | null;
+  status: GdRoomStatus;
 };
 
 // 完了結果 1 件（localStorage: 'careerGdResults'）。

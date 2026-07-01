@@ -13,11 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
 import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
-import {
-  generateSixDigitJoinCode,
-  createRoomSalt,
-  hashJoinCode,
-} from '../roomCode';
+import { generateSixDigitJoinCode, hashJoinCode } from '../roomCode';
 
 export const maxDuration = 30;
 
@@ -111,12 +107,17 @@ export async function POST(req: Request) {
   const codeExpiresAt = new Date(now + CODE_TTL_MS).toISOString();
 
   // ── 4) room を insert（6 桁コード衝突時は再生成してリトライ） ──
+  // join_code_hash は HMAC(code, pepper) の deterministic 値。同じ 6 桁は同じ hash になるため、
+  // waiting 中の UNIQUE(join_code_hash) が平文コードの重複を正しく防ぐ。
   let roomId: string | null = null;
   let joinCode = '';
   for (let attempt = 0; attempt < CODE_RETRY; attempt++) {
     const code = generateSixDigitJoinCode();
-    const salt = createRoomSalt();
-    const joinCodeHash = hashJoinCode(code, salt);
+    const joinCodeHash = hashJoinCode(code);
+    if (!joinCodeHash) {
+      // pepper（CAREER_GD_JOIN_CODE_PEPPER / service-role key）未設定。
+      return jsonError('SERVER_DB_UNCONFIGURED', 'サーバの設定が未完了です。管理者にお問い合わせください。', 503);
+    }
 
     const { data, error } = await admin
       .from('career_gd_rooms')
@@ -128,7 +129,6 @@ export async function POST(req: Request) {
         time_limit_sec: Math.round(timeLimitSec),
         planned_participant_count: plannedParticipantCount,
         join_code_hash: joinCodeHash,
-        room_salt: salt,
         code_expires_at: codeExpiresAt,
       })
       .select('id')
