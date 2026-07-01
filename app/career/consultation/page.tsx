@@ -21,6 +21,8 @@ import { loadPresentationResults } from '@/app/career/presentation/presentationS
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
+import { loadGdResults } from '@/app/career/gd/gdStorage';
+import { buildLatestGdConsultationSnapshots } from '@/lib/careerGd/context';
 import {
   loadConsultationThreads,
   saveConsultationThreads,
@@ -66,6 +68,8 @@ function buildConsultationContext() {
     presentationResult: presentationResults.length > 0 ? presentationResults[0].result : null,
     // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
     companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
+    // 直近のGD練習結果（最新2件）。GD相談・面接/ES/業界相談の根拠に使う。
+    gd: buildLatestGdConsultationSnapshots(loadGdResults(), 2),
   };
 }
 

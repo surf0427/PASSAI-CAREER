@@ -26,6 +26,11 @@ import {
   normalizeCompanyResearchSnapshot,
   formatCompanyResearchContextForPrompt,
 } from '@/lib/careerCompanyResearch/context';
+import {
+  normalizeGdConsultationSnapshot,
+  formatGdConsultationForPrompt,
+  type GdConsultationSnapshot,
+} from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -220,6 +225,7 @@ export async function POST(req: Request) {
     interviewResult?: CareerInterviewFinalResult | null;
     presentationResult?: CareerPresentationFinalResult | null;
     companyResearch?: unknown;
+    gd?: unknown;
   };
 
   const message = str(b.message);
@@ -253,6 +259,14 @@ export async function POST(req: Request) {
         .slice(0, 5)
     : [];
   const companyResearchBlock = renderCompanyResearch(companyResearch);
+  // 直近のGD練習結果（最新2件）。formatGdConsultationForPrompt が見出し・断定回避を含む。
+  const gdSnapshots = Array.isArray(b.gd)
+    ? b.gd
+        .map((s) => normalizeGdConsultationSnapshot(s))
+        .filter((s): s is GdConsultationSnapshot => s !== null)
+        .slice(0, 3)
+    : [];
+  const gdBlock = formatGdConsultationForPrompt(gdSnapshots);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -263,6 +277,7 @@ export async function POST(req: Request) {
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
     presentationBlock ? `# 直近のプレゼン練習の結果\n${presentationBlock}` : '',
     companyResearchBlock,
+    gdBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

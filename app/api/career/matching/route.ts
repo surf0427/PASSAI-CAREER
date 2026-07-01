@@ -41,6 +41,10 @@ import type {
   EngineInput,
   CareerMatchEngineResult,
 } from '@/lib/careerMatching';
+import {
+  normalizeGdMatchingSnapshot,
+  formatGdMatchingForPrompt,
+} from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -164,6 +168,13 @@ function renderConsultation(r: CareerConsultationResult | null | undefined): str
   return lines.join('\n');
 }
 
+// GD（グループディスカッション）練習結果を補助文脈として整形する。
+// AI が総合点や順位を作らないのと同様、GD も断定材料にはしない旨は formatter 側に含む。
+function renderGd(raw: unknown): string {
+  const snapshot = normalizeGdMatchingSnapshot(raw);
+  return formatGdMatchingForPrompt(snapshot);
+}
+
 // ── AI 出力 → エンジン入力への正規化（AI の総合点・順位は採用しない） ──
 type RawAiCompany = {
   company?: unknown;
@@ -245,6 +256,7 @@ export async function POST(req: Request) {
     es?: CareerEsResult | null;
     interviewResult?: CareerInterviewFinalResult | null;
     consultation?: CareerConsultationResult | null;
+    gdSnapshot?: unknown;
     userInput?: string;
   };
 
@@ -289,6 +301,8 @@ export async function POST(req: Request) {
   const esBlock = renderEs(b.es);
   const interviewBlock = renderInterview(b.interviewResult);
   const consultationBlock = renderConsultation(b.consultation);
+  // GD は補助文脈（主情報は活動・自己分析・就活軸）。formatGdMatchingForPrompt が見出し・断定回避を含む。
+  const gdBlock = renderGd(b.gdSnapshot);
 
   const systemPrompt = [
     MATCHING_PERSONA,
@@ -298,6 +312,7 @@ export async function POST(req: Request) {
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
     consultationBlock ? `# 直近の就活相談の結果\n${consultationBlock}` : '',
+    gdBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

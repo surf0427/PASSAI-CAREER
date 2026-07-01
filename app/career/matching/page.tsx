@@ -21,6 +21,8 @@ import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
+import { loadGdResults } from '@/app/career/gd/gdStorage';
+import { buildLatestGdMatchingSnapshot } from '@/lib/careerGd/context';
 import { appendMatchingLog } from './matchingStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
@@ -63,6 +65,8 @@ function buildMatchingContext() {
     es: esLogs.length > 0 ? esLogs[0].result : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
     consultation: latestConsultationResult(),
+    // GD 練習結果（最新1件）を補助文脈として渡す。主情報ではなく参考扱い。
+    gdSnapshot: buildLatestGdMatchingSnapshot(loadGdResults()),
   };
 }
 
@@ -73,6 +77,7 @@ type Readiness = {
   es: boolean;
   interview: boolean;
   consultation: boolean;
+  gd: boolean;
 };
 
 export default function CareerMatchingStartPage() {
@@ -98,6 +103,7 @@ export default function CareerMatchingStartPage() {
       es: !!ctx.es,
       interview: !!ctx.interviewResult,
       consultation: !!ctx.consultation,
+      gd: !!ctx.gdSnapshot,
     };
   }, [isMounted]);
 
@@ -153,6 +159,7 @@ export default function CareerMatchingStartPage() {
           <ReadyItem label="ES" ready={readiness?.es} href="/career/es" />
           <ReadyItem label="面接結果" ready={readiness?.interview} href="/career/interview" />
           <ReadyItem label="就活相談" ready={readiness?.consultation} href="/career/consultation" />
+          <ReadyItem label="GD結果" ready={readiness?.gd} href="/career/gd" />
         </div>
         {readiness && !canRun && (
           <p className="mt-4 text-xs text-amber-700 leading-relaxed">
