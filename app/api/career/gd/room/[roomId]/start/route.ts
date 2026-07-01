@@ -20,6 +20,8 @@ import {
 } from '../../roomAuth';
 import { mapRoomRow, mapMemberRow } from '../../roomMappers';
 import { buildAiRoomMembers } from '../../aiMembers';
+import { buildRoomTheme } from '../../roomTheme';
+import type { GdFormat } from '@/types/careerGd';
 
 export const maxDuration = 30;
 
@@ -103,12 +105,18 @@ export async function POST(
     })
     .filter((k): k is string => k !== '');
 
+  // ── テーマを確定（同じ room は決定的に同じテーマ・STEP-GD-14） ──
+  //    waiting 中は未確定（theme={}）。開始権を取れた本人が UPDATE で確定させる。
+  const format: GdFormat =
+    roomRow.format === 'case' || roomRow.format === 'abstract' ? roomRow.format : 'free';
+  const theme = buildRoomTheme(roomId, format);
+
   // ── 開始権の取得（同時開始レース対策の要）: status='waiting' 条件付き UPDATE ──
   //    ここで 1 行更新できた呼び出しだけが「開始した本人」。0 行なら他が先に開始した＝409。
   const startedAt = new Date().toISOString();
   const { data: claimed, error: claimErr } = await admin
     .from('career_gd_rooms')
-    .update({ status: 'active', started_at: startedAt })
+    .update({ status: 'active', started_at: startedAt, theme })
     .eq('id', roomId)
     .eq('status', 'waiting')
     .select('*');

@@ -114,13 +114,37 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
   - messages は STEP-GD-14 まで空。`afterSeq` でポーリング差分取得に対応。
   - AI member は `persona`（personaKey / personaRole / personaSummary / speakingStyle / strengths /
     weaknesses / assertiveness / style）を含む。`join_code_hash` 等の秘匿情報は一切返さない。
-- `POST /api/career/gd/room/[roomId]/start`（STEP-GD-13）— host が waiting→active にして AI 補完。
+- `POST /api/career/gd/room/[roomId]/start`（STEP-GD-13 → GD-14 でテーマ確定を追加）— host が waiting→active にして AI 補完。
   - member 認証必須。room 無し 404 / 非参加者 403 / 非 host 403 / waiting 以外 409。
   - `status='waiting'` 条件付き UPDATE を「開始権の取得」に使い、**同時開始レースに耐える**
     （取得できなかった側は 409）。開始権を取れた本人のみ AI を insert（二重補完しない）。
   - `planned_participant_count` まで `buildAiRoomMembers()` で補完（既存 AI persona_key は除外）。
+  - **STEP-GD-14**: 開始と同時に `buildRoomTheme(roomId, format)`（決定的キュレーション）で
+    `theme` を確定して UPDATE する（同じ room は同じテーマ。AI 生成は将来置換）。
   - AI insert 失敗時は status を waiting に best-effort ロールバック。
   - 応答は GET room と同形（`{room, members, messages, isHost, currentUserMember, status}`）。
+- `GET/POST /api/career/gd/room/[roomId]/messages`（STEP-GD-14）— 発言の取得・投稿。
+  - GET: `afterSeq` 差分取得（ポーリング用）。参加者のみ。`{messages, latestSeq}`。
+  - POST: `{content, clientMsgId}`。active のみ・退室者不可。人間は自分の member としてのみ投稿。
+    同一 `client_msg_id` は冪等に同じ message を返す（`{message, idempotent}`）。
+  - seq は room 単位でサーバ採番（`roomMessages.postRoomMessage`）。
+- `POST /api/career/gd/room/[roomId]/ai-turn`（STEP-GD-14）— AI 1 名の発言生成・保存。
+  - active のみ。直前発言者を避け発言最少の AI を決定的に選ぶ。theme/members/直近messages/persona で生成。
+  - 生成成功時のみ保存（失敗時は保存しない）。冪等キー `ai-<participantId>-<priorCount>` で二重補完防止。
+- `POST /api/career/gd/room/[roomId]/finish`（STEP-GD-14）— host が active→finished。
+  - `finished_at` 設定。二重終了は冪等（既に finished は 200）。waiting/cancelled は 409。
+  - `status='active'` 条件付き UPDATE でレース耐性。messages 0 件でも壊れない。
+- `POST /api/career/gd/room/[roomId]/result`（STEP-GD-14・最小土台）— 発言量ベースの暫定結果。
+  - finished のみ。参加者本人の簡易 self_feedback（実測発言量が根拠・断定なし）＋発言量ランキング（共有）を
+    `career_gd_room_results` に `(room_id, user_id)` upsert（二重実行に強い）。`self_company_grade` は暫定 'B'。
+
+### seq 採番 / 冪等（STEP-GD-14）
+
+- **優先**: DB 側 RPC `career_gd_post_message`（`pg_advisory_xact_lock(room)` で採番を直列化して
+  `max(seq)+1` を採番・INSERT。1 トランザクション内で atomic。`career_gd_multi_apply.sql` に追加・**未適用**）。
+- **fallback**: RPC 未適用環境では app 層で「`max(seq)+1` → INSERT → 23505 なら再計算リトライ」。
+  `UNIQUE(room_id, seq)` が重複・欠番を防ぐため競合しても破綻しない。
+- 二重投稿は `UNIQUE(room_id, client_msg_id)` ＋アプリ層の既存行冪等返却で防ぐ。
 
 ## UI（実装済み）
 
@@ -138,8 +162,13 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
 - [x] STEP-GD-12: 合言葉入力による参加（join）・room 取得・ロビー。join_code_hash を HMAC(pepper) 方式へ修正。
 - [x] STEP-GD-13: AI 補完して開始（`start` API・10 タイプ persona・deterministic selection・ロビー開始UI）。
       persona は `persona`(jsonb) に格納。GET room で persona を返す（秘匿情報は返さない）。
-      **未実装**: message generation / turn 制御 / session 画面 / feedback 生成 /
-      テーマ確定・役割割当（role は 'member' 固定）/ DB・KV ベースの rate limit。
-- [ ] STEP-GD-14 以降: session 画面・発言生成・ターン進行 / feedback・順位 / view 統合 / 連携確認。
+- [x] STEP-GD-14: active session 画面（テーマ・残り時間・参加者・発言タイムライン・発言入力・AI発言・host終了）/
+      messages GET・POST（seq サーバ採番・client_msg_id 冪等）/ ai-turn（AI 1名発言生成）/ finish /
+      result（発言量ベースの暫定結果）/ 開始時テーマ確定（`buildRoomTheme` 決定的）。
+      seq atomic RPC `career_gd_post_message` を apply SQL に追加（**未適用**・app 層 fallback あり）。
+      **未実装（次 STEP 候補）**: 本格 feedback 採点（AI・軸別スコア→企業評価）/ 役割割当（role は 'member' 固定）/
+      自動ターン進行・タイマー連動の締切 / result の localStorage 書き戻し（/career/gd/view 統合）/
+      DB・KV ベースの join rate limit / システム進行メッセージ（役割アナウンス等）。
+- [ ] STEP-GD-15 以降: 本格 feedback・順位（企業評価軸）/ view 統合 / 他機能連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

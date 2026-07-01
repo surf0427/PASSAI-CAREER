@@ -229,6 +229,63 @@ export type CareerGdRoomDetailResponse = {
   status: GdRoomStatus;
 };
 
+// ── STEP-GD-14: 発言 / 進行 / 結果 API のレスポンス型 ──────────────────
+
+// GET messages（afterSeq でポーリング差分取得）。
+export type CareerGdRoomMessagesResponse = {
+  messages: CareerGdRoomMessage[];
+  latestSeq: number; // 取得できた中の最大 seq（0 = まだ発言なし）
+};
+
+// POST messages（人間の発言投稿）。同一 client_msg_id は冪等に同じ message を返す。
+export type CareerGdRoomMessagePostResponse = {
+  message: CareerGdRoomMessage;
+  idempotent: boolean; // 既存 client_msg_id と一致して再投稿された場合 true
+};
+
+// POST ai-turn（AI 1 名の発言を生成・保存）。
+export type CareerGdRoomAiTurnResponse = {
+  message: CareerGdRoomMessage;
+  speakerParticipantId: string;
+};
+
+// 簡易結果（STEP-GD-14 の最小土台）。本格採点は次 STEP。
+// 断定を避けるため、評価は「実測できる発言参加量」を根拠にした暫定値のみを持つ。
+export type CareerGdRoomSimpleFeedback = {
+  participationSummary: string; // 発言量など実測に基づく要約
+  speechCount: number; // 本人の発言回数
+  totalSpeechCount: number; // room 全体の発言回数
+  strengths: string[];
+  improvements: string[];
+  nextPracticeTasks: string[];
+};
+
+// 発言量ベースの参加ランキング（全員に共有）。企業評価の断定はしない。
+export type CareerGdRoomParticipationRank = {
+  participantId: string;
+  displayName: string;
+  isAi: boolean;
+  rank: number;
+  speechCount: number;
+};
+
+// 各ユーザーの簡易結果（career_gd_room_results 1 行のクライアント表現）。
+export type CareerGdRoomResultView = {
+  roomId: string;
+  participantId: string;
+  provisional: true; // 暫定（本格採点前）であることを明示
+  selfCompanyGrade: GdCompanyGrade; // 暫定プレースホルダ（'B'）。UI で暫定と明示する
+  selfFeedback: CareerGdRoomSimpleFeedback;
+  ranking: CareerGdRoomParticipationRank[];
+  overallSummary: string;
+  matchingHints: { summary: string };
+  createdAt: string;
+};
+
+export type CareerGdRoomResultResponse = {
+  result: CareerGdRoomResultView;
+};
+
 // 完了結果 1 件（localStorage: 'careerGdResults'）。
 export type CareerGdResult = {
   id: string; // = session.id

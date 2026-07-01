@@ -263,6 +263,92 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 -- END $$;
 
 -- ============================================================
+-- career_gd_post_message — 発言の atomic 保存 RPC（STEP-GD-14）。
+--
+--   目的: room 単位で単調増加する seq を「競合しても壊れない」形で採番して 1 発言を保存する。
+--   方式: pg_advisory_xact_lock(room) で同一 room の seq 採番を直列化し、その中で
+--          max(seq)+1 を採番して INSERT する。RPC は 1 トランザクション内で動くため atomic。
+--   冪等: 同一 (room_id, client_msg_id) が既にあれば再挿入せず既存行を返す
+--          （UNIQUE(room_id, client_msg_id) と合わせて二重投稿を防ぐ）。
+--
+--   このファイルの career_gd_* テーブルと同じ場所に置く（schema.sql には career_gd 系が
+--   無いため、テーブルと RPC を co-locate して整合を保つ）。CREATE OR REPLACE で idempotent。
+--
+--   アプリ側（app/api/career/gd/room/roomMessages.ts）は本 RPC を優先し、未適用環境では
+--   「max(seq)+1 → INSERT → 23505 ならリトライ」の app-level fallback に切り替える。
+--   よって本 RPC 未適用でも動作するが、適用すると採番が DB 側で atomic になり堅牢になる。
+--
+--   【STEP-GD-14.5 不整合の是正】
+--     一時期、実テーブルに存在しない列（member_id / body）へ INSERT する
+--     互換性のない版 career_gd_post_message(p_room_id uuid, p_member_id uuid,
+--     p_client_msg_id text, p_kind text, p_body text, p_sender_user_id uuid) が適用され、
+--     42703（column "member_id" does not exist）で全呼び出しが失敗していた。
+--     CREATE OR REPLACE は「同一シグネチャ」しか置換できず、上記は型シグネチャが
+--     (uuid, uuid, text, text, text, uuid) と本 RPC (uuid, text, uuid, text, text, text) で
+--     異なりオーバーロードとして共存してしまうため、下記 DROP で明示的に除去する
+--     （存在しなければ no-op。正しい本 RPC とは型が異なるので誤って消さない）。
+-- ============================================================
+DROP FUNCTION IF EXISTS career_gd_post_message(uuid, uuid, text, text, text, uuid);
+
+CREATE OR REPLACE FUNCTION career_gd_post_message(
+  p_room_id        uuid,
+  p_participant_id text,
+  p_sender_user_id uuid,
+  p_content        text,
+  p_kind           text,
+  p_client_msg_id  text
+)
+RETURNS career_gd_room_messages
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_row career_gd_room_messages;
+  v_seq bigint;
+BEGIN
+  -- 冪等: 同じ (room_id, client_msg_id) の発言が既にあれば、それを返す（再挿入しない）。
+  IF p_client_msg_id IS NOT NULL THEN
+    SELECT * INTO v_row
+      FROM career_gd_room_messages
+     WHERE room_id = p_room_id AND client_msg_id = p_client_msg_id;
+    IF FOUND THEN
+      RETURN v_row;
+    END IF;
+  END IF;
+
+  -- room 単位で seq 採番を直列化（同時投稿でも seq が重複・欠番しない）。
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_room_id::text, 0));
+
+  SELECT COALESCE(MAX(seq), 0) + 1 INTO v_seq
+    FROM career_gd_room_messages
+   WHERE room_id = p_room_id;
+
+  INSERT INTO career_gd_room_messages
+    (room_id, participant_id, sender_user_id, seq, content, kind, client_msg_id)
+  VALUES
+    (p_room_id, p_participant_id, p_sender_user_id, v_seq, p_content, p_kind, p_client_msg_id)
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+
+EXCEPTION WHEN unique_violation THEN
+  -- 競合で同一 client_msg_id が同時挿入された場合は、既存行を冪等に返す。
+  IF p_client_msg_id IS NOT NULL THEN
+    SELECT * INTO v_row
+      FROM career_gd_room_messages
+     WHERE room_id = p_room_id AND client_msg_id = p_client_msg_id;
+    IF FOUND THEN
+      RETURN v_row;
+    END IF;
+  END IF;
+  RAISE;
+END;
+$$;
+
+-- 本 RPC は service_role からのみ呼ぶ（API ゲートウェイ方式）。anon/authenticated には付与しない。
+REVOKE ALL ON FUNCTION career_gd_post_message(uuid, text, uuid, text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION career_gd_post_message(uuid, text, uuid, text, text, text) TO service_role;
+
+-- ============================================================
 -- 適用前後の確認は docs/gd/gd_multi_post_apply_checklist.md を参照。
 -- 本 STEP（GD-10）では本ファイルを Supabase へ適用しない（DDL / checklist の追加のみ）。
 -- ============================================================
