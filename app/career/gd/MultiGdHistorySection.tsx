@@ -90,7 +90,7 @@ export function MultiGdHistorySection() {
   if (logs.length === 0) {
     return (
       <Card variant="soft" padding="md" className="mb-5">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">マルチGD 履歴</p>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">ルームGD（マルチ）の履歴</p>
         <p className="text-sm text-slate-600">まだGD履歴がありません。</p>
       </Card>
     );
@@ -100,7 +100,7 @@ export function MultiGdHistorySection() {
     <div className="mb-6">
       {/* 統計 */}
       <Card variant="soft" padding="md" className="mb-4">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">マルチGD 履歴</p>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">ルームGD（マルチ）の履歴</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="実施回数" value={`${stats.count}`} unit="回" />
           <Stat label="平均スコア" value={`${stats.avg}`} unit="点" />

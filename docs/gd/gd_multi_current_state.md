@@ -199,6 +199,16 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - UI: 相談AIは「GD結果も参考にしています」を控えめ表示、matching は既存「GD結果」readiness を
         マルチGDでも点灯（過剰表示しない）。
       - **未実装（次 STEP 候補）**: run/result ルート統一 / Supabase 履歴同期 / 面接・ES への注入 / 成長グラフ。
-- [ ] STEP-GD-18 以降: run/result ルート統一 / Supabase 履歴同期 / 面接・ES 連携 / Realtime（Phase3）。
+- [x] STEP-GD-18: GD導線の整理（`/career/gd` ハブ完成形に近づける）。
+      - `/career/gd/run`（新規）: 1人練習（ソロGD）の正規エントリ。実体は既存 `setup`→`session`（`redirect`）。
+      - `/career/gd/result`（新規）: ソロ結果画面。`careerGdResults` を読み `?id=` or 直近1件を表示。
+        結果無しは `run`/ハブへ誘導。**マルチ結果は混ぜず** `view` へ誘導。ソロ session 完了後の遷移先も
+        `view?id=` → `result?id=` に統一。
+      - `GdSoloResultDetail`（新規・共有）: ソロ結果詳細を view から抽出し view/result で共用（挙動不変）。
+      - `/career/gd/view`: 「1人練習（ソロGD）の履歴」/「ルームGD（マルチ）の履歴」に表示名整理（STEP-16 統合は非破壊）。
+      - hub: 4 導線（1人練習を始める / ルーム作成 / 合言葉で参加 / 結果・履歴）に整理。
+      - solo=`careerGdResults` / multi=`careerGdRoomLogs` の分離維持（key 追加なし・Supabase 変更なし・採点ロジック不変）。
+      - STEP-GD-17 の consultation/matching 連携は非破壊（context 連携はそのまま）。
+- [ ] STEP-GD-19 以降: Supabase 履歴同期 / 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

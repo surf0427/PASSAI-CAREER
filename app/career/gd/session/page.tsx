@@ -230,7 +230,8 @@ export default function CareerGdSessionPage() {
         ...(data.ranking ? { ranking: data.ranking } : {}),
       };
       appendGdResult(result);
-      router.push(`/career/gd/view?id=${encodeURIComponent(session.id)}`);
+      // STEP-GD-18: 完了後はソロ結果画面へ（run→result→view の導線統一）。
+      router.push(`/career/gd/result?id=${encodeURIComponent(session.id)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : '評価の生成に失敗しました。');
       setPhase('discussing');

@@ -1,8 +1,12 @@
 'use client';
 
 // PASSAI 就活版 — GD（グループディスカッション）ハブ画面。
-// 現在地（進行中セッション・完了件数）を表示し、setup / view へ導線を出す。
-// Phase1 はソロGD のみ。マルチGD は「近日公開」表示にとどめる。
+// 現在地（進行中セッション・完了件数）を表示し、以下 4 つの導線を出す（STEP-GD-18 で整理）:
+//   1) 1人練習（ソロGD）を始める → /career/gd/run
+//   2) ルームGD（マルチ）を作成   → /career/gd/room/create
+//   3) 合言葉で参加             → /career/gd/room/join
+//   4) 結果・履歴を見る          → /career/gd/view
+// solo は careerGdResults、multi は careerGdRoomLogs で分離管理（混ぜない）。
 
 import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
@@ -70,27 +74,27 @@ export default function CareerGdEntryPage() {
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
-        <p className="text-sm font-bold text-slate-800 mb-1">ソロGDを始める</p>
+        <p className="text-sm font-bold text-slate-800 mb-1">1人練習（ソロGD）を始める</p>
         <p className="text-xs text-slate-500 leading-relaxed mb-3">
           あなた1人 + AI参加者で、テーマ・役割を決めてグループディスカッションを練習します。
         </p>
         <Link
-          href="/career/gd/setup"
+          href="/career/gd/run"
           className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
         >
-          ソロGDを始める →
+          1人練習を始める →
         </Link>
       </Card>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <ModeCard
-          title="ソロGD（1人 + AI）"
+          title="1人練習（ソロGD）"
           description="AI参加者とテキストベースで練習し、企業評価つきのフィードバックを受け取ります。"
-          href="/career/gd/setup"
+          href="/career/gd/run"
         />
         <ModeCard
-          title="過去のGD結果を見る"
-          description="実施したGDの議論ログ・個別フィードバック・企業評価を確認できます。"
+          title="結果・履歴を見る"
+          description="1人練習の結果と、友達と行ったルームGDの履歴・フィードバックをまとめて確認できます。"
           href="/career/gd/view"
         />
       </div>
