@@ -4,8 +4,8 @@
 // 各機能の結果（入力データ）を確認 → 実行 → 結果を careerMatchingResults に保存 → result へ遷移。
 // DB / 課金 / usage 非接続（localStorage のみ）。
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useMemo, useState, useSyncExternalStore } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -22,7 +22,10 @@ import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
-import { buildLatestGdMatchingSnapshot } from '@/lib/careerGd/context';
+import {
+  buildLatestGdMatchingSnapshot,
+  buildGdMatchingSnapshotById,
+} from '@/lib/careerGd/context';
 import { appendMatchingLog } from './matchingStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
@@ -53,10 +56,15 @@ function latestConsultationResult(): CareerConsultationResult | null {
 }
 
 // マッチングAIに渡す統合コンテキストを localStorage から組み立てる。
-function buildMatchingContext() {
+// gdResultId があればその GD 結果を優先し、無い/見つからない場合は最新にフォールバックする。
+function buildMatchingContext(gdResultId?: string | null) {
   const selfLogs = loadSelfAnalysisLogs();
   const esLogs = loadEsLogs();
   const interviewResults = loadInterviewResults();
+  const gdResults = loadGdResults();
+  const gdSnapshot =
+    (gdResultId ? buildGdMatchingSnapshotById(gdResults, gdResultId) : null) ??
+    buildLatestGdMatchingSnapshot(gdResults);
   return {
     profile: loadBasicInfo(),
     activity: loadActivityData(),
@@ -65,8 +73,8 @@ function buildMatchingContext() {
     es: esLogs.length > 0 ? esLogs[0].result : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
     consultation: latestConsultationResult(),
-    // GD 練習結果（最新1件）を補助文脈として渡す。主情報ではなく参考扱い。
-    gdSnapshot: buildLatestGdMatchingSnapshot(loadGdResults()),
+    // GD 練習結果を補助文脈として渡す。主情報ではなく参考扱い。
+    gdSnapshot,
   };
 }
 
@@ -80,9 +88,11 @@ type Readiness = {
   gd: boolean;
 };
 
-export default function CareerMatchingStartPage() {
+function CareerMatchingStartInner() {
   const router = useRouter();
   const userId = useCurrentUserId();
+  const searchParams = useSearchParams();
+  const gdResultId = searchParams.get('gdResultId');
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +105,7 @@ export default function CareerMatchingStartPage() {
 
   const readiness = useMemo<Readiness | null>(() => {
     if (!isMounted) return null;
-    const ctx = buildMatchingContext();
+    const ctx = buildMatchingContext(gdResultId);
     return {
       profile: !!ctx.profile,
       activity: hasAnyActivity(ctx.activity),
@@ -105,7 +115,7 @@ export default function CareerMatchingStartPage() {
       consultation: !!ctx.consultation,
       gd: !!ctx.gdSnapshot,
     };
-  }, [isMounted]);
+  }, [isMounted, gdResultId]);
 
   // マッチングは判断材料が必要。基本情報・活動・自己分析のいずれかがあれば実行可。
   const canRun =
@@ -116,7 +126,7 @@ export default function CareerMatchingStartPage() {
     setLoading(true);
     setError(null);
     try {
-      const ctx = buildMatchingContext();
+      const ctx = buildMatchingContext(gdResultId);
       const res = await fetch('/api/career/matching', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -251,5 +261,13 @@ function ReadyItem({
         </Link>
       )}
     </div>
+  );
+}
+
+export default function CareerMatchingStartPage() {
+  return (
+    <Suspense fallback={null}>
+      <CareerMatchingStartInner />
+    </Suspense>
   );
 }

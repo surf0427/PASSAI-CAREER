@@ -46,13 +46,19 @@ import {
   formatGdMatchingForPrompt,
 } from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 
 const FEATURE_KEY = 'career-company-matching' as const;
 const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
 
-const MAX_COMPANIES = 5;
+// 本 route は出力が大きめ（複数社 × signals）なので、既定 60 秒より少し長い個別 timeout を使う。
+// maxDuration=80 の内側に収め、生成量削減（社数・rationale 短縮）とセットで abort を減らす。
+const MATCHING_TIMEOUT_MS = 75_000;
+
+// 生成量（＝生成時間）の主因は「社数 × 各社の signals/根拠 × テキスト配列」。
+// タイムアウト対策として 4 社に抑える（決定的エンジン runCareerMatch は社数非依存で不変）。
+const MAX_COMPANIES = 4;
 
 const MATCH_KEYS = MATCH_AXES.map((a) => `match:${a}`);
 const SUCCESS_KEYS = SUCCESS_AXES.map((a) => `success:${a}`);
@@ -86,33 +92,34 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '# 出力形式（厳守）',
   '出力は次の JSON オブジェクトのみ。前後に説明文やコードブロック記号を付けない。',
   '各 value は 0〜100 の数値。配列は該当が無ければ空配列 []（キーは省略しない）。',
+  '冗長さは避け、文章は簡潔に。各配列は 1〜2 項目、rationale は 25 字程度の短文（体言止め可）。',
   '',
   '{',
-  '  "profileSummary": string,        // 本人の総括',
+  '  "profileSummary": string,        // 本人の総括（1〜2文）',
   '  "careerType": string,            // タイプ分類（例: 裁量重視の挑戦型）',
-  '  "recommendedIndustries": string[],',
-  '  "recommendedJobs": string[],',
-  '  "developmentAreas": string[],    // 伸ばすべき領域',
-  '  "nextSteps": string[],           // 全体の次の一歩',
-  '  "companies": [',
+  '  "recommendedIndustries": string[], // 3〜4個',
+  '  "recommendedJobs": string[],       // 3〜4個',
+  '  "developmentAreas": string[],    // 伸ばすべき領域（2〜3個）',
+  '  "nextSteps": string[],           // 全体の次の一歩（2〜3個）',
+  '  "companies": [                   // 最大 ' + MAX_COMPANIES + ' 社',
   '    {',
   '      "company": string,           // 実在する日本国内企業',
   '      "selectionTier": "S"|"A"|"B"|"C", // 選考難易度の推測（S=最難関）',
-  `      "companyFlags": string[],    // 次の語彙のみ: ${COMPANY_FLAG_VOCAB.join(', ')}`,
-  '      "signals": [                 // 小スコアのみ。総合点は出さない',
-  `        { "key": string, "value": number, "rationale": string, "source": "ai_inferred" }`,
+  `      "companyFlags": string[],    // 該当のみ・次の語彙: ${COMPANY_FLAG_VOCAB.join(', ')}`,
+  '      "signals": [                 // 特に根拠の強い 4〜6 個に絞る。小スコアのみ・総合点は出さない',
+  `        { "key": string, "value": number, "rationale": string(短文), "source": "ai_inferred" }`,
   '      ],',
-  '      "matchReasons": string[],    // なぜ向いているか（必須・1つ以上・本人データを引用）',
-  '      "strengthsUsed": string[],',
-  '      "attentionPoints": string[], // 留意点（待遇は断定しない）',
-  '      "nextActions": string[]',
+  '      "matchReasons": string[],    // 必須1〜2個・本人データを短く引用',
+  '      "strengthsUsed": string[],   // 1〜2個',
+  '      "attentionPoints": string[], // 1〜2個・待遇は断定しない',
+  '      "nextActions": string[]      // 1〜2個',
   '    }',
   '  ]',
   '}',
   '',
   `signals.key に使える値（これ以外は無視されます）: ${signalKeyList()}`,
-  '- match:* … 企業と本人の相性（価値観/社風/働き方/成長/安定/待遇志向/業界職種の一致）',
-  '- readiness:* … 本人の選考準備度（ES/面接/自己理解）。SPI・語学等はサーバが扱うので出さない',
+  '- match:* … 相性（価値観/社風/働き方/成長/安定/待遇志向/業界職種の一致）',
+  '- readiness:* … 選考準備度（ES/面接/自己理解）。SPI・語学等はサーバが扱うので出さない',
   '- success:* … 入社後の活躍可能性（強み/社風適応/動機/ストレス相性/成長志向）',
 ].join('\n');
 
@@ -340,12 +347,12 @@ export async function POST(req: Request) {
       const message = await anthropic.messages.create(
         {
           model: MODEL,
-          max_tokens: 4000,
+          max_tokens: 3200,
           temperature: attempt === 2 ? 0 : 0.5,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(MATCHING_TIMEOUT_MS) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
@@ -412,6 +419,16 @@ export async function POST(req: Request) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('Career matching API error:', msg);
+    // timeout / abort は専用メッセージ + 504 で返し、ユーザーに再試行を促す。
+    if (isAbortError(error)) {
+      return Response.json(
+        {
+          error: 'AI_MATCHING_TIMEOUT',
+          detail: '混み合っており、時間内にマッチングを生成できませんでした。少し時間をおいてもう一度お試しください。',
+        },
+        { status: 504 },
+      );
+    }
     return Response.json(
       { error: 'AI_REQUEST_FAILED', detail: 'マッチングの生成に失敗しました。' },
       { status: 500 },

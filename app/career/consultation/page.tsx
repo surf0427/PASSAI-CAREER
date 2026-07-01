@@ -6,7 +6,8 @@
 // 会話状態は localStorage（careerConsultationLogs）で保持し、生成はステートレス API
 // （/api/career/consultation）に委ねる。DB / 課金 / usage 非接続。
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -22,7 +23,10 @@ import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
-import { buildLatestGdConsultationSnapshots } from '@/lib/careerGd/context';
+import {
+  buildLatestGdConsultationSnapshots,
+  buildGdConsultationSnapshotById,
+} from '@/lib/careerGd/context';
 import {
   loadConsultationThreads,
   saveConsultationThreads,
@@ -53,7 +57,8 @@ const SUGGESTED_STARTERS = [
 ] as const;
 
 // 相談AIに渡す横断コンテキストを localStorage から組み立てる。
-function buildConsultationContext() {
+// gdResultId があれば、そのGD結果を優先して会話文脈に載せる。
+function buildConsultationContext(gdResultId?: string | null) {
   const selfLogs = loadSelfAnalysisLogs();
   const esLogs = loadEsLogs();
   const interviewResults = loadInterviewResults();
@@ -68,12 +73,22 @@ function buildConsultationContext() {
     presentationResult: presentationResults.length > 0 ? presentationResults[0].result : null,
     // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
     companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
-    // 直近のGD練習結果（最新2件）。GD相談・面接/ES/業界相談の根拠に使う。
-    gd: buildLatestGdConsultationSnapshots(loadGdResults(), 2),
+    // GD練習結果。gdResultId があればその1件を優先、無い/見つからない場合は最新2件。
+    gd: gdConsultationContext(gdResultId),
   };
 }
 
-export default function CareerConsultationPage() {
+// gdResultId 指定時はその GD 結果を優先、無ければ最新2件を返す（純粋な組み立て）。
+function gdConsultationContext(gdResultId?: string | null) {
+  const results = loadGdResults();
+  if (gdResultId) {
+    const byId = buildGdConsultationSnapshotById(results, gdResultId);
+    if (byId) return [byId];
+  }
+  return buildLatestGdConsultationSnapshots(results, 2);
+}
+
+function CareerConsultationInner() {
   const isMounted = useSyncExternalStore(
     subscribeMount,
     getMountedSnapshot,
@@ -81,6 +96,8 @@ export default function CareerConsultationPage() {
   );
 
   const userId = useCurrentUserId();
+  const searchParams = useSearchParams();
+  const gdResultId = searchParams.get('gdResultId');
 
   // localStorage から lazy 取得（SSR では空）。出力は isMounted で gate する。
   const [threads, setThreads] = useState<CareerConsultationThread[]>(
@@ -147,7 +164,7 @@ export default function CareerConsultationPage() {
       if (t) void upsertCareerConsultationThreadsToSupabase(userId, [t]);
     }
 
-    const ctx = buildConsultationContext();
+    const ctx = buildConsultationContext(gdResultId);
     try {
       const res = await fetch('/api/career/consultation', {
         method: 'POST',
@@ -394,5 +411,13 @@ function MiniList({ title, items }: { title: string; items: string[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+export default function CareerConsultationPage() {
+  return (
+    <Suspense fallback={null}>
+      <CareerConsultationInner />
+    </Suspense>
   );
 }

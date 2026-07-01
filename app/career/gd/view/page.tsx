@@ -183,16 +183,16 @@ function GdDetail({
         </button>
       </div>
 
-      {/* この結果を他機能で活かす導線（相談AI・マッチングは最新GD結果を自動参照する） */}
+      {/* この結果を他機能で活かす導線。gdResultId で「開いているこの結果」を明示的に渡す。 */}
       <div className="mb-4 flex flex-col sm:flex-row gap-2">
         <Link
-          href="/career/consultation"
+          href={`/career/consultation?gdResultId=${encodeURIComponent(result.id)}`}
           className="inline-flex flex-1 items-center justify-center gap-1 text-sm font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 ring-1 ring-blue-200 rounded-lg px-4 py-2 transition-colors"
         >
           この結果を就活相談AIで相談する →
         </Link>
         <Link
-          href="/career/matching"
+          href={`/career/matching?gdResultId=${encodeURIComponent(result.id)}`}
           className="inline-flex flex-1 items-center justify-center gap-1 text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 ring-1 ring-indigo-200 rounded-lg px-4 py-2 transition-colors"
         >
           この結果をマッチングに活かす →

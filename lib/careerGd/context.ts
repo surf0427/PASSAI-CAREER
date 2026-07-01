@@ -80,6 +80,23 @@ export function buildLatestGdMatchingSnapshot(
   return buildGdMatchingSnapshot(results[0]);
 }
 
+// id で GD 結果を 1 件探す（見つからなければ null）。
+export function findGdResultById(
+  results: CareerGdResult[] | null | undefined,
+  id: string | null | undefined,
+): CareerGdResult | null {
+  if (!results || !id) return null;
+  return results.find((r) => r.id === id) ?? null;
+}
+
+// 指定 id の GD 結果 → matching スナップショット（無ければ null → 呼び出し側で最新へフォールバック）。
+export function buildGdMatchingSnapshotById(
+  results: CareerGdResult[] | null | undefined,
+  id: string | null | undefined,
+): GdMatchingSnapshot | null {
+  return buildGdMatchingSnapshot(findGdResultById(results, id));
+}
+
 // 行動特性キー配列 → 日本語ラベル配列。
 export function gdBehaviorTraitLabels(traits: GdBehaviorTrait[]): string[] {
   return traits.map((t) => GD_BEHAVIOR_TRAIT_LABELS[t]).filter(Boolean);
@@ -91,25 +108,20 @@ export function formatGdMatchingForPrompt(
   snapshot: GdMatchingSnapshot | null | undefined,
 ): string {
   if (!snapshot) return '';
-  const lines: string[] = ['【GD（グループディスカッション）で見えた特性（本人の練習結果より）】'];
-  if (snapshot.themeTitle) lines.push(`直近のテーマ: ${snapshot.themeTitle}`);
-  lines.push(
-    `企業選考目線の評価: ${snapshot.companyGrade}（${GD_GRADE_LABELS[snapshot.companyGrade]}）`,
-  );
+  // 補助情報なので簡潔に（1〜2行）。断定回避の注意は 1 文だけ残す。
+  const parts: string[] = [`GD評価${snapshot.companyGrade}`];
   const traitLabels = gdBehaviorTraitLabels(snapshot.behaviorTraits);
-  if (traitLabels.length > 0) lines.push(`行動特性: ${traitLabels.join('、')}`);
+  if (traitLabels.length > 0) parts.push(`特性:${traitLabels.join('・')}`);
   if (snapshot.strengthKeywords.length > 0) {
-    lines.push(`GDで顕在化した強み: ${snapshot.strengthKeywords.join('、')}`);
+    parts.push(`強み:${snapshot.strengthKeywords.slice(0, 3).join('・')}`);
   }
   if (snapshot.suggestedEnvironments.length > 0) {
-    lines.push(`向いてそうな環境・役割: ${snapshot.suggestedEnvironments.join('、')}`);
+    parts.push(`向く環境:${snapshot.suggestedEnvironments.slice(0, 2).join('・')}`);
   }
-  if (snapshot.summary) lines.push(`要約: ${snapshot.summary}`);
-  lines.push(
-    '',
-    '注意: これは1回の練習結果であり、断定材料にはしない。他データと合わせて参考程度に扱う。',
-  );
-  return lines.join('\n');
+  return [
+    '# GD（補助・参考程度／断定材料にしない）',
+    parts.join(' / '),
+  ].join('\n');
 }
 
 function strList(value: unknown, max = 6): string[] {
@@ -222,6 +234,14 @@ export function buildLatestGdConsultationSnapshots(
     .slice(0, Math.max(1, limit))
     .map((r) => buildGdConsultationSnapshot(r))
     .filter((s): s is GdConsultationSnapshot => s !== null);
+}
+
+// 指定 id の GD 結果 → 相談用スナップショット（無ければ null → 呼び出し側で最新へフォールバック）。
+export function buildGdConsultationSnapshotById(
+  results: CareerGdResult[] | null | undefined,
+  id: string | null | undefined,
+): GdConsultationSnapshot | null {
+  return buildGdConsultationSnapshot(findGdResultById(results, id));
 }
 
 // API 側の防御正規化（相談用スナップショット）。
