@@ -10,6 +10,7 @@ import type {
   GdCompanyGrade,
   GdBehaviorTrait,
   GdParticipant,
+  CareerGdAxisKey,
 } from '@/types/careerGd';
 
 // ── ラベル ────────────────────────────────────────────────────────
@@ -69,6 +70,25 @@ export const GD_AXIS_LABELS: Record<
   roleExecution: '役割遂行度',
   drive: '議論推進力',
   listening: '傾聴力',
+};
+
+// STEP-GD-15: マルチGD 本格評価の 6 軸ラベル（client/server 共通の単一ソース）。
+export const CAREER_GD_EVAL_AXIS_ORDER: CareerGdAxisKey[] = [
+  'logicalThinking',
+  'collaboration',
+  'initiative',
+  'creativity',
+  'persuasiveness',
+  'discussionSkill',
+];
+
+export const CAREER_GD_EVAL_AXIS_LABELS: Record<CareerGdAxisKey, string> = {
+  logicalThinking: '論理性',
+  collaboration: '協調性',
+  initiative: '主体性',
+  creativity: '発想力',
+  persuasiveness: '説得力',
+  discussionSkill: 'GD適応力',
 };
 
 // ── 役割セット（人数・形式で使う役割数を調整する） ──────────────────

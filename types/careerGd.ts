@@ -249,36 +249,66 @@ export type CareerGdRoomAiTurnResponse = {
   speakerParticipantId: string;
 };
 
-// 簡易結果（STEP-GD-14 の最小土台）。本格採点は次 STEP。
-// 断定を避けるため、評価は「実測できる発言参加量」を根拠にした暫定値のみを持つ。
-export type CareerGdRoomSimpleFeedback = {
-  participationSummary: string; // 発言量など実測に基づく要約
-  speechCount: number; // 本人の発言回数
-  totalSpeechCount: number; // room 全体の発言回数
-  strengths: string[];
-  improvements: string[];
-  nextPracticeTasks: string[];
+// ── STEP-GD-15: 本格 feedback 採点（messages 本文を根拠にした AI 評価） ──────
+// 就活支援サービスとして、GD能力評価 + 強み弱み + 企業コミュ適性 + マッチング連携に
+// 再利用できる構造で持つ。合計・ランク・企業グレードは AI に決めさせず server が決定論算出する。
+
+// 6 評価軸（各 0〜100）。
+export type CareerGdAxisKey =
+  | 'logicalThinking' // 論理性: 筋・根拠・因果
+  | 'collaboration' // 協調性: 他者反応・傾聴・議論促進
+  | 'initiative' // 主体性: 議論を動かす・リード
+  | 'creativity' // 発想力: 新視点・アイデア量
+  | 'persuasiveness' // 説得力: 納得感・具体性
+  | 'discussionSkill'; // GD適応力: 全体把握・整理・時間意識
+
+export type CareerGdAxisScores = Record<CareerGdAxisKey, number>;
+
+// 1 参加者（人間のみ採点）の本格評価。
+//   - axisScores は AI（0〜100・発言本文が根拠）。
+//   - overallScore / rank / companyCommunicationGrade は server が決定論で算出（AI に決めさせない）。
+//   - scored=false は「採点不能」（空議論・本人発言0件など）。
+export type CareerGdEvaluation = {
+  version: 2; // 評価スキーマ版（1=STEP-GD-14 の発言量ベース暫定）。
+  scored: boolean;
+  unscoredReason?: string; // scored=false のときの理由（採点不能）
+  axisScores: CareerGdAxisScores;
+  overallScore: number; // 0〜100（server 算出）
+  rank: GdCompanyGrade; // S/A/B/C/D（server 算出・overallScore から決定論写像）
+  companyCommunicationGrade: GdCompanyGrade; // 就活: 会議/顧客折衝/チーム業務との相性（server 算出）
+  strengths: string[]; // 実発言が根拠
+  weaknesses: string[]; // 実発言が根拠
+  improvements: string[]; // 建設的な改善提案
+  goodQuotes: string[]; // 実際の発言抜粋（短文）
+  overallComment: string; // 総合講評（就活向け・建設的）
+  speechCount: number; // 補助指標（評価の主根拠にはしない）
+  totalSpeechCount: number;
 };
 
-// 発言量ベースの参加ランキング（全員に共有）。企業評価の断定はしない。
-export type CareerGdRoomParticipationRank = {
+// ランキング（人間参加者のみ・全員に共有）。overallScore 降順。
+export type CareerGdRankingEntry = {
   participantId: string;
   displayName: string;
-  isAi: boolean;
   rank: number;
-  speechCount: number;
+  overallScore: number;
+  grade: GdCompanyGrade;
 };
 
-// 各ユーザーの簡易結果（career_gd_room_results 1 行のクライアント表現）。
+// マッチング連携ヒント（断定禁止・「傾向として」レベル）。
+export type CareerGdMatchingHints = {
+  hints: string[]; // 例: 「傾向として営業職と相性が良い可能性」
+  summary: string; // 相談AI/他機能へ渡す 1〜2 文
+};
+
+// 各ユーザーの結果（career_gd_room_results 1 行のクライアント表現）。
 export type CareerGdRoomResultView = {
   roomId: string;
   participantId: string;
-  provisional: true; // 暫定（本格採点前）であることを明示
-  selfCompanyGrade: GdCompanyGrade; // 暫定プレースホルダ（'B'）。UI で暫定と明示する
-  selfFeedback: CareerGdRoomSimpleFeedback;
-  ranking: CareerGdRoomParticipationRank[];
-  overallSummary: string;
-  matchingHints: { summary: string };
+  displayName: string;
+  evaluation: CareerGdEvaluation; // 本人ぶん（詳細は本人のみ表示）
+  ranking: CareerGdRankingEntry[]; // 全体（共有）
+  matchingHints: CareerGdMatchingHints; // 本人ぶん
+  consultationSummary: string; // generateCareerGdSummary の出力（相談AI 連携用の圧縮サマリー）
   createdAt: string;
 };
 

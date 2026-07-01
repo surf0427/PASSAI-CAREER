@@ -1,17 +1,22 @@
-// PASSAI 就活版 — GD Phase2 マルチGD 簡易結果 API（STEP-GD-14 の最小土台）。
+// PASSAI 就活版 — GD Phase2 マルチGD 本格結果 API（STEP-GD-15）。
 //
 // POST /api/career/gd/room/[roomId]/result
 //   - member ログイン必須。room 参加者（人間）のみ。room.status='finished' のときだけ。
-//   - 本格採点は次 STEP。ここでは **実測できる発言参加量**のみを根拠にした暫定結果を作る
-//     （根拠のない断定・でっち上げの数値評価はしない）。
-//   - career_gd_room_results に (room_id, user_id) UNIQUE で upsert（二重実行に強い）。
-//   - ranking（発言量ベース）は全員に共有。self_feedback は本人ぶん。
+//   - **messages 本文を根拠に AI で評価**（発言量ベースの暫定評価は廃止）。
+//   - 評価対象は人間参加者のみ。AI participant は採点対象外（文脈のみ）。
+//   - 6 軸(0〜100) は AI、overallScore/ランク/企業コミュ適性グレードは server が決定論算出。
+//   - goodQuotes は実発言に含まれるものだけ採用（捏造引用を除去）。空議論・本人発言0件は採点不能。
+//   - 初回呼び出しで room 内の全人間ぶんを評価・upsert（ranking を全員で共有・一貫化）。
+//     既に評価済み(version=2)の本人行があれば AI を再呼び出しせず返す（二重実行に強い）。
+//   - career_gd_room_results の既存カラムを活用（self_feedback / ranking / matching_hints /
+//     self_company_grade / overall_summary）。jsonb 拡張のみで既存データは壊さない。
 //   - 応答に service_role key / pepper / env 値は含めない。
 
 import type {
   GdCompanyGrade,
-  CareerGdRoomParticipationRank,
-  CareerGdRoomSimpleFeedback,
+  CareerGdEvaluation,
+  CareerGdRankingEntry,
+  CareerGdMatchingHints,
   CareerGdRoomResultView,
 } from '@/types/careerGd';
 import {
@@ -21,8 +26,17 @@ import {
   dbNotAppliedResponse,
 } from '../../roomAuth';
 import { loadRoomMessages } from '../../roomMessages';
+import {
+  generateRoomFeedback,
+  normalizeAxisScores,
+  computeOverallScore,
+  toRank,
+  computeCommunicationGrade,
+  verifyQuotes,
+  generateCareerGdSummary,
+} from '../../roomFeedback';
 
-export const maxDuration = 30;
+export const maxDuration = 80;
 
 type Row = Record<string, unknown>;
 
@@ -30,32 +44,49 @@ function jsonError(error: string, detail: string, status: number): Response {
   return Response.json({ error, detail }, { status });
 }
 
-// 発言量から暫定 self_feedback を組み立てる（断定を避け、実測値のみを根拠にする）。
-function buildSelfFeedback(selfCount: number, totalCount: number): CareerGdRoomSimpleFeedback {
-  const strengths: string[] = [];
-  const improvements: string[] = [];
-  const nextPracticeTasks: string[] = [];
+function str(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+function strArray(v: unknown, max = 3): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, max);
+}
 
-  if (selfCount === 0) {
-    improvements.push('今回は発言が記録されていません。次回はまず1回、自分の考えを声に出すことを目標にしましょう。');
-    nextPracticeTasks.push('最初の5分以内に一度発言する練習をする。');
-  } else if (selfCount <= 2) {
-    strengths.push('議論に参加し、自分の意見を発信できました。');
-    improvements.push('発言回数を少し増やし、他の人の意見への反応も加えるとより貢献度が伝わります。');
-    nextPracticeTasks.push('相手の発言を受けて「それに加えて」と続ける発言を意識する。');
-  } else {
-    strengths.push('複数回発言し、積極的に議論へ貢献できました。');
-    improvements.push('発言量は十分です。次は結論に向けて論点を整理する発言を意識するとさらに良くなります。');
-    nextPracticeTasks.push('議論の後半で、出た意見をまとめる発言を1回入れる。');
-  }
+// 採点不能（空議論・本人発言0件）の評価を作る。
+function unscoredEvaluation(selfCount: number, totalCount: number, reason: string): CareerGdEvaluation {
+  return {
+    version: 2,
+    scored: false,
+    unscoredReason: reason,
+    axisScores: { logicalThinking: 0, collaboration: 0, initiative: 0, creativity: 0, persuasiveness: 0, discussionSkill: 0 },
+    overallScore: 0,
+    rank: 'D',
+    companyCommunicationGrade: 'D',
+    strengths: [],
+    weaknesses: [],
+    improvements: ['まずは自分の考えを一言でも発言することから始めましょう。'],
+    goodQuotes: [],
+    overallComment: '今回は発言が十分に確認できなかったため、採点は保留しています。次回はまず発言することを目標にしましょう。',
+    speechCount: selfCount,
+    totalSpeechCount: totalCount,
+  };
+}
 
-  const share = totalCount > 0 ? Math.round((selfCount / totalCount) * 100) : 0;
-  const participationSummary =
-    totalCount === 0
-      ? 'このルームではまだ発言が記録されていません。'
-      : `全体の発言 ${totalCount} 回のうち、あなたの発言は ${selfCount} 回（約 ${share}%）でした。`;
-
-  return { participationSummary, speechCount: selfCount, totalSpeechCount: totalCount, strengths, improvements, nextPracticeTasks };
+// DB 行 → クライアント結果表現。
+function toResultView(roomId: string, row: Row): CareerGdRoomResultView {
+  const evaluation = (row.self_feedback && typeof row.self_feedback === 'object' ? row.self_feedback : {}) as CareerGdEvaluation;
+  const ranking = Array.isArray(row.ranking) ? (row.ranking as CareerGdRankingEntry[]) : [];
+  const mh = (row.matching_hints && typeof row.matching_hints === 'object' ? row.matching_hints : {}) as Partial<CareerGdMatchingHints>;
+  return {
+    roomId,
+    participantId: str(row.participant_id),
+    displayName: str((row as Row).display_name) || '参加者',
+    evaluation,
+    ranking,
+    matchingHints: { hints: Array.isArray(mh.hints) ? mh.hints : [], summary: str(mh.summary) },
+    consultationSummary: str(row.overall_summary),
+    createdAt: str(row.created_at),
+  };
 }
 
 export async function POST(_req: Request, ctx: { params: Promise<{ roomId: string }> }) {
@@ -68,12 +99,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
 
-  // room 取得。
-  const { data: roomRow, error: roomErr } = await admin
-    .from('career_gd_rooms')
-    .select('*')
-    .eq('id', roomId)
-    .maybeSingle();
+  // room。
+  const { data: roomRow, error: roomErr } = await admin.from('career_gd_rooms').select('*').eq('id', roomId).maybeSingle();
   if (roomErr) {
     if (isUndefinedTable(roomErr)) return dbNotAppliedResponse();
     console.error('Career GD result: room lookup error', roomErr.message);
@@ -84,12 +111,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     return jsonError('ROOM_NOT_FINISHED', 'このルームはまだ終了していません。結果は終了後に表示できます。', 409);
   }
 
-  // members 取得。
+  // members。
   const { data: memberData, error: memberErr } = await admin
-    .from('career_gd_room_members')
-    .select('*')
-    .eq('room_id', roomId)
-    .order('joined_at', { ascending: true });
+    .from('career_gd_room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true });
   if (memberErr) {
     if (isUndefinedTable(memberErr)) return dbNotAppliedResponse();
     console.error('Career GD result: members lookup error', memberErr.message);
@@ -100,7 +124,17 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
   if (!currentRow) return jsonError('NOT_A_MEMBER', 'このルームの参加者ではありません。', 403);
   const selfParticipantId = String(currentRow.participant_id);
 
-  // messages 取得（発言量の集計に使う）。
+  // 冪等: 本人の評価済み行(version=2)があれば AI を呼ばずに返す。
+  {
+    const { data: existing } = await admin
+      .from('career_gd_room_results').select('*').eq('room_id', roomId).eq('user_id', auth.userId).maybeSingle();
+    const ev = existing?.self_feedback as { version?: number } | undefined;
+    if (existing && ev && ev.version === 2) {
+      return Response.json({ result: toResultView(roomId, { ...existing, display_name: currentRow.display_name }) });
+    }
+  }
+
+  // messages。
   let messageRows: Row[];
   try {
     messageRows = await loadRoomMessages(admin, roomId, null);
@@ -110,70 +144,155 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     return jsonError('ROOM_FETCH_FAILED', '発言の取得に失敗しました。', 500);
   }
 
-  // 発言回数を集計（speech のみ）。
+  // 発言集計 + 参加者本文（goodQuotes 検証用）。
   const speechCount = new Map<string, number>();
+  const ownMessages = new Map<string, string[]>();
   let totalSpeech = 0;
   for (const msg of messageRows) {
     if (msg.kind === 'system') continue;
     const pid = String(msg.participant_id);
     speechCount.set(pid, (speechCount.get(pid) ?? 0) + 1);
+    const arr = ownMessages.get(pid) ?? [];
+    arr.push(str(msg.content));
+    ownMessages.set(pid, arr);
     totalSpeech += 1;
   }
 
-  // ranking（発言量ベース・全員共有）。企業評価の断定はしない。
-  const ranking: CareerGdRoomParticipationRank[] = memberRows
-    .filter((m) => m.left_at == null)
-    .map((m) => ({
-      participantId: String(m.participant_id),
-      displayName: (typeof m.display_name === 'string' && m.display_name) || '参加者',
-      isAi: m.is_ai === true,
-      speechCount: speechCount.get(String(m.participant_id)) ?? 0,
-      rank: 0,
-    }))
-    .sort((a, b) => b.speechCount - a.speechCount)
+  const humans = memberRows.filter((m) => m.is_ai !== true && m.left_at == null && m.user_id);
+  const ais = memberRows.filter((m) => m.is_ai === true && m.left_at == null);
+  const humansWithSpeech = humans.filter((m) => (speechCount.get(String(m.participant_id)) ?? 0) >= 1);
+
+  const theme = (roomRow as Row).theme && typeof (roomRow as Row).theme === 'object' ? ((roomRow as Row).theme as Row) : {};
+  const themeInput = {
+    title: str(theme.title) || 'グループディスカッション',
+    description: str(theme.description),
+    constraints: Array.isArray(theme.constraints) ? (theme.constraints as unknown[]).filter((c): c is string => typeof c === 'string') : [],
+  };
+
+  // 評価マップ（participantId → CareerGdEvaluation）。
+  const evalByPid = new Map<string, CareerGdEvaluation>();
+  const matchByPid = new Map<string, CareerGdMatchingHints>();
+
+  if (humansWithSpeech.length === 0) {
+    // 空議論 or 人間の発言0件 → 全員採点不能。
+    for (const h of humans) {
+      const pid = String(h.participant_id);
+      evalByPid.set(pid, unscoredEvaluation(speechCount.get(pid) ?? 0, totalSpeech, '議論の発言が確認できませんでした。'));
+      matchByPid.set(pid, { hints: [], summary: '発言が少なくマッチング傾向は判定できませんでした。' });
+    }
+  } else {
+    // AI 評価（人間のみ・発言本文が根拠）。
+    const feedback = await generateRoomFeedback({
+      theme: themeInput,
+      humans: humansWithSpeech.map((m) => ({ participantId: String(m.participant_id), displayName: str(m.display_name) || '参加者', isAi: false })),
+      ais: ais.map((m) => ({ participantId: String(m.participant_id), displayName: str(m.display_name) || 'AI', isAi: true })),
+      transcript: messageRows.map((m) => ({ participantId: String(m.participant_id), content: str(m.content), kind: m.kind === 'system' ? 'system' : 'speech' })),
+    });
+    if (!feedback) {
+      return jsonError('AI_GD_EVAL_FAILED', '評価の生成に失敗しました。時間をおいて再度お試しください。', 502);
+    }
+    const byPid = new Map<string, Row>();
+    for (const p of feedback.participants) {
+      if (p && typeof p === 'object' && typeof (p as Row).participantId === 'string') byPid.set((p as Row).participantId as string, p as Row);
+    }
+    for (const h of humans) {
+      const pid = String(h.participant_id);
+      const selfCount = speechCount.get(pid) ?? 0;
+      if (selfCount === 0) {
+        evalByPid.set(pid, unscoredEvaluation(0, totalSpeech, '発言が確認できませんでした。'));
+        matchByPid.set(pid, { hints: [], summary: '発言が少なくマッチング傾向は判定できませんでした。' });
+        continue;
+      }
+      const raw = byPid.get(pid);
+      if (!raw) {
+        evalByPid.set(pid, unscoredEvaluation(selfCount, totalSpeech, '評価を取得できませんでした。'));
+        matchByPid.set(pid, { hints: [], summary: '' });
+        continue;
+      }
+      const axisScores = normalizeAxisScores(raw.axisScores);
+      const overallScore = computeOverallScore(axisScores);
+      const rank = toRank(overallScore);
+      const companyCommunicationGrade = computeCommunicationGrade(axisScores);
+      const evaluation: CareerGdEvaluation = {
+        version: 2,
+        scored: true,
+        axisScores,
+        overallScore,
+        rank,
+        companyCommunicationGrade,
+        strengths: strArray(raw.strengths),
+        weaknesses: strArray(raw.weaknesses),
+        improvements: strArray(raw.improvements),
+        goodQuotes: verifyQuotes(raw.goodQuotes, ownMessages.get(pid) ?? []),
+        overallComment: str(raw.overallComment),
+        speechCount: selfCount,
+        totalSpeechCount: totalSpeech,
+      };
+      evalByPid.set(pid, evaluation);
+      matchByPid.set(pid, { hints: strArray(raw.matchingHints), summary: str(raw.matchingSummary) });
+    }
+  }
+
+  // ranking（採点済みの人間のみ・overallScore 降順・全員で共有）。
+  const ranking: CareerGdRankingEntry[] = humans
+    .map((m) => ({ pid: String(m.participant_id), name: str(m.display_name) || '参加者', ev: evalByPid.get(String(m.participant_id)) }))
+    .filter((x) => x.ev && x.ev.scored)
+    .map((x) => ({ participantId: x.pid, displayName: x.name, overallScore: x.ev!.overallScore, grade: x.ev!.rank, rank: 0 }))
+    .sort((a, b) => b.overallScore - a.overallScore)
     .map((entry, i) => ({ ...entry, rank: i + 1 }));
 
-  const selfCount = speechCount.get(selfParticipantId) ?? 0;
-  const selfFeedback = buildSelfFeedback(selfCount, totalSpeech);
-  const selfCompanyGrade: GdCompanyGrade = 'B'; // 暫定プレースホルダ（本格採点は次 STEP）
-  const overallSummary =
-    totalSpeech === 0
-      ? '今回のGDでは発言が記録されませんでした。次回はまず発言することを目標にしましょう。'
-      : `今回のGDでは全体で ${totalSpeech} 回の発言がありました。ここでは発言量をもとにした暫定的な振り返りを表示しています。`;
-  const matchingHints = { summary: selfFeedback.participationSummary };
+  // 全人間ぶんを upsert（ranking を共有・一貫化）。
+  const nowIso = new Date().toISOString();
+  const rowsToUpsert = humans.map((h) => {
+    const pid = String(h.participant_id);
+    const evaluation = evalByPid.get(pid)!;
+    const matchingHints = matchByPid.get(pid) ?? { hints: [], summary: '' };
+    const consultationSummary = generateCareerGdSummary({
+      themeTitle: themeInput.title,
+      displayName: str(h.display_name) || '参加者',
+      scored: evaluation.scored,
+      axisScores: evaluation.axisScores,
+      overallScore: evaluation.overallScore,
+      rank: evaluation.rank,
+      companyCommunicationGrade: evaluation.companyCommunicationGrade,
+      strengths: evaluation.strengths,
+      improvements: evaluation.improvements,
+      matchingHints: matchingHints.hints,
+    });
+    const selfCompanyGrade: GdCompanyGrade = evaluation.scored ? evaluation.rank : 'D';
+    return {
+      room_id: roomId,
+      user_id: h.user_id as string,
+      participant_id: pid,
+      self_feedback: evaluation,
+      ranking,
+      self_company_grade: selfCompanyGrade,
+      overall_summary: consultationSummary,
+      matching_hints: matchingHints,
+    };
+  });
 
-  // upsert（(room_id, user_id) UNIQUE で二重実行に強い）。
   const { error: upErr } = await admin
     .from('career_gd_room_results')
-    .upsert(
-      {
-        room_id: roomId,
-        user_id: auth.userId,
-        participant_id: selfParticipantId,
-        self_feedback: selfFeedback,
-        ranking,
-        self_company_grade: selfCompanyGrade,
-        overall_summary: overallSummary,
-        matching_hints: matchingHints,
-      },
-      { onConflict: 'room_id,user_id' },
-    );
+    .upsert(rowsToUpsert, { onConflict: 'room_id,user_id' });
   if (upErr) {
     if (isUndefinedTable(upErr)) return dbNotAppliedResponse();
     console.error('Career GD result: upsert error', upErr.message);
     return jsonError('RESULT_SAVE_FAILED', '結果の保存に失敗しました。時間をおいて再度お試しください。', 500);
   }
 
+  const selfEval = evalByPid.get(selfParticipantId)!;
+  const selfMatch = matchByPid.get(selfParticipantId) ?? { hints: [], summary: '' };
+  const selfRow = rowsToUpsert.find((r) => r.participant_id === selfParticipantId)!;
   const result: CareerGdRoomResultView = {
     roomId,
     participantId: selfParticipantId,
-    provisional: true,
-    selfCompanyGrade,
-    selfFeedback,
+    displayName: str(currentRow.display_name) || '参加者',
+    evaluation: selfEval,
     ranking,
-    overallSummary,
-    matchingHints,
-    createdAt: new Date().toISOString(),
+    matchingHints: selfMatch,
+    consultationSummary: selfRow.overall_summary,
+    createdAt: nowIso,
   };
   return Response.json({ result });
 }

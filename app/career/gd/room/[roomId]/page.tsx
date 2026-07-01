@@ -15,12 +15,19 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { useAuthStatus, useIsMember } from '@/app/components/AuthProvider';
-import { GD_FORMAT_LABELS, GD_ROLE_LABELS } from '../../gdRoles';
+import {
+  GD_FORMAT_LABELS,
+  GD_ROLE_LABELS,
+  CAREER_GD_EVAL_AXIS_LABELS,
+  CAREER_GD_EVAL_AXIS_ORDER,
+} from '../../gdRoles';
 import type {
   CareerGdRoomDetailResponse,
   CareerGdRoomMember,
   CareerGdRoomMessage,
   CareerGdRoomResultView,
+  CareerGdEvaluation,
+  GdCompanyGrade,
   GdRoomStatus,
 } from '@/types/careerGd';
 
@@ -594,7 +601,7 @@ function FinishedView({
       <Card variant="soft" padding="md" className="mb-4">
         <p className="text-sm font-bold text-slate-800 mb-1">GDは終了しました</p>
         <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          お疲れさまでした。発言量をもとにした暫定的な振り返りを表示できます（本格的な採点は今後のアップデートで対応予定です）。
+          お疲れさまでした。あなたの発言内容をもとに、GD能力の評価とフィードバックを表示します。
         </p>
         {error && (
           <p className="text-xs text-red-600 leading-relaxed mb-3" role="alert">
@@ -604,7 +611,7 @@ function FinishedView({
         {!result && (
           <div className="flex gap-2">
             <Button variant="primary" size="md" onClick={generate} disabled={loading}>
-              {loading ? '生成中…' : '結果を見る'}
+              {loading ? '評価中…（10〜30秒）' : '評価を見る'}
             </Button>
             <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
               更新
@@ -618,45 +625,186 @@ function FinishedView({
   );
 }
 
+const GRADE_STYLE: Record<GdCompanyGrade, string> = {
+  S: 'bg-amber-100 text-amber-800',
+  A: 'bg-blue-100 text-blue-800',
+  B: 'bg-emerald-100 text-emerald-800',
+  C: 'bg-slate-100 text-slate-700',
+  D: 'bg-rose-100 text-rose-700',
+};
+
 function ResultCards({ result }: { result: CareerGdRoomResultView }) {
+  const ev = result.evaluation;
+
+  if (!ev.scored) {
+    return (
+      <Card variant="soft" padding="md" className="mb-4">
+        <p className="text-sm font-bold text-slate-800 mb-1">今回は採点できませんでした</p>
+        <p className="text-xs text-slate-500 leading-relaxed mb-2">
+          {ev.unscoredReason ?? '発言が十分に確認できませんでした。'}
+        </p>
+        {ev.improvements.length > 0 && <ResultList title="次回に向けて" items={ev.improvements} />}
+      </Card>
+    );
+  }
+
   return (
     <>
+      {/* 総合スコア + ランク + 6軸レーダー */}
       <Card variant="soft" padding="md" className="mb-4">
-        <div className="flex items-center gap-2 mb-2">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest">あなたの振り返り</p>
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">暫定</span>
-        </div>
-        <p className="text-sm text-slate-700 leading-relaxed mb-3">{result.selfFeedback.participationSummary}</p>
-        {result.selfFeedback.strengths.length > 0 && (
-          <ResultList title="良かった点" items={result.selfFeedback.strengths} />
-        )}
-        {result.selfFeedback.improvements.length > 0 && (
-          <ResultList title="改善のヒント" items={result.selfFeedback.improvements} />
-        )}
-        {result.selfFeedback.nextPracticeTasks.length > 0 && (
-          <ResultList title="次回の練習課題" items={result.selfFeedback.nextPracticeTasks} />
-        )}
-      </Card>
-
-      <Card variant="soft" padding="md" className="mb-4">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">発言量ランキング（参考）</p>
-        <ul className="flex flex-col gap-1.5">
-          {result.ranking.map((r) => (
-            <li key={r.participantId} className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-2">
-                <span className="w-6 text-center font-bold text-slate-400">{r.rank}</span>
-                <span className="font-semibold text-slate-700">{r.displayName}</span>
-                {r.isAi && <span className="rounded-full bg-emerald-50 px-1.5 text-[10px] font-semibold text-emerald-700">AI</span>}
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">GD能力評価</p>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
+            <div className="text-center">
+              <p className="text-[10px] text-slate-400">総合スコア</p>
+              <p className="text-3xl font-bold text-slate-800 tabular-nums leading-none">{ev.overallScore}</p>
+              <p className="text-[10px] text-slate-400">/ 100</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[10px] text-slate-400 mb-0.5">ランク</p>
+              <span className={`inline-flex h-11 w-11 items-center justify-center rounded-full text-xl font-bold ${GRADE_STYLE[ev.rank]}`}>
+                {ev.rank}
               </span>
-              <span className="text-xs text-slate-500 tabular-nums">{r.speechCount} 回</span>
+            </div>
+          </div>
+          <div className="flex-1 min-w-0 flex justify-center">
+            <AxisRadar axisScores={ev.axisScores} />
+          </div>
+        </div>
+        <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1">
+          {CAREER_GD_EVAL_AXIS_ORDER.map((k) => (
+            <li key={k} className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">{CAREER_GD_EVAL_AXIS_LABELS[k]}</span>
+              <span className="font-semibold text-slate-700 tabular-nums">{ev.axisScores[k]}</span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-[11px] text-slate-400 leading-relaxed">
-          ※ これは発言回数の多さを示すもので、GDの評価（企業選考での通過しやすさ）とは異なります。
-        </p>
+        {ev.overallComment && (
+          <p className="mt-3 text-xs text-slate-600 leading-relaxed border-t border-slate-100 pt-3">{ev.overallComment}</p>
+        )}
       </Card>
+
+      {/* 企業コミュニケーション適性 */}
+      <Card variant="soft" padding="md" className="mb-4">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">企業コミュニケーション適性</p>
+            <p className="text-xs text-slate-500 leading-relaxed">会議・顧客折衝・チーム業務での立ち回りとの相性の目安です。</p>
+          </div>
+          <span className={`ml-3 shrink-0 inline-flex h-11 w-11 items-center justify-center rounded-full text-xl font-bold ${GRADE_STYLE[ev.companyCommunicationGrade]}`}>
+            {ev.companyCommunicationGrade}
+          </span>
+        </div>
+      </Card>
+
+      {/* 強み・改善点・良かった発言 */}
+      <Card variant="soft" padding="md" className="mb-4">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">フィードバック</p>
+        {ev.strengths.length > 0 && <ResultList title="強み" items={ev.strengths} />}
+        {ev.weaknesses.length > 0 && <ResultList title="課題" items={ev.weaknesses} />}
+        {ev.improvements.length > 0 && <ResultList title="改善のヒント" items={ev.improvements} />}
+        {ev.goodQuotes.length > 0 && (
+          <div className="mb-1 mt-1">
+            <p className="text-xs font-bold text-slate-600 mb-1">良かった発言</p>
+            <ul className="flex flex-col gap-1.5">
+              {ev.goodQuotes.map((q, i) => (
+                <li key={i} className="text-xs text-slate-600 leading-relaxed border-l-2 border-emerald-300 pl-2">
+                  「{q}」
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Card>
+
+      {/* マッチングヒント */}
+      {result.matchingHints.hints.length > 0 && (
+        <Card variant="soft" padding="md" className="mb-4">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">就活マッチングのヒント</p>
+          <ul className="flex flex-col gap-1.5">
+            {result.matchingHints.hints.map((h, i) => (
+              <li key={i} className="text-xs text-slate-600 leading-relaxed flex gap-1.5">
+                <span className="text-blue-400">▹</span>
+                <span>{h}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
+            ※ あくまで傾向であり、向き不向きを断定するものではありません。
+          </p>
+        </Card>
+      )}
+
+      {/* ランキング（スコア順・全員共有） */}
+      {result.ranking.length > 0 && (
+        <Card variant="soft" padding="md" className="mb-4">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">総合スコア順（参加者内）</p>
+          <ul className="flex flex-col gap-1.5">
+            {result.ranking.map((r) => (
+              <li key={r.participantId} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="w-6 text-center font-bold text-slate-400">{r.rank}</span>
+                  <span className={`font-semibold truncate ${r.participantId === result.participantId ? 'text-blue-700' : 'text-slate-700'}`}>
+                    {r.displayName}
+                    {r.participantId === result.participantId && '（あなた）'}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs text-slate-500 tabular-nums">{r.overallScore}</span>
+                  <span className={`inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold ${GRADE_STYLE[r.grade]}`}>
+                    {r.grade}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
+            ※ 詳細なフィードバックはご本人のみに表示されます。
+          </p>
+        </Card>
+      )}
     </>
+  );
+}
+
+// 6軸レーダーチャート（SVG・スマホ対応。viewBox でスケール）。
+function AxisRadar({ axisScores }: { axisScores: CareerGdEvaluation['axisScores'] }) {
+  const size = 180;
+  const c = size / 2;
+  const maxR = 66;
+  const keys = CAREER_GD_EVAL_AXIS_ORDER;
+  const pointAt = (i: number, r: number) => {
+    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / keys.length;
+    return [c + r * Math.cos(angle), c + r * Math.sin(angle)] as const;
+  };
+  const gridRings = [0.25, 0.5, 0.75, 1];
+  const dataPoints = keys.map((k, i) => pointAt(i, (Math.min(100, Math.max(0, axisScores[k])) / 100) * maxR));
+  const dataPath = dataPoints.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} className="w-[200px] max-w-full" role="img" aria-label="6軸評価レーダーチャート">
+      {gridRings.map((ring, ri) => (
+        <polygon
+          key={ri}
+          points={keys.map((_, i) => pointAt(i, maxR * ring).map((n) => n.toFixed(1)).join(',')).join(' ')}
+          fill="none"
+          stroke="#e2e8f0"
+          strokeWidth={1}
+        />
+      ))}
+      {keys.map((_, i) => {
+        const [x, y] = pointAt(i, maxR);
+        return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="#e2e8f0" strokeWidth={1} />;
+      })}
+      <polygon points={dataPath} fill="rgba(37,99,235,0.18)" stroke="#2563eb" strokeWidth={1.5} />
+      {keys.map((k, i) => {
+        const [x, y] = pointAt(i, maxR + 12);
+        return (
+          <text key={k} x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="fill-slate-500" fontSize={9}>
+            {CAREER_GD_EVAL_AXIS_LABELS[k]}
+          </text>
+        );
+      })}
+    </svg>
   );
 }
 

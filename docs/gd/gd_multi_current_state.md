@@ -134,9 +134,15 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
 - `POST /api/career/gd/room/[roomId]/finish`（STEP-GD-14）— host が active→finished。
   - `finished_at` 設定。二重終了は冪等（既に finished は 200）。waiting/cancelled は 409。
   - `status='active'` 条件付き UPDATE でレース耐性。messages 0 件でも壊れない。
-- `POST /api/career/gd/room/[roomId]/result`（STEP-GD-14・最小土台）— 発言量ベースの暫定結果。
-  - finished のみ。参加者本人の簡易 self_feedback（実測発言量が根拠・断定なし）＋発言量ランキング（共有）を
-    `career_gd_room_results` に `(room_id, user_id)` upsert（二重実行に強い）。`self_company_grade` は暫定 'B'。
+- `POST /api/career/gd/room/[roomId]/result`（STEP-GD-15・本格採点）— messages 本文を根拠にした AI 評価。
+  - finished のみ。**発言量ベースの暫定評価は廃止**。評価対象は**人間参加者のみ**（AI は文脈のみ・採点対象外）。
+  - AI は 6 軸（0〜100）＋強み/課題/改善/goodQuotes/matchingHints を返す。**合計スコア・ランク(S〜D)・
+    企業コミュ適性グレードは server が決定論算出**（AI に決めさせない）。goodQuotes は実発言に含まれるものだけ採用。
+  - 初回呼び出しで room 内**全人間ぶんを評価・upsert**（ranking を共有・一貫化）。本人の評価済み行(version=2)が
+    あれば AI を再呼び出しせず返す（二重実行に強い）。空議論・本人発言0件は**採点不能**(`scored:false`)。
+  - 保存: `self_feedback`=本人評価(jsonb) / `ranking`=スコア順(共有) / `matching_hints`={hints[],summary} /
+    `self_company_grade`=本人ランク / `overall_summary`=`generateCareerGdSummary()`（相談AI 連携用の圧縮サマリー）。
+  - 評価ロジック・プロンプトは [`roomFeedback.ts`](../../app/api/career/gd/room/roomFeedback.ts)。
 
 ### seq 採番 / 冪等（STEP-GD-14）
 
@@ -166,9 +172,13 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       messages GET・POST（seq サーバ採番・client_msg_id 冪等）/ ai-turn（AI 1名発言生成）/ finish /
       result（発言量ベースの暫定結果）/ 開始時テーマ確定（`buildRoomTheme` 決定的）。
       seq atomic RPC `career_gd_post_message` を apply SQL に追加（**未適用**・app 層 fallback あり）。
-      **未実装（次 STEP 候補）**: 本格 feedback 採点（AI・軸別スコア→企業評価）/ 役割割当（role は 'member' 固定）/
-      自動ターン進行・タイマー連動の締切 / result の localStorage 書き戻し（/career/gd/view 統合）/
+- [x] STEP-GD-15: 本格 feedback 採点（messages 本文を根拠にした AI 評価）。6 軸(0〜100)＋総合スコア・
+      ランク(S〜D)・企業コミュ適性グレード（server 決定論）＋強み/課題/改善/goodQuotes/matchingHints。
+      人間のみ採点・AI は採点対象外。goodQuotes は実発言検証。結果 UI（6軸レーダー・グレード・ヒント）。
+      相談AI 連携用 `generateCareerGdSummary()` を追加し `overall_summary` に保存。
+      **未実装（次 STEP 候補）**: 役割割当（role は 'member' 固定）/ 自動ターン進行・タイマー連動の締切 /
+      result の localStorage 書き戻し（/career/gd/view 統合）/ 相談AI・careerMatching への実注入 /
       DB・KV ベースの join rate limit / システム進行メッセージ（役割アナウンス等）。
-- [ ] STEP-GD-15 以降: 本格 feedback・順位（企業評価軸）/ view 統合 / 他機能連携 / Realtime（Phase3）。
+- [ ] STEP-GD-16 以降: view 統合 / 他機能への結果注入 / 役割割当・進行制御 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。
