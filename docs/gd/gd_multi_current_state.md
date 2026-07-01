@@ -62,9 +62,19 @@ DDL: [`supabase/career_gd_multi_apply.sql`](../../supabase/career_gd_multi_apply
 `CareerGdSession.roomId?` / `CareerGdResult.roomId?` / `CareerGdResult.ranking?`）を持つため、
 Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 側で行う。
 
+## API（実装済み）
+
+- `POST /api/career/gd/room/create`（STEP-GD-11）
+  - 入力: `{format, plannedParticipantCount(2〜8), timeLimitSec(300〜1800), displayName?}`
+  - 出力: `{roomId, joinCode(平文・1回のみ), codeExpiresAt, status, format, plannedParticipantCount, timeLimitSec}`
+  - member 認証必須（guest/匿名は 401/403）。service-role で `career_gd_rooms`＋host member を insert。
+  - 6桁コードは `join_code_hash`(sha256)＋`room_salt` で保存し、平文は DB に残さない。
+  - env/service-role/テーブル未整備は 503 で分かりやすく失敗。
+
 ## 進捗
 
 - [x] STEP-GD-10: DDL / RLS 設計ファイル・post-apply checklist 追加（**Supabase へは未適用**）。
-- [ ] STEP-GD-11 以降: room 作成・合言葉発行 / join・ロビー / start・AI補完 / 進行 / feedback・順位 / view 統合 / 連携確認。
+- [x] STEP-GD-11: room 作成・6桁コード発行（create API＋UI＋roomCode util＋型追加）。**join 以降は未実装**。
+- [ ] STEP-GD-12 以降: join・ロビー / start・AI補完 / 進行 / feedback・順位 / view 統合 / 連携確認。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

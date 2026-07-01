@@ -35,9 +35,31 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
 
 ---
 
-## STEP-GD-11 以降（予定）
+## STEP-GD-11: room 作成・6桁コード発行（完了）
 
-- **GD-11**: room 作成・合言葉発行（`room/create` UI ＋ `POST /api/career/gd/room/create`）。
+- **課題**: ホストがマルチGDルームを作成し、参加者に配る 6 桁合言葉を安全に発行する必要がある。
+- **対応**:
+  - `app/api/career/gd/room/roomCode.ts`（**server-only**）：`generateSixDigitJoinCode` /
+    `normalizeJoinCode` / `createRoomSalt` / `hashJoinCode`（`sha256(code + salt)`）。node:crypto 使用。
+  - `app/api/career/gd/room/create/route.ts`：`POST /api/career/gd/room/create`。
+    - member ログイン必須（`getServerSupabaseClient().auth.getUser()`、`is_anonymous` は 403）。
+    - service-role で `career_gd_rooms`（status=waiting・code_expires_at=+30分）＋ host member を insert。
+    - 6 桁コード衝突（waiting 中 unique）は再生成で最大 6 回リトライ。
+    - **平文コードはレスポンスで 1 回だけ返す**（DB には `join_code_hash` + `room_salt` のみ保存）。
+    - env 未設定→503 / service-role 未設定→503 / テーブル未作成(42P01)→503 と分かりやすく失敗。
+    - バリデーション：format(free/case/abstract) / count(2〜8) / time(300〜1800)、不正は 400。
+  - `app/career/gd/room/create/page.tsx`：作成フォーム→6桁コード大表示＋有効期限＋コピー＋共有説明。
+    未ログインは「ログインが必要」表示。ロビー導線は近日公開（STEP-GD-12）。
+  - `app/career/gd/page.tsx`：マルチGDカードを「ルーム作成」導線に変更（参加は近日公開）。
+  - `types/careerGd.ts`：`GdRoomStatus` / `CareerGdRoom` / `CareerGdRoomMember` /
+    `CareerGdRoomCreateResponse` を **optional 追加**（Phase1 型は不変）。
+- **非対象**: join API/UI・session・message・ai-turn・feedback・Realtime・音声・ランダムマッチングは未実装。
+  Supabase への実適用もしない（テーブル未作成時はコードが 503 で分かりやすく失敗する）。
+- **影響範囲**: `app/career/gd/room/**`・`app/api/career/gd/room/**`・`types/careerGd.ts`（追加）・
+  `app/career/gd/page.tsx`（career）・`docs/gd/*` のみ。受験版・Phase1 ソロGD・既存テーブルに影響なし。
+
+## STEP-GD-12 以降（予定）
+
 - **GD-12**: 合言葉入力による参加・待機画面（`room/join`・`room/[roomId]` ＋ join / GET room API）。
 - **GD-13**: AI 補完して開始（`start` API：`/theme`＋`buildAiParticipants`＋`assignRoles` 再利用）。
 - **GD-14**: テキストGD 進行（`message` / `ai-turn` API ＋ ポーリング）。

@@ -95,20 +95,22 @@ export default function CareerGdEntryPage() {
         />
       </div>
 
-      {/* マルチGD（Phase2 招待リンク型 / Phase3 ランダムマッチング）は近日公開 */}
+      {/* マルチGD（Phase2 合言葉参加型）。ルーム作成は利用可。参加(join)は STEP-GD-12 で公開。 */}
       <div className="mt-4">
-        <Card variant="soft" padding="md" className="opacity-70">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-bold text-slate-800 mb-1">
-                マルチGD（他ユーザーと練習）
-              </h2>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                友達・知人を招待して複数人でGDを実施し、参加者内で順位をつけます。不足分はAIが補完します。
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
-              近日公開
+        <Card variant="soft" padding="md">
+          <h2 className="text-sm font-bold text-slate-800 mb-1">合言葉で友達とGD練習（マルチGD）</h2>
+          <p className="text-xs text-slate-500 leading-relaxed mb-3">
+            ルームを作って6桁の合言葉を発行し、友達に共有して複数人でGDを練習します。不足人数はAIが補完します（ログインが必要）。
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Link
+              href="/career/gd/room/create"
+              className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700"
+            >
+              ルームを作成 →
+            </Link>
+            <span className="inline-flex items-center justify-center rounded-xl bg-gray-100 px-5 py-2.5 text-sm font-semibold text-gray-500">
+              合言葉で参加（近日公開）
             </span>
           </div>
         </Card>

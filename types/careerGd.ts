@@ -139,6 +139,54 @@ export type CareerGdSession = {
   selfAnalysisLogId?: string;
 };
 
+// ── Phase2 マルチGD（合言葉参加型・server 正本）用の型 ─────────────────
+// Phase1 の型は一切変更しない。以下は Supabase career_gd_room_* 行のクライアント表現。
+// DB との変換は API route 側で行う（クライアントは room 系テーブルを直接叩かない）。
+
+export type GdRoomStatus = 'waiting' | 'active' | 'finished' | 'cancelled';
+
+// career_gd_rooms のクライアント表現（join_code_hash / room_salt はクライアントに渡さない）。
+export type CareerGdRoom = {
+  id: string;
+  hostUserId: string;
+  status: GdRoomStatus;
+  format: GdFormat;
+  theme: GdTheme | null; // start 時に確定（waiting 中は未確定）
+  timeLimitSec: number;
+  plannedParticipantCount: number;
+  codeExpiresAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// career_gd_room_members のクライアント表現（AI は userId 未設定 / isAi=true）。
+export type CareerGdRoomMember = {
+  id: string;
+  roomId: string;
+  userId?: string | null; // AI は null
+  isAi: boolean;
+  isHost: boolean;
+  participantId: string;
+  displayName: string;
+  role: GdRole;
+  persona?: { assertiveness: 1 | 2 | 3; style: string };
+  joinedAt: string;
+  leftAt?: string | null;
+};
+
+// create API のレスポンス（平文 joinCode はここでのみ受け取る）。
+export type CareerGdRoomCreateResponse = {
+  roomId: string;
+  joinCode: string;
+  codeExpiresAt: string;
+  status: GdRoomStatus;
+  format: GdFormat;
+  plannedParticipantCount: number;
+  timeLimitSec: number;
+};
+
 // 完了結果 1 件（localStorage: 'careerGdResults'）。
 export type CareerGdResult = {
   id: string; // = session.id
