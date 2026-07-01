@@ -33,8 +33,10 @@
 --   - 前提: pgcrypto（gen_random_uuid）/ set_updated_at()（schema.sql §3）/
 --     auth.users が既存であること。
 --
--- 注意: 本ファイルはまだ Supabase へ適用しない（STEP-GD-10 は DDL / checklist 追加のみ）。
---       適用手順・検証は docs/gd/gd_multi_post_apply_checklist.md を参照。
+-- 注意: STEP-GD-11〜13 で room 作成 / join / start（AI 補完）まで実装済み。
+--       start は career_gd_rooms.started_at と career_gd_room_members.persona（jsonb）を使う
+--       （いずれも本 DDL に既存。列追加は不要）。適用手順・検証は
+--       docs/gd/gd_multi_post_apply_checklist.md を参照。
 -- ============================================================
 
 -- ------------------------------------------------------------
@@ -78,7 +80,8 @@ CREATE INDEX IF NOT EXISTS career_gd_rooms_code_expires_idx
 -- ------------------------------------------------------------
 -- ② career_gd_room_members — 参加者（人間 + AI 補完を混在）。
 --    AI は user_id = NULL / is_ai = true。participant_id で transcript と突合する。
---    role は開始時に assignRoles で全員へランダム割当。
+--    AI 補完は host の start（STEP-GD-13）で planned_participant_count まで行う。
+--    role は STEP-GD-14 で assignRoles により全員へ割当予定（現状は 'member' 固定）。
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS career_gd_room_members (
   id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,7 +92,11 @@ CREATE TABLE IF NOT EXISTS career_gd_room_members (
   participant_id text        NOT NULL,                       -- GdParticipant.id（transcript と対応）
   display_name   text        NOT NULL DEFAULT '',
   role           text        NOT NULL DEFAULT 'member',
-  persona        jsonb,                                      -- AI のみ（assertiveness / style）
+  -- AI のみ。STEP-GD-13 で AI 補完（buildAiRoomMembers）が入れる CareerGdAiPersona を
+  -- そのまま格納する（persona_key / role / persona_summary / speaking_style / strengths /
+  -- weaknesses / assertiveness / style）。jsonb はスキーマレスなので列分割せず 1 列に集約する
+  -- （設計整合・移行不要）。秘匿情報は入れない（すべて UI 表示・プロンプト用の公開情報）。
+  persona        jsonb,
   joined_at      timestamptz NOT NULL DEFAULT now(),
   left_at        timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),

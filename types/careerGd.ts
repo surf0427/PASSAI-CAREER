@@ -171,7 +171,18 @@ export type CareerGdRoomMember = {
   participantId: string;
   displayName: string;
   role: GdRole;
-  persona?: { assertiveness: 1 | 2 | 3; style: string };
+  // AI のみ。STEP-GD-13 以降は 10 タイプの persona 情報を保持する（既存 assertiveness/style は後方互換）。
+  // 秘匿情報は含まない（persona は元々 UI 表示・プロンプト用の公開情報）。
+  persona?: {
+    assertiveness: 1 | 2 | 3;
+    style: string;
+    personaKey?: string; // 例: leader / logical / critical …（スネークケース）
+    personaRole?: string; // 議論上の役回り（例: 進行・整理）。member.role(GdRole) とは別。
+    personaSummary?: string;
+    speakingStyle?: string;
+    strengths?: string[];
+    weaknesses?: string[];
+  };
   joinedAt: string;
   leftAt?: string | null;
 };

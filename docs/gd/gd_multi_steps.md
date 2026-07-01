@@ -85,13 +85,40 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   `app/career/gd/page.tsx`（career）・`supabase/career_gd_multi_apply.sql`（未適用DDL）・`.env.example`・
   `docs/gd/*` のみ。受験版・Phase1 ソロGD・既存テーブルに影響なし。
 
-## STEP-GD-13 以降（予定）
+## STEP-GD-13: AI 補完して開始（`start` API・10 タイプ persona・deterministic selection）（完了）
 
-- **GD-13**: 合言葉入力による参加ではなく「AI 補完して開始」（`start` API：host のみ・
-  `planned - 参加人数` を `buildAiParticipants` で補完・`assignRoles` で役割割当・`/theme` でテーマ確定・
-  rooms を active へ CAS 更新）。
-- **GD-13**: AI 補完して開始（`start` API：`/theme`＋`buildAiParticipants`＋`assignRoles` 再利用）。
-- **GD-14**: テキストGD 進行（`message` / `ai-turn` API ＋ ポーリング）。
+- **対応1（persona プール）**: `app/api/career/gd/room/aiMembers.ts` を追加。
+  - `CAREER_GD_AI_PERSONAS`（10 タイプ・MBTI 不使用・`persona_key` はスネークケース）。
+    persona_key / display_name / role / persona_summary / speaking_style / strengths / weaknesses と、
+    既存型後方互換の assertiveness(1〜3) / style を持つ。`runaway` / `indecisive` は難易度ノイズ役だが
+    `weaknesses` に制御説明を持たせ議論を壊しすぎない。
+  - `selectAiPersonasForRoom(roomId, neededCount, existingPersonaKeys)`: **roomId を seed**（xmur3→mulberry32）に
+    deterministic 選択。ティア順（①実用5 → ②data → ③ノイズ役4）で埋め、既存 persona_key は除外・room 内一意。
+  - `buildAiRoomMembers(...)`: insert 用行を生成（`user_id=null` / `is_ai=true` /
+    `participant_id=gdai-<roomId>-<persona_key>`（決定的）/ persona jsonb）。
+- **対応2（start API）**: `POST /api/career/gd/room/[roomId]/start`。
+  - member 認証 → room 無し 404 → 非参加者 403 → 非 host 403 → waiting 以外 409。
+  - **同時開始レース対策**: `status='waiting'` 条件付き UPDATE→active を「開始権の取得」に使う。
+    0 行更新（＝他が先に開始）なら 409。開始権を取れた本人のみ AI を insert（二重補完しない）。
+  - `planned_participant_count` まで `buildAiRoomMembers()` で補完。AI insert 失敗時は
+    status を waiting に best-effort ロールバック。応答は GET room と同形。
+- **対応3（型・mapper）**: `CareerGdRoomMember.persona` を拡張（personaKey / personaRole / personaSummary /
+  speakingStyle / strengths / weaknesses を追加・任意）。`mapMemberRow` が persona jsonb（snake_case）を
+  camelCase へ写す。`join_code_hash` 等の秘匿情報は一切返さない。
+- **対応4（DDL）**: 列追加は不要（`rooms.started_at` / `members.persona` は既存）。persona は列分割せず
+  `persona`(jsonb) に集約（jsonb はスキーマレス・移行不要）。コメントのみ STEP-GD-13 反映（冪等）。
+- **対応5（UI）**: ロビー `room/[roomId]` を更新。host かつ waiting は「AIメンバーを補完して開始」
+  （開始中 loading・成功で即反映）、非 host は「ホストの開始を待っています」、active は「開始済み
+  （進行画面は STEP-GD-14 予定）」。AI member は persona 役回り・要約付きで表示。
+- **未実装（GD-14 以降）**: message generation / turn 制御 / session 画面 / feedback 生成 /
+  テーマ確定・役割割当（role は 'member' 固定）/ DB・KV ベースの rate limit。
+- **影響範囲**: `app/api/career/gd/room/**`・`app/career/gd/room/[roomId]/page.tsx`・`types/careerGd.ts`・
+  `supabase/career_gd_multi_apply.sql`（コメントのみ）・`docs/gd/*` のみ。受験版・Phase1 ソロGD・
+  既存テーブルに影響なし。
+
+## STEP-GD-14 以降（予定）
+
+- **GD-14**: テキストGD 進行（`message` / `ai-turn` API ＋ ポーリング）。テーマ確定・役割割当もここで。
 - **GD-15**: 終了・feedback・順位（`finish` / `feedback` API：Phase1 feedback の multi 経路を流用）。
 - **GD-16**: view 統合（各自 localStorage 書き戻し・既存 `/career/gd/view` で閲覧）。
 - **GD-17**: careerMatching / consultation 連携の回帰確認（マルチ結果が snapshot に乗ること）。

@@ -88,10 +88,23 @@ export function mapMemberRow(row: Row): CareerGdRoomMember {
   };
   if (persona) {
     const a = persona.assertiveness;
-    member.persona = {
+    // persona jsonb は buildAiRoomMembers が入れた CareerGdAiPersona（snake_case キー）。
+    // 秘匿情報は含まない（persona_key / 説明・話し方・強み弱みはいずれも表示・プロンプト用の公開情報）。
+    const p: NonNullable<CareerGdRoomMember['persona']> = {
       assertiveness: a === 1 || a === 2 || a === 3 ? a : 2,
       style: str(persona.style) || '一般型',
     };
+    if (str(persona.persona_key)) p.personaKey = str(persona.persona_key);
+    if (str(persona.role)) p.personaRole = str(persona.role);
+    if (str(persona.persona_summary)) p.personaSummary = str(persona.persona_summary);
+    if (str(persona.speaking_style)) p.speakingStyle = str(persona.speaking_style);
+    if (Array.isArray(persona.strengths)) {
+      p.strengths = (persona.strengths as unknown[]).filter((s): s is string => typeof s === 'string');
+    }
+    if (Array.isArray(persona.weaknesses)) {
+      p.weaknesses = (persona.weaknesses as unknown[]).filter((s): s is string => typeof s === 'string');
+    }
+    member.persona = p;
   }
   return member;
 }
