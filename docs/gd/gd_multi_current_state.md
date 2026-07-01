@@ -179,6 +179,13 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       **未実装（次 STEP 候補）**: 役割割当（role は 'member' 固定）/ 自動ターン進行・タイマー連動の締切 /
       result の localStorage 書き戻し（/career/gd/view 統合）/ 相談AI・careerMatching への実注入 /
       DB・KV ベースの join rate limit / システム進行メッセージ（役割アナウンス等）。
-- [ ] STEP-GD-16 以降: view 統合 / 他機能への結果注入 / 役割割当・進行制御 / Realtime（Phase3）。
+- [x] STEP-GD-16: マルチGD 結果の学習履歴。結果生成時に `careerGdRoomLogs`（localStorage canonical）へ
+      書き戻し（roomId で重複排除）。`career_gd_room_results`（Supabase）が durable mirror。
+      `/career/gd/view` に「マルチGD 履歴」セクション（統計＝実施回数/平均/最高スコア/最高ランク、
+      テーマ検索＋ランク/スコア帯フィルタ、一覧カード、詳細＝`GdEvaluationDetail` 共用、履歴削除）を追加。
+      評価詳細 UI は room 結果画面と共通コンポーネント `GdEvaluationDetail` に集約。
+      **未実装（次 STEP 候補）**: run/result のルート統一（/career/gd/run・/career/gd/result）/
+      Supabase からの履歴ハイドレート（別デバイス同期）/ 他機能への結果注入 / 役割割当・進行制御 / Realtime（Phase3）。
+- [ ] STEP-GD-17 以降: run/result ルート統一 / 他機能への結果注入 / Supabase 履歴同期 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

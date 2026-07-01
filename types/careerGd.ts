@@ -316,6 +316,26 @@ export type CareerGdRoomResultResponse = {
   result: CareerGdRoomResultView;
 };
 
+// ── STEP-GD-16: マルチGD 結果の学習履歴（localStorage canonical / Supabase durable mirror） ──
+// 各デバイスの「自分のマルチGD結果」履歴。career_gd_room_results（Supabase）が durable mirror、
+// この log が閲覧用 canonical（既存 CAREER の run→result→view 設計に合わせる）。
+// 重複保存を避けるため roomId を id とし、append 時に upsert（同 roomId は置換）。
+export type CareerGdRoomLog = {
+  id: string; // = roomId（重複排除キー）
+  roomId: string;
+  participantId: string; // 本人の participant_id（ranking で自分を強調するため）
+  createdAt: string; // 結果を履歴に登録した時刻（= 表示上の実施日時）
+  theme: GdTheme;
+  format: GdFormat;
+  participantCount: number; // 総参加者（人間＋AI）
+  humanCount: number;
+  durationSec: number; // 所要時間（finishedAt - startedAt、無ければ制限時間）
+  evaluation: CareerGdEvaluation; // 本人の 6 軸評価（overallScore/rank/companyCommunicationGrade 等）
+  ranking: CareerGdRankingEntry[]; // 参加者内スコア順（共有）
+  matchingHints: CareerGdMatchingHints; // 本人ぶん
+  consultationSummary: string; // 相談AI 連携用の圧縮サマリー（overall_summary 由来）
+};
+
 // 完了結果 1 件（localStorage: 'careerGdResults'）。
 export type CareerGdResult = {
   id: string; // = session.id

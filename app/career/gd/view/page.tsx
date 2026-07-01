@@ -18,6 +18,7 @@ import {
   GD_BEHAVIOR_TRAIT_LABELS,
 } from '../gdRoles';
 import { loadGdResults, updateGdResult } from '../gdStorage';
+import { MultiGdHistorySection } from '../MultiGdHistorySection';
 import type {
   CareerGdResult,
   GdParticipantFeedback,
@@ -79,24 +80,19 @@ function CareerGdViewInner() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader title="GDの結果" description="実施したグループディスカッションの評価です。" />
 
+      {/* STEP-GD-16: マルチGD 学習履歴（localStorage canonical / Supabase durable mirror） */}
+      <MultiGdHistorySection />
+
       {results === null ? (
         <Card variant="soft" padding="md">
           <p className="text-sm text-slate-500">読み込み中…</p>
         </Card>
       ) : results.length === 0 ? (
-        <Card variant="soft" padding="md">
-          <p className="text-sm text-slate-600 mb-4">
-            まだGDの結果がありません。GDを実施してください。
-          </p>
-          <Link
-            href="/career/gd/setup"
-            className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline"
-          >
-            GDを始める →
-          </Link>
-        </Card>
+        // ソロGD の結果は無し。マルチGD 履歴は上の MultiGdHistorySection が扱う。
+        null
       ) : (
         <>
+          <p className="text-[11px] font-bold text-slate-500 tracking-widest mb-3">ソロGD の結果</p>
           <Card variant="soft" padding="md" className="mb-5">
             <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
               練習履歴（{results.length}件）
