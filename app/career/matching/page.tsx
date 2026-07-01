@@ -22,9 +22,11 @@ import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
+import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import {
   buildLatestGdMatchingSnapshot,
   buildGdMatchingSnapshotById,
+  buildLatestGdRoomSignals,
 } from '@/lib/careerGd/context';
 import { appendMatchingLog } from './matchingStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
@@ -65,6 +67,8 @@ function buildMatchingContext(gdResultId?: string | null) {
   const gdSnapshot =
     (gdResultId ? buildGdMatchingSnapshotById(gdResults, gdResultId) : null) ??
     buildLatestGdMatchingSnapshot(gdResults);
+  // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（最新3件・採点済みのみ・weight 低め）。
+  const gdRoomSignals = buildLatestGdRoomSignals(loadGdRoomLogs(), 3);
   return {
     profile: loadBasicInfo(),
     activity: loadActivityData(),
@@ -75,6 +79,7 @@ function buildMatchingContext(gdResultId?: string | null) {
     consultation: latestConsultationResult(),
     // GD 練習結果を補助文脈として渡す。主情報ではなく参考扱い。
     gdSnapshot,
+    gdRoomSignals,
   };
 }
 
@@ -113,7 +118,8 @@ function CareerMatchingStartInner() {
       es: !!ctx.es,
       interview: !!ctx.interviewResult,
       consultation: !!ctx.consultation,
-      gd: !!ctx.gdSnapshot,
+      // solo GD スナップショット or マルチGD の参考シグナルがあれば反映済みとみなす。
+      gd: !!ctx.gdSnapshot || ctx.gdRoomSignals.length > 0,
     };
   }, [isMounted, gdResultId]);
 

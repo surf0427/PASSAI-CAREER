@@ -186,6 +186,19 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       評価詳細 UI は room 結果画面と共通コンポーネント `GdEvaluationDetail` に集約。
       **未実装（次 STEP 候補）**: run/result のルート統一（/career/gd/run・/career/gd/result）/
       Supabase からの履歴ハイドレート（別デバイス同期）/ 他機能への結果注入 / 役割割当・進行制御 / Realtime（Phase3）。
-- [ ] STEP-GD-17 以降: run/result ルート統一 / 他機能への結果注入 / Supabase 履歴同期 / Realtime（Phase3）。
+- [x] STEP-GD-17: マルチGD結果を **相談AI・careerMatching へ参考シグナルとして連携**。
+      取得は `careerGdRoomLogs`（localStorage・既存 CAREER 設計どおり client→API へ圧縮スナップショットを送信、
+      route は Supabase を読まない）。`lib/careerGd/context.ts` に multi-GD 用の
+      `buildLatestGdRoomSignals` / `normalizeGdRoomSignal` / `formatGdRoomSignalsForConsultation` /
+      `formatGdRoomSignalsForMatching` を追加（既存 solo 経路は非破壊）。
+      - 相談AI: `gdRoom`（最新3件）を圧縮注入。overall_summary(=`generateCareerGdSummary`)＋総合/ランク/
+        企業コミュ適性＋上位3軸＋strengths/improvements/matchingHints。「傾向」扱い・断定/人格分析禁止。
+      - careerMatching: `gdRoomSignals`（最新3件・代表1件を軽量注入）。6軸＋企業コミュ適性を **補助シグナル・
+        weight低め**として AI signal 根拠に添えるのみ。総合スコア・順位・重みは決定的エンジン
+        `runCareerMatch` が担い、**GD はエンジンに入れない**（既存80〜90% / GD 10〜20% 相当の低影響）。
+      - UI: 相談AIは「GD結果も参考にしています」を控えめ表示、matching は既存「GD結果」readiness を
+        マルチGDでも点灯（過剰表示しない）。
+      - **未実装（次 STEP 候補）**: run/result ルート統一 / Supabase 履歴同期 / 面接・ES への注入 / 成長グラフ。
+- [ ] STEP-GD-18 以降: run/result ルート統一 / Supabase 履歴同期 / 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

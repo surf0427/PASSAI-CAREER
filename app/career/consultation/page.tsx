@@ -23,9 +23,11 @@ import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
+import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
+  buildLatestGdRoomSignals,
 } from '@/lib/careerGd/context';
 import {
   loadConsultationThreads,
@@ -75,6 +77,8 @@ function buildConsultationContext(gdResultId?: string | null) {
     companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
     // GD練習結果。gdResultId があればその1件を優先、無い/見つからない場合は最新2件。
     gd: gdConsultationContext(gdResultId),
+    // STEP-GD-17: マルチGD の 6 軸評価を参考シグナルとして追加（最新3件・採点済みのみ）。
+    gdRoom: buildLatestGdRoomSignals(loadGdRoomLogs(), 3),
   };
 }
 
@@ -118,6 +122,12 @@ function CareerConsultationInner() {
   const currentThread = useMemo<CareerConsultationThread | null>(
     () => threads.find((t) => t.id === currentThreadId) ?? null,
     [threads, currentThreadId],
+  );
+
+  // STEP-GD-17: マルチGD の参考シグナルが手元にあるか（UI の控えめな注記用）。
+  const hasGdRoomSignals = useMemo(
+    () => (isMounted ? buildLatestGdRoomSignals(loadGdRoomLogs(), 1).length > 0 : false),
+    [isMounted],
   );
 
   const messages = currentThread?.messages ?? [];
@@ -221,6 +231,12 @@ function CareerConsultationInner() {
         title="就活相談AI"
         description="就活全体の司令塔として、今やるべきことを一緒に整理します。"
       />
+
+      {hasGdRoomSignals && (
+        <p className="mb-4 text-[11px] text-slate-400">
+          ※ 直近のGD（グループディスカッション）結果も参考にしています。
+        </p>
+      )}
 
       {/* 履歴一覧 */}
       <Card variant="soft" padding="md" className="mb-5">

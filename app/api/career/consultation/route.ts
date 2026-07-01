@@ -29,7 +29,10 @@ import {
 import {
   normalizeGdConsultationSnapshot,
   formatGdConsultationForPrompt,
+  normalizeGdRoomSignal,
+  formatGdRoomSignalsForConsultation,
   type GdConsultationSnapshot,
+  type GdRoomSignalSnapshot,
 } from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -226,6 +229,7 @@ export async function POST(req: Request) {
     presentationResult?: CareerPresentationFinalResult | null;
     companyResearch?: unknown;
     gd?: unknown;
+    gdRoom?: unknown;
   };
 
   const message = str(b.message);
@@ -267,6 +271,14 @@ export async function POST(req: Request) {
         .slice(0, 3)
     : [];
   const gdBlock = formatGdConsultationForPrompt(gdSnapshots);
+  // STEP-GD-17: マルチGD の 6 軸評価を「参考シグナル」として追加（最新3件・圧縮・断定回避）。
+  const gdRoomSignals = Array.isArray(b.gdRoom)
+    ? b.gdRoom
+        .map((s) => normalizeGdRoomSignal(s))
+        .filter((s): s is GdRoomSignalSnapshot => s !== null)
+        .slice(0, 3)
+    : [];
+  const gdRoomBlock = formatGdRoomSignalsForConsultation(gdRoomSignals);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -278,6 +290,7 @@ export async function POST(req: Request) {
     presentationBlock ? `# 直近のプレゼン練習の結果\n${presentationBlock}` : '',
     companyResearchBlock,
     gdBlock,
+    gdRoomBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

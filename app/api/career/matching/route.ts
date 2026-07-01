@@ -44,6 +44,9 @@ import type {
 import {
   normalizeGdMatchingSnapshot,
   formatGdMatchingForPrompt,
+  normalizeGdRoomSignal,
+  formatGdRoomSignalsForMatching,
+  type GdRoomSignalSnapshot,
 } from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
@@ -264,6 +267,7 @@ export async function POST(req: Request) {
     interviewResult?: CareerInterviewFinalResult | null;
     consultation?: CareerConsultationResult | null;
     gdSnapshot?: unknown;
+    gdRoomSignals?: unknown;
     userInput?: string;
   };
 
@@ -310,6 +314,16 @@ export async function POST(req: Request) {
   const consultationBlock = renderConsultation(b.consultation);
   // GD は補助文脈（主情報は活動・自己分析・就活軸）。formatGdMatchingForPrompt が見出し・断定回避を含む。
   const gdBlock = renderGd(b.gdSnapshot);
+  // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（直近数件・weight 低め・断定回避）。
+  // 総合スコア・順位・重みは決定的エンジン（runCareerMatch）が担い、GD はエンジンに入れない
+  //（AI の signal 根拠を少し補助するだけ）。→ 主情報 80〜90% / GD 10〜20% 相当の低い影響に留まる。
+  const gdRoomSignals = Array.isArray(b.gdRoomSignals)
+    ? b.gdRoomSignals
+        .map((s) => normalizeGdRoomSignal(s))
+        .filter((s): s is GdRoomSignalSnapshot => s !== null)
+        .slice(0, 3)
+    : [];
+  const gdRoomBlock = formatGdRoomSignalsForMatching(gdRoomSignals);
 
   const systemPrompt = [
     MATCHING_PERSONA,
@@ -320,6 +334,7 @@ export async function POST(req: Request) {
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
     consultationBlock ? `# 直近の就活相談の結果\n${consultationBlock}` : '',
     gdBlock,
+    gdRoomBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

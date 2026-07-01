@@ -17,9 +17,13 @@ import {
   GD_BEHAVIOR_TRAIT_LABELS,
   GD_GRADE_LABELS,
   GD_ROLE_LABELS,
+  CAREER_GD_EVAL_AXIS_LABELS,
+  CAREER_GD_EVAL_AXIS_ORDER,
 } from '@/app/career/gd/gdRoles';
 import type {
   CareerGdResult,
+  CareerGdRoomLog,
+  CareerGdAxisKey,
   GdBehaviorTrait,
   GdCompanyGrade,
   GdRole,
@@ -297,5 +301,159 @@ export function formatGdConsultationForPrompt(
     '',
     'GDについて聞かれたら、この練習結果を根拠に答える。ただし1〜数回の練習であり断定はせず、',
     '面接・ES・自己分析・業界選びの相談では「GDで見えた傾向」として他データと合わせて活かす。',
+  ].join('\n');
+}
+
+// ── STEP-GD-17: マルチGD（合言葉参加型・careerGdRoomLogs）を参考シグナルとして連携 ──────
+// STEP-15/16 の 6 軸評価（overallScore / rank / companyCommunicationGrade / strengths /
+// improvements / matchingHints / consultationSummary=generateCareerGdSummary出力）を、
+// 相談AI・careerMatching へ「補助シグナル」として渡す。能力の絶対評価ではなく、あくまで
+// "傾向"。断定禁止・weight 低め。全文注入せず圧縮する（既存 solo 経路とは別関数・非破壊）。
+
+export type GdRoomSignalSnapshot = {
+  roomId: string;
+  createdAt: string;
+  themeTitle: string;
+  overallScore: number; // 0〜100
+  rank: GdCompanyGrade;
+  companyCommunicationGrade: GdCompanyGrade;
+  axisScores: Record<CareerGdAxisKey, number>;
+  topAxes: { key: CareerGdAxisKey; label: string; score: number }[]; // 上位3軸
+  strengths: string[];
+  improvements: string[];
+  matchingHints: string[];
+  summary: string; // generateCareerGdSummary 出力（圧縮済み）
+};
+
+const AXIS_KEYS = CAREER_GD_EVAL_AXIS_ORDER;
+
+function clamp100(v: unknown): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(Math.min(100, Math.max(0, n)));
+}
+
+// CareerGdRoomLog 1 件 → 参考シグナル。採点不能（scored=false）は信号にならないので null。
+export function buildGdRoomSignal(log: CareerGdRoomLog | null | undefined): GdRoomSignalSnapshot | null {
+  if (!log || typeof log !== 'object' || typeof log.roomId !== 'string') return null;
+  const ev = log.evaluation;
+  if (!ev || ev.scored !== true) return null;
+  const axisScores = AXIS_KEYS.reduce((acc, k) => {
+    acc[k] = clamp100(ev.axisScores?.[k]);
+    return acc;
+  }, {} as Record<CareerGdAxisKey, number>);
+  const topAxes = [...AXIS_KEYS]
+    .sort((a, b) => axisScores[b] - axisScores[a])
+    .slice(0, 3)
+    .map((k) => ({ key: k, label: CAREER_GD_EVAL_AXIS_LABELS[k], score: axisScores[k] }));
+  return {
+    roomId: log.roomId,
+    createdAt: str(log.createdAt),
+    themeTitle: str(log.theme?.title),
+    overallScore: clamp100(ev.overallScore),
+    rank: normalizeGrade(ev.rank),
+    companyCommunicationGrade: normalizeGrade(ev.companyCommunicationGrade),
+    axisScores,
+    topAxes,
+    strengths: strList(ev.strengths, 3),
+    improvements: strList(ev.improvements, 3),
+    matchingHints: strList(log.matchingHints?.hints, 3),
+    summary: str(log.consultationSummary),
+  };
+}
+
+// 複数の履歴（新しい順を想定）→ 直近 N 件の参考シグナル（採点済みのみ・無制限投入を防ぐ）。
+export function buildLatestGdRoomSignals(
+  logs: CareerGdRoomLog[] | null | undefined,
+  limit = 3,
+): GdRoomSignalSnapshot[] {
+  if (!logs || logs.length === 0) return [];
+  const out: GdRoomSignalSnapshot[] = [];
+  for (const log of logs) {
+    const s = buildGdRoomSignal(log);
+    if (s) out.push(s);
+    if (out.length >= Math.max(1, limit)) break;
+  }
+  return out;
+}
+
+// API 側の防御正規化（クライアントが送った参考シグナル unknown を検証）。
+export function normalizeGdRoomSignal(raw: unknown): GdRoomSignalSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const themeTitle = str(r.themeTitle);
+  const summary = str(r.summary);
+  const axisRaw = r.axisScores && typeof r.axisScores === 'object' ? (r.axisScores as Record<string, unknown>) : {};
+  const axisScores = AXIS_KEYS.reduce((acc, k) => {
+    acc[k] = clamp100(axisRaw[k]);
+    return acc;
+  }, {} as Record<CareerGdAxisKey, number>);
+  const topAxes = [...AXIS_KEYS]
+    .sort((a, b) => axisScores[b] - axisScores[a])
+    .slice(0, 3)
+    .map((k) => ({ key: k, label: CAREER_GD_EVAL_AXIS_LABELS[k], score: axisScores[k] }));
+  // 中身が実質空なら無効扱い。
+  if (!themeTitle && !summary && topAxes.every((a) => a.score === 0)) return null;
+  return {
+    roomId: str(r.roomId),
+    createdAt: str(r.createdAt),
+    themeTitle,
+    overallScore: clamp100(r.overallScore),
+    rank: normalizeGrade(r.rank),
+    companyCommunicationGrade: normalizeGrade(r.companyCommunicationGrade),
+    axisScores,
+    topAxes,
+    strengths: strList(r.strengths, 3),
+    improvements: strList(r.improvements, 3),
+    matchingHints: strList(r.matchingHints, 3),
+    summary,
+  };
+}
+
+// 参考シグナル配列 → 相談AI プロンプト用ブロック。overall_summary を主に、断定回避を明示。
+export function formatGdRoomSignalsForConsultation(
+  signals: GdRoomSignalSnapshot[] | null | undefined,
+): string {
+  if (!signals || signals.length === 0) return '';
+  const blocks = signals.map((s, i) => {
+    const head = `■ GD${signals.length > 1 ? ` ${i + 1}` : ''}：${s.themeTitle || '（テーマ不明）'}`;
+    const lines = [head];
+    const meta = [`総合${s.overallScore}点/ランク${s.rank}`, `企業コミュ適性${s.companyCommunicationGrade}`];
+    if (s.createdAt) meta.unshift(`実施 ${s.createdAt.slice(0, 10)}`);
+    lines.push(`- ${meta.join('・')}`);
+    if (s.topAxes.length > 0) lines.push(`- 相対的に高い軸: ${s.topAxes.map((a) => `${a.label}${a.score}`).join('・')}`);
+    if (s.strengths.length > 0) lines.push(`- 強み: ${s.strengths.join('、')}`);
+    if (s.improvements.length > 0) lines.push(`- 改善余地: ${s.improvements.join('、')}`);
+    if (s.matchingHints.length > 0) lines.push(`- 就活傾向（参考）: ${s.matchingHints.join('、')}`);
+    if (s.summary) lines.push(`- 要約: ${truncate(s.summary, 200)}`);
+    return lines.join('\n');
+  });
+  return [
+    '# 直近のマルチGD（グループディスカッション）評価の傾向【参考シグナル】',
+    ...blocks,
+    '',
+    'これは1〜数回のGD練習で見えた「傾向」であり、能力の絶対評価ではない。',
+    'GDだけで人格や能力を断定しない・過剰評価しない。面接/ES/自己分析/業界選びでは',
+    '他のデータ（活動・自己分析・就活軸）と合わせて「GDではこうした傾向が見られた」程度に留めて活かす。',
+  ].join('\n');
+}
+
+// 参考シグナル配列 → careerMatching プロンプト用ブロック（さらに軽量・補助 weight 明示）。
+export function formatGdRoomSignalsForMatching(
+  signals: GdRoomSignalSnapshot[] | null | undefined,
+): string {
+  if (!signals || signals.length === 0) return '';
+  // 直近 1 件を代表に、6 軸と企業コミュ適性を 1〜2 行で。無制限投入しない。
+  const s = signals[0];
+  const axisLine = AXIS_KEYS.map((k) => `${CAREER_GD_EVAL_AXIS_LABELS[k]}${s.axisScores[k]}`).join('・');
+  const parts = [
+    `GD総合${s.overallScore}/ランク${s.rank}・企業コミュ適性${s.companyCommunicationGrade}`,
+    `6軸: ${axisLine}`,
+  ];
+  if (s.matchingHints.length > 0) parts.push(`傾向: ${s.matchingHints.slice(0, 2).join('・')}`);
+  return [
+    '# GDの傾向【補助シグナル・weight低め／断定材料にしない】',
+    ...parts.map((p) => `- ${p}`),
+    '主情報は活動整理・自己分析・就活軸・ES・面接。GDは補助的に参考にするだけで、これ単独で相性を決めない。',
   ].join('\n');
 }
