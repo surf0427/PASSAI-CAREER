@@ -161,7 +161,7 @@ export async function POST(req: Request) {
       const message = await anthropic.messages.create(
         {
           model: CAREER_GD_MODEL,
-          max_tokens: 2500,
+          max_tokens: 4096,
           temperature: attempt === 2 ? 0 : 0.4,
           system,
           messages: [{ role: 'user', content: user }],
