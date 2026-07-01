@@ -113,6 +113,8 @@ raw string ストレージには以下のコメントを必ず付けること:
 | `interviewAdditionalQuestionUsage` | `lib/interviewAdditionalUsage.ts` | JSON | 面接予想質問の追加生成 日次カテゴリ別制限（daily limit、`{date, categoryCounts:{reason,activity,university}}`） |
 | `interviewQuestionsCache` | `lib/interviewQuestionCache.ts` | JSON | `/api/interview-questions` の input hash + 生成済み `TwoLayerInterviewQuestions` の同居 cache（STEP8）。同入力（basicInfo / statementDraft / studentProfile / activitySummary / model / promptVersion）なら AI call を skip して保存済み questions を復元する。legacy fallback 経路は保存対象外 |
 | `supabaseBackfill` | `lib/repository/backfillFlag.ts` | JSON | Supabase backfill 完了 flag（STEP-SUPABASE-COMPLETE-03B）。形式 `{ [userId]: { [feature]: { version, at } } }`。`tutorRepository.ts:backfillTutorOnce` が「初回 1 回だけ LS 全履歴を Supabase へ一括同期」する起動制御に使う（feature=`tutor`、userId 単位）。flag は最適化で、消えても backfill 本体は冪等のため再実行は無害。`AuthProvider` の `profileReady` 後 fire-and-forget 起動経由でのみ書き込まれる。例外的に `lib/repository/` 配下に置く（feature storage の `lib/*Storage.ts` flat ルールには含めない） |
+| `careerGdSessions` | `app/career/gd/gdStorage.ts` | JSON | 【就活版】GD（グループディスカッション）の進行中/完了セッション（会話状態）。career feature-local storage（`app/career/*` 配下に置く既存 career 慣習に準拠）。受験版キーとは衝突しない |
+| `careerGdResults` | `app/career/gd/gdStorage.ts` | JSON | 【就活版】GD の完了結果（個別FB・S/A/B/C/D 企業評価・順位・matchingHints）。view で一覧/詳細表示する正データ。Phase1 は localStorage canonical（Supabase 非接続） |
 
 ---
 
