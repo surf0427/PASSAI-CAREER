@@ -116,6 +116,26 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   `supabase/career_gd_multi_apply.sql`（コメントのみ）・`docs/gd/*` のみ。受験版・Phase1 ソロGD・
   既存テーブルに影響なし。
 
+## STEP-GD-13.5: Supabase 実機 read-only 検証（DDL 適用確認 + service_role grant 修正）
+
+- **目的**: create→join→start の前提として、career_gd_* が実 Supabase に存在し API から到達できるかを
+  **read-only**（write なし）で確認する。
+- **判明1（env）**: 当初 `.env.local` は受験版プロジェクト（未 prefix の presentation_results 等）を指しており
+  career_gd_* が無かった。career プロジェクト（`career_` prefix）へ切替後に解決。
+  さらに切替後の `NEXT_PUBLIC_SUPABASE_URL` が **REST エンドポイント（末尾 `/rest/v1/`）** になっており、
+  supabase-js が `…/rest/v1/rest/v1/…` を生成して `PGRST125` になる不具合を発見 →
+  **Project URL（`https://<ref>.supabase.co`・末尾スラッシュ/パスなし）** に直す必要あり。
+- **判明2（grant）**: career プロジェクトは長らく localStorage canonical で service_role の
+  PostgREST 書込みを実運用してこなかったため、public テーブルへの service_role 権限が未付与。
+  service_role でも career_gd_*（および既存 career_presentation_results）が `42501 permission denied` になる。
+  マルチGD Phase2 が初めて server 書込みを必要とするため顕在化。
+- **対応**: `career_gd_multi_apply.sql` に **service_role のみへの CRUD GRANT**（4テーブル）を idempotent に追加。
+  anon/authenticated には付与せず deny-by-default を維持（API ゲートウェイ方式）。
+- **検証手段**: service-role / anon の PostgREST REST を `select=…&limit=0/5` で叩くだけ（INSERT/UPDATE/DELETE なし）。
+  secret leak scan（`.next/static` に service-role key 実値 / 秘匿 env 名が無いこと）も継続 clean。
+- **残作業**: ① `NEXT_PUBLIC_SUPABASE_URL` を Project URL へ修正（env 側）② GRANT 追記版 SQL を SQL Editor で再適用
+  → 再 read-only probe で service_role 200・anon ブロックを確認 → その後 create→join→start の write 検証（GD-14 前）。
+
 ## STEP-GD-14 以降（予定）
 
 - **GD-14**: テキストGD 進行（`message` / `ai-turn` API ＋ ポーリング）。テーマ確定・役割割当もここで。

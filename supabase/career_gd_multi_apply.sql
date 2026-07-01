@@ -221,6 +221,29 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ============================================================
+-- GRANTs — service_role にのみテーブル権限を付与（STEP-GD-13.5）。
+--
+--   背景: この career プロジェクトは長らく localStorage canonical で、server 側
+--   service_role による PostgREST 書込みを実運用してこなかった。そのため public
+--   テーブルへの service_role の default 権限が付いておらず、Phase2 マルチGD の
+--   API route（getServiceRoleSupabaseClient → PostgREST）が 42501 permission denied で
+--   失敗することが STEP-GD-13.5 の実機 read-only 検証で判明した。
+--
+--   本 DDL の「API ゲートウェイ方式」では DB 操作は service_role のみが行う。
+--   よって service_role にだけ CRUD を付与する（RLS は bypass されるため policy 不要）。
+--   anon / authenticated には付与しない（deny-by-default を維持し、直接アクセスを塞ぐ）。
+--   GRANT は再実行しても no-op（idempotent）。列/シーケンスは gen_random_uuid のみで
+--   sequence を持たないため SEQUENCE grant は不要。
+-- ============================================================
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  public.career_gd_rooms,
+  public.career_gd_room_members,
+  public.career_gd_room_messages,
+  public.career_gd_room_results
+  TO service_role;
+
 -- ------------------------------------------------------------
 -- 【将来案・現時点では有効化しない】本人結果のみ直接 SELECT を許可する場合の policy。
 --   MVP は結果取得も API route 経由に統一するため、下記はコメントのまま残す。
