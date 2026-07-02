@@ -225,6 +225,24 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         **(2) owner-select RLS policy `USING (auth.uid() = user_id)`**（apply SQL 内にコメントで用意済み）を適用する必要がある。
         いずれも本 STEP では適用しない（コードは 42501/0 行でも never throw・localStorage 表示を継続）。
         GD-14.5 の RPC と同じ「コード先行・運用者が SQL 適用」方式。
-- [ ] STEP-GD-20 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
+- [~] STEP-GD-20: **公開GDロビー方式（先行実装）**。完全ランダムキュー（`career_gd_match_queue`）ではなく、
+      ユーザーが公開 room を作り一覧から選んで参加する方式を先行（初期ユーザー数が少ない段階での実装/運用/UX の安全性）。
+      - **20-A（DB・未適用）**: [`supabase/career_gd_public_lobby_apply.sql`](../../supabase/career_gd_public_lobby_apply.sql)。
+        `career_gd_rooms.room_type`（invite|public_lobby|random_match・default invite）/ `join_policy`（code|public|matched_only・default code）追加、
+        公開一覧用 index・同一 host 乱立防止 部分 UNIQUE、RPC `career_gd_lobby_join(uuid,uuid,text)`
+        （`SECURITY DEFINER` / `search_path=public,pg_temp` / service_role のみ EXECUTE）。**追加のみ・既存 DDL/RPC 不変**。
+      - **20-B（API・実装済み）**: `POST /api/career/gd/lobby/create` / `GET /api/career/gd/lobby/rooms` /
+        `POST /api/career/gd/lobby/join`。公開 room は `join_code_hash='pub_'+roomId`（非 hex・NOT NULL 充足）で、
+        既存合言葉 join 検索（`.eq(<hex>)`）に構造上ヒットしない＝**既存 join route 無改修で合言葉参加を遮断**。
+        join は **RPC `career_gd_lobby_join` に委譲**（advisory lock で満員/二重参加を原子制御）。
+        レスポンスに `host_user_id`/`user_id`/email/`join_code_hash` を出さない。
+      - **20-C（UI・実装済み）**: `/career/gd/lobby`（作成フォーム＋10秒ポーリング一覧＋参加、0件時はソロAI導線）と
+        `/career/gd` の「公開ルームで練習する」カード。作成・参加後は既存 `/career/gd/room/[roomId]` へ遷移（room 画面不変）。
+      - **AI 補完は既存 `start` 処理に委譲**（host start 必須の既存仕様は不変。4 人なら補完なし・2〜3 人なら AI 補完）。
+      - **20-D（実DB QA ＋ docs・本更新）**: read-only probe で **20-A の SQL が実 Supabase に未適用**を確認
+        （`room_type`=42703 / RPC=PGRST202）。よって**実DB機能QAは未実施（不能）**。コードは未適用時に 503 `DB_NOT_APPLIED` で
+        安全に縮退（`isDbNotReady`）。typecheck/lint/build・secret scan clean。**コード変更なし**。
+      - **残課題**: ① SQL 実適用 → 実DB QA ② host start 促し ③ lobby rate limit ④ 完全ランダムマッチ（`career_gd_match_queue`）。
+- [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

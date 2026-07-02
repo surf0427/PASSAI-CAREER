@@ -142,3 +142,72 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
 - **GD-15**: 終了・feedback・順位（`finish` / `feedback` API：Phase1 feedback の multi 経路を流用）。
 - **GD-16**: view 統合（各自 localStorage 書き戻し・既存 `/career/gd/view` で閲覧）。
 - **GD-17**: careerMatching / consultation 連携の回帰確認（マルチ結果が snapshot に乗ること）。
+
+> 注: GD-15〜GD-19 の詳細は [`gd_multi_current_state.md`](./gd_multi_current_state.md) の「進捗」を参照（本 steps.md では未転記）。
+
+---
+
+## STEP-GD-20: 公開GDロビー方式（先行実装 / 完全ランダムキューは後回し）
+
+- **方針転換**: 当初検討した完全ランダムマッチ（`career_gd_match_queue` ＋ マッチ確定 RPC ＋ 自動 room 生成 ＋
+  2.5秒 polling マッチング）ではなく、**公開GDロビー方式を先行**する。
+  - **理由**: 初期ユーザー数が少ない段階では、完全自動マッチより「ユーザーが公開ルームを作り、他ユーザーが
+    一覧から入りたい部屋を選んで参加する」方式のほうが、実装負担・運用負担・UX（過疎耐性・納得感）の面で安全。
+    host も「作った本人」で自然に決まり host 決定ロジックが不要。完全ランダムキュー（`career_gd_match_queue`）は
+    **未実装・後回し**（Phase3 相当）。
+
+- **STEP-GD-20-A（DB / SQL・未適用）**: [`supabase/career_gd_public_lobby_apply.sql`](../../supabase/career_gd_public_lobby_apply.sql)（idempotent・**追加のみ**・既存 `career_gd_multi_apply.sql` を壊さない）。
+  - `career_gd_rooms` に **`room_type`（NOT NULL default `'invite'` / CHECK `invite|public_lobby|random_match`）** と
+    **`join_policy`（NOT NULL default `'code'` / CHECK `code|public|matched_only`）** を追加。既存 room は自動的に `invite`/`code`。
+  - 部分 index: `career_gd_rooms_public_lobby_idx`（waiting×public_lobby 一覧用）/
+    `career_gd_rooms_one_open_public_per_host`（同一 host の公開待機 room 乱立防止・部分 UNIQUE）。
+  - RPC `career_gd_lobby_join(uuid, uuid, text)`：**`SECURITY DEFINER` / `SET search_path = public, pg_temp` /
+    service_role のみ EXECUTE（anon/authenticated には付与しない）**。`pg_advisory_xact_lock` ＋ `FOR UPDATE` で
+    満員（定員超過）と二重参加を原子的に制御。**既存 `career_gd_post_message` には触れない**。
+
+- **STEP-GD-20-B（API）**: 公開ロビー専用 route を新設（既存 `room/create`・`room/join`・`room/start` は無改修）。
+  - `POST /api/career/gd/lobby/create` — `public_lobby` room ＋ host member 作成。member 必須・service_role。
+    **`join_code_hash = 'pub_' + roomId`（非 hex・1 回の INSERT で格納）/ `code_expires_at = now`**。
+    同一 host が既に公開待機 room を持つ場合（乱立防止 index 発火）は既存 room を返して復帰（`reused:true`）。
+  - `GET /api/career/gd/lobby/rooms` — `status='waiting' × room_type='public_lobby' × join_policy='public'` のみ。
+    人間（`is_ai=false` かつ `left_at IS NULL`）で人数集計・満員は末尾。並びは `created_at desc`
+    （waiting 中は member join で rooms 行が UPDATE されず `updated_at ≒ created_at` のため）。
+    **`hostDisplayName` のみ返し、`host_user_id` / `user_id` / email / `join_code_hash` は返さない**。
+  - `POST /api/career/gd/lobby/join` — `userId` はサーバ側の認証 user を使用（body の userId は受け取らない）。
+    参加は **RPC `career_gd_lobby_join` に委譲**。404（room 無し / 公開でない）/ 409（満員・開始/終了済み）/
+    503（DB 未適用）。二重参加は冪等成功。
+  - `lib/careerGd/publicLobby.ts`（server-only ヘルパ）/ `lib/careerGd/publicLobbyTypes.ts`（client 安全な型）。
+
+- **STEP-GD-20-C（UI）**:
+  - `/career/gd/lobby`（新規）— 作成フォーム ＋ 10 秒ポーリング一覧 ＋ 参加。`isMine`/`isJoined` は「戻る」導線、
+    `isFull` は参加 disabled、0 件時は「公開ルームを作成」「AIと今すぐ練習（`/career/gd/setup`）」導線。
+    作成・参加後は既存 `/career/gd/room/[roomId]` へ `router.push`（room 画面は不変）。
+  - `/career/gd` — 「公開ルームで練習する」カードを追加（既存 4 導線・マルチGDカードは不変）。
+
+- **`join_code_hash = 'pub_' + roomId` の理由**: 公開 room は合言葉参加させないが `join_code_hash` は **NOT NULL**。
+  HMAC-SHA256 出力（64 桁 hex）と構造上一致しない `'pub_'` prefix を入れることで、
+  **既存の合言葉 join 検索（`.eq('join_code_hash', <hex>)`）に決してヒットせず、既存 join route を無改修のまま
+  公開 room への合言葉参加を遮断**できる（room 単位に一意なので waiting `UNIQUE(join_code_hash)` とも競合しない）。
+
+- **AI 補完**: 公開ロビー側では作らず、**既存 `start` 処理に委譲**（host が start → `planned_participant_count` まで
+  既存 deterministic 補完。4 人なら補完なし、2〜3 人なら不足分を AI 補完）。**host start 必須の既存仕様は不変**。
+
+- **STEP-GD-20-D（実DB QA ＋ docs 反映・本節）**:
+  - 実 Supabase への **read-only probe**（service_role・**書き込みなし**・secret 非出力）の結果、
+    **`career_gd_public_lobby_apply.sql`（STEP-GD-20-A）は実 Supabase に未適用**であることを確認：
+    `career_gd_rooms.room_type` = `42703`（column does not exist）/ RPC `career_gd_lobby_join` = `PGRST202`
+    （Could not find the function）。既存 GD マルチ table（`career_gd_room_messages` 等）は適用済み・到達可能。
+  - このため **create / join / 満員 / 同時 join / RPC の実DB機能QAは未実施（不能）**。
+    ただしコード側は列/RPC 不在を `isDbNotReady`（`42P01` / `42703` / `PGRST202`）で検出し **503 `DB_NOT_APPLIED`** を返し、
+    UI は秘密を出さない固定文言を表示すること＝**未適用でも安全に縮退する**ことを確認。**最小修正なし**（コード変更不要）。
+  - static 検証（typecheck / lint / build）clean・secret leak scan clean。本 STEP は **docs 反映のみ**。
+
+- **非対象**: 完全ランダムキュー（`career_gd_match_queue`）/ 自動 start / host start 促し UI / lobby 専用 rate limit /
+  Realtime・WebSocket（Phase3）。既存 room 系 route・受験版・Phase1 ソロGD に変更なし。
+
+- **残課題**:
+  1. `career_gd_public_lobby_apply.sql` を実 Supabase に適用 → 実DB QA（作成 / 一覧 / 参加 / 満員 / 同時 join /
+     room 接続 / start / AI 補完 / message・result / 履歴 / 既存合言葉 join の分離）。
+  2. host が start しない問題への促し UI。
+  3. lobby/create・join の rate limit（現状なし・本番前に per-user/KV 検討）。
+  4. 将来の完全ランダムマッチ（`career_gd_match_queue`）。
