@@ -171,6 +171,11 @@ export default function CareerGdRoomPage() {
 }
 
 // ── waiting（ロビー） ────────────────────────────────────────────────
+//
+// host start 促し UI（STEP-GD-20-J）: host には目立つ開始 CTA と人数状況、非 host には
+// 「ホストの開始待ち」＋AI 補完で開始可能な旨を表示し、room 放置を防ぐ。
+// TODO(将来): host 自動開始 / 非host→host 催促 / room timeout・abandon cleanup / メール・Push 通知 /
+//   Realtime は本 STEP では非対象（docs/gd 参照）。
 
 function WaitingView({
   detail,
@@ -185,6 +190,10 @@ function WaitingView({
 }) {
   const { room, members, isHost } = detail;
   const humanCount = members.filter((m) => !m.isAi && !m.leftAt).length;
+  const planned = room.plannedParticipantCount;
+  // AI 補完予定 = 不足分（0 未満にならない）。4/6/8 いずれでも成立。
+  const aiFillCount = Math.max(0, planned - humanCount);
+  const isFull = humanCount >= planned;
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -230,28 +239,59 @@ function WaitingView({
         )}
       </Card>
 
+      {/* 人数状態（human / planned と AI 補完予定）。host/非host 共通。 */}
+      <div
+        className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl bg-white/70 ring-1 ring-slate-200 px-4 py-3"
+        data-testid="gd-waiting-status"
+        data-human={humanCount}
+        data-planned={planned}
+        data-ai-fill={aiFillCount}
+      >
+        <span className="text-sm font-bold text-slate-800">
+          参加状況: {humanCount} / {planned} 人
+        </span>
+        <span className="text-xs font-semibold text-emerald-700">
+          {aiFillCount > 0 ? `AIメンバー補完予定: ${aiFillCount} 人` : '全員そろっています'}
+        </span>
+      </div>
+
       <MembersCard members={members} plannedCount={room.plannedParticipantCount} />
 
       {isHost ? (
         <Card variant="soft" padding="md">
-          <p className="text-sm font-bold text-slate-800 mb-1">GDを開始する</p>
-          <p className="text-xs text-slate-500 leading-relaxed mb-3">
-            予定人数（{room.plannedParticipantCount}人・現在 {humanCount}人）に不足する分をAIメンバーが補完してGDを開始します。開始後は参加受付を締め切ります。
-          </p>
+          {isFull ? (
+            <>
+              <p className="text-sm font-bold text-slate-800 mb-1">参加者が全員そろいました</p>
+              <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                準備ができたらGDを開始してください。（現在 {humanCount} / {planned} 人）
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-bold text-slate-800 mb-1">あなたがホストです</p>
+              <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                参加者がそろったら、またはAIメンバーで始めたい場合は「開始」を押してください。現在 {humanCount} / {planned} 人が参加中です。不足分の {aiFillCount} 人はAIメンバーが自動で参加します。
+              </p>
+            </>
+          )}
           {startError && (
             <p className="text-xs text-red-600 leading-relaxed mb-3" role="alert">
               {startError}
             </p>
           )}
           <Button variant="primary" size="md" onClick={start} disabled={starting} className="w-full sm:w-auto">
-            {starting ? '開始中…' : 'AIメンバーを補完して開始'}
+            {starting ? '開始中…' : isFull ? 'GDを開始する' : 'AIメンバーを補完して開始'}
           </Button>
         </Card>
       ) : (
         <Card variant="soft" padding="md">
           <p className="text-sm font-bold text-slate-800 mb-1">ホストの開始を待っています</p>
           <p className="text-xs text-slate-500 leading-relaxed">
-            ホストがGDを開始すると、この画面に反映されます。「更新」を押して最新状態を確認できます。
+            このGDはホストが開始すると始まります。現在 {humanCount} / {planned} 人が参加中です。
+            {aiFillCount > 0
+              ? '参加者が足りない場合は、AIメンバーが自動で参加します。'
+              : '参加者はそろっています。'}
+            この画面は自動更新されます（「更新」でも確認できます）。
           </p>
         </Card>
       )}

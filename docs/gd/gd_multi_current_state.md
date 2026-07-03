@@ -270,9 +270,15 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         6/8 動作、ソロ側 AI 名/スタイルを 8 人分に拡張。満員判定・RPC `career_gd_lobby_join` は planned 基準で一致。
         検証: **Playwright 17/17 PASS**（4人 A–G ＋ 6人 ＋ 8人 ＋ API不正値拒否 ＋ 合言葉8人）・**HTTP QA 25/25 PASS**（不正値400/有効200/6人5join/8人6join→AI補完2→計8/
         満員409/同時join定員超過なし）。cleanup で全 table 0・auth users 0（テスト member は満員観測のため 6 名）。`tsc`/`lint`/`build`・secret scan clean。
-      - **残課題**: ① host start 促し ② lobby rate limit ③ 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）
-        ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認 ⑥ CI 用 Playwright browser setup。
-        （20-G「HTTP E2E」・20-H「実ブラウザ E2E」・20-I「人数 4/6/8 固定」は **完了**。）
+      - **20-J（host start 促し UI・最新）**: waiting room の放置を防ぐ UI 追加（`WaitingView` のみ・**DB/API 変更なし**）。
+        人数状態「参加状況 {human}/{planned}・AIメンバー補完予定 {aiFill}」（`aiFill=max(0,planned−human)`・満員は「全員そろっています」）を
+        host/非host 共通表示。**host**: 不足あり=「あなたがホストです」＋補完人数説明＋CTA「AIメンバーを補完して開始」／満員=「参加者が全員そろいました」＋CTA「GDを開始する」（AI補完文言なし）。
+        **非host**: 「ホストの開始を待っています」＋AI補完で開始可能な旨・start CTA なし。4/6/8 で文言非破綻・start実行中disabled・失敗は`role="alert"`。
+        検証: **Playwright 21/21 PASS**（新規 `careerGdHostPrompt.spec` A host/B 非host/C 満員/D 6人=補完4・8人=補完6 ＋ 既存全回帰）・**HTTP QA 25/25 PASS**。
+        cleanup で全 table 0・auth users 0。`tsc`/`lint`/`build`・secret scan clean。（フル E2E は Supabase 一時 DNS 障害で1度失敗→回復後 21/21・コード起因でない）
+      - **残課題**: ① lobby rate limit ② 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）③ Realtime（Phase3）
+        ④ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認 ⑤ CI 用 Playwright browser setup ⑥ DB CHECK 4/6/8 の本番/preview 適用状況。
+        （20-G「HTTP E2E」・20-H「実ブラウザ E2E」・20-I「人数 4/6/8 固定」・**20-J「host start 促し UI」は完了**。）
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

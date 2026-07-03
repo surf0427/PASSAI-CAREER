@@ -322,3 +322,32 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   - **static**: `tsc --noEmit`/`eslint`/`next build` clean・E2E 17/17・HTTP QA 25/25・secret leak scan clean。
   - **残課題**: ① host start 促し UI ② lobby/create・join の rate limit ③ 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）
      ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/RLS 整理の要否確認 ⑥ CI 用 Playwright browser setup（現状 system Chrome 依存）。
+
+- **STEP-GD-20-J（host start 促し UI・本節）**:
+  - **目的**: waiting room で **host が開始せず room が放置される**問題を防ぐ。host/非host それぞれに状況が伝わる文言・CTA を出す。
+    UI のみの変更（[`app/career/gd/room/[roomId]/page.tsx`](../../app/career/gd/room/[roomId]/page.tsx) の `WaitingView`）。**DB/API 変更なし**。
+  - **人数状態表示（host/非host 共通）**: MembersCard 上部に「参加状況: {human} / {planned} 人」＋
+    「AIメンバー補完予定: {aiFill} 人」（`aiFill = max(0, planned − human)`）。満員時は「全員そろっています」。
+    non-functional test hook: `data-testid="gd-waiting-status"` に `data-human`/`data-planned`/`data-ai-fill`（DOM 属性のみ・挙動不変）。
+  - **host 向け（waiting・不足あり）**: 「**あなたがホストです**」＋「参加者がそろったら、またはAIメンバーで始めたい場合は『開始』を押してください。
+    現在 {human} / {planned} 人が参加中です。不足分の {aiFill} 人はAIメンバーが自動で参加します。」＋ CTA「**AIメンバーを補完して開始**」。
+    start 実行中は disabled/「開始中…」、失敗は既存 `role="alert"` エラー、成功で active UI へ自然遷移（既存 `onStarted`）。
+  - **host 向け（満員 aiFill=0）**: 「**参加者が全員そろいました**」＋「準備ができたらGDを開始してください。」＋ CTA「**GDを開始する**」
+    （「AI補完されます」は出さない）。full でも host は開始可能。
+  - **非host 向け**: 「**ホストの開始を待っています**」＋「このGDはホストが開始すると始まります。現在 {human} / {planned} 人が参加中です。
+    参加者が足りない場合は、AIメンバーが自動で参加します。この画面は自動更新されます。」**start CTA は非表示**。
+  - **4/6/8 いずれでも文言非破綻**（aiFill: 4人→3 / 6人→4 / 8人→6・8人でも縦に自然に伸びる）。既存 start ボタン挙動・active/finished 表示は不変。
+  - **Playwright E2E（21/21 PASS）**: 新規 `careerGdHostPrompt.spec.ts`（A host UI＋人数＋AI補完予定＋start→active／B 非host UI・CTAなし・人数／
+    C 満員 host UI「全員そろいました」・aiFill=0・「GDを開始する」で start／D 6人=補完4・8人=補完6）＋既存
+    Counts/Invite/Lobby/ParticipantApi 全回帰（create/join/polling/満員disabled/host start/message/finish/result/history/合言葉/人数validation）。
+  - **HTTP/API QA（25/25 PASS）**: start 挙動不変（非host start 403・host start active・AI補完 = planned−humans）・4/6/8 validation 維持。
+  - **環境メモ**: 初回フル E2E は実行中に Supabase の一時 **DNS 障害（`ENOTFOUND`）**でセッション検証が 401 になり失敗。ネットワーク回復後に
+    storageState を再生成して再実行し **21/21 PASS**（コード起因ではない）。system Chrome `channel:'chrome'` 駆動は 20-H 同様。
+  - **cleanup**: rooms/members/messages/results と test member（6 名）を削除（全 table 0・auth users 0）・storageState/creds 削除。
+  - **static**: `tsc --noEmit`/`eslint`/`next build` clean・E2E 21/21・HTTP QA 25/25・secret leak scan clean。
+  - **非目標（TODO 明記・本 STEP 非対象）**: host 自動開始 / メール・Push 通知 / 非host→host 催促送信 / room timeout / abandon cleanup /
+    Realtime / 完全ランダムマッチ / rate limit / DB schema 変更（コード内 TODO と下記残課題に記載）。
+  - **残課題**: ① lobby/create・join の rate limit ② 完全ランダムマッチ（`career_gd_match_queue_{4,6,8}`）③ Realtime（Phase3）
+     ④ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/RLS 整理の要否確認 ⑤ CI 用 Playwright browser setup
+     ⑥ DB CHECK 4/6/8 の本番/preview 適用状況（`career_gd_participant_count_apply.sql`・運用者適用）。
+     （**host start 促し UI は本 STEP で完了**。）
