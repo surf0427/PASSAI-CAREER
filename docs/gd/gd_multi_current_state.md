@@ -239,10 +239,22 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - **20-C（UI・実装済み）**: `/career/gd/lobby`（作成フォーム＋10秒ポーリング一覧＋参加、0件時はソロAI導線）と
         `/career/gd` の「公開ルームで練習する」カード。作成・参加後は既存 `/career/gd/room/[roomId]` へ遷移（room 画面不変）。
       - **AI 補完は既存 `start` 処理に委譲**（host start 必須の既存仕様は不変。4 人なら補完なし・2〜3 人なら AI 補完）。
-      - **20-D（実DB QA ＋ docs・本更新）**: read-only probe で **20-A の SQL が実 Supabase に未適用**を確認
-        （`room_type`=42703 / RPC=PGRST202）。よって**実DB機能QAは未実施（不能）**。コードは未適用時に 503 `DB_NOT_APPLIED` で
-        安全に縮退（`isDbNotReady`）。typecheck/lint/build・secret scan clean。**コード変更なし**。
-      - **残課題**: ① SQL 実適用 → 実DB QA ② host start 促し ③ lobby rate limit ④ 完全ランダムマッチ（`career_gd_match_queue`）。
+      - **20-D（実DB QA ＋ docs）**: read-only probe で（当時参照していた project では）**20-A の SQL が未適用**を確認
+        （`room_type`=42703 / RPC=PGRST202）。コードは未適用時に 503 `DB_NOT_APPLIED` で安全縮退（`isDbNotReady`）。
+      - **20-G（member ログイン E2E QA・最新）**: 運用者により **正しい project ref `bhhmvupzcxoaonrowikg`** が確定
+        （この project は **20-A 適用済み**）。service_role で email_confirm 済みテスト member を用意し（email/id/pw/JWT/cookie 非出力・
+        member_count のみ報告）、**member ログイン必須 E2E を完走**：HTTP（未ログイン401 / session→API 200）・公開ロビー
+        **31 checks**（create/reused/一覧 public_lobby のみ/invite 混入なし＆ lobby/join 404/join/冪等/満員409/**同時 join 定員超過なし**/秘匿列なし）・
+        room 進行 **34 checks**（非host start 403 / host start active / **2〜3人=AI補完あり・4人=AI補完なし** / `career_gd_post_message`
+        seq 単調採番・`clientMsgId` 冪等 / finish 冪等 / **result 生成 AI 6軸＋ranking** / `career_gd_room_results` DB 保存）・
+        **合言葉回帰 14 checks**（legacy create/join/start/message/result・public_lobby↔invite 分離維持）。
+        履歴は `careerGdRoomLogs`=localStorage canonical（client）で durable mirror の DB 保存を確認。UI は 3 ページ member session で
+        **HTTP 200 render**＋lobby UI コード（作成フォーム/10秒polling/redirect/isMine·isJoined·isFull/空状態/error表示/秘匿列なし）を確認。
+        **⚠ 実ブラウザ操作 E2E はヘッドレスブラウザ不在で未実行**（HTTP＋render＋コードレビューで代替）。
+        cleanup で test room/members/messages/results を cascade 削除（residual 0）・test member 削除（`auth users`→0）・4 table 全 0 行を確認。
+        `tsc`/`lint`/`build`・secret scan clean・**コード変更なし**。
+      - **残課題**: ① 実ブラウザ操作 E2E（Playwright 等の導入）② host start 促し ③ lobby rate limit
+        ④ 完全ランダムマッチ（`career_gd_match_queue`）⑤ Realtime（Phase3）。
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

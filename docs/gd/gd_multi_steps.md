@@ -211,3 +211,39 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   2. host が start しない問題への促し UI。
   3. lobby/create・join の rate limit（現状なし・本番前に per-user/KV 検討）。
   4. 将来の完全ランダムマッチ（`career_gd_match_queue`）。
+
+- **STEP-GD-20-G（member ログイン E2E QA・本節）**:
+  - **前提更新**: 運用者により **正しい Supabase project ref `bhhmvupzcxoaonrowikg`** が確定。この project では
+    **20-A DDL 適用済み**（`career_gd_rooms.room_type`/`join_policy` 列・公開一覧 index・同一 host 乱立防止 部分 UNIQUE・
+    RPC `career_gd_lobby_join` すべて到達可能）。20-D 時点の「未適用」は誤った project を指していたための結果であり、本 STEP で解消。
+  - **テスト member 準備**: 直近 20-G で `auth users = 0` によりブロックされていた member ログイン必須 E2E を実施するため、
+    service_role で **email_confirm 済みテスト member を 4 名作成**（email / user_id / password / JWT / cookie は一切ログ出力せず・
+    報告は member_count のみ）。E2E 完走後に **全員 service_role で削除**（`auth users` は 0→4→0 に復帰）。
+  - **member ログイン → HTTP**: 未ログインで `GET /lobby/rooms` = 401 `LOGIN_REQUIRED`、member session cookie 付与で 200。
+    session が route handler（`getServerSupabaseClient().auth.getUser()`）まで到達することを確認（token/cookie 値は非出力）。
+  - **公開ロビー HTTP QA（31 checks PASS）**: create 成功 / 同一 host 再 create = `reused:true`（同一 roomId）/
+    一覧は `public_lobby` のみ・invite room 混入なし / invite room への `lobby/join` = 404（存在秘匿）/ join 成功 /
+    冪等 join（人数不変）/ 満員時 409 `ROOM_FULL` / **同時 join で定員超過しない**（planned=3 に 3 並列 join → 2 成功・1×409・最終 3 名）/
+    レスポンスに `join_code_hash`/`host_user_id`/`user_id`/email/JWT/`pub_` hash なし。
+  - **room 進行 QA（34 checks PASS）**: 非 host start = 403 `NOT_HOST` / host start = active・theme 確定 /
+    **2〜3 人開始 → AI 補完あり（planned4・humans2 → AI2）** / **4 人開始 → AI 補完なし（AI0）** /
+    `career_gd_post_message` の seq サーバ採番（poster 跨ぎで単調 +1）/ 同一 `clientMsgId` は冪等（同一 seq・二重計上なし・seq 欠番なし）/
+    finish（非 host 403・host finished・二重 finish 冪等）/ **result 生成（AI 6 軸＋overallScore＋ranking）** /
+    `career_gd_room_results` に DB 保存を確認 / result 再呼び出し冪等。
+  - **履歴**: `careerGdRoomLogs` は **localStorage canonical（client 側）**で、result 後にクライアントが保存し `/career/gd/view` の
+    `MultiGdHistorySection` が表示する設計。E2E では **durable mirror `career_gd_room_results` の DB 保存を確認**（localStorage/view の
+    実描画はブラウザ依存のため下記 UI 注記参照）。
+  - **既存合言葉 room 回帰（14 checks PASS）**: legacy `room/create`（6 桁 joinCode 返却）/ 誤コード 404 / code join / 冪等 join /
+    start（AI 補完）/ message（seq 単調）/ finish / result 生成・DB 保存。**public_lobby と invite の分離維持**
+    （invite room は lobby 一覧・`lobby/join` に出ない）。
+  - **UI**: `/career/gd`・`/career/gd/lobby`・`/career/gd/view` は member session で **HTTP 200 render（error page なし）**。
+    lobby UI コードに 作成フォーム / 10 秒ポーリング（`POLL_INTERVAL_MS=10_000`）/ 作成・参加後の `router.push(redirectTo)` で
+    `/career/gd/room/[roomId]` 遷移 / `isMine`・`isJoined`・`isFull`（満員 disabled）/ 空状態導線 / `role="alert"` エラー表示 /
+    公開項目（`LobbyRoomSummary`）のみ描画（秘匿列なし）を確認。room 詳細は 3 秒ポーリング。
+    **⚠ 実ブラウザでの操作 E2E（クリック/画面遷移の実描画）はヘッドレスブラウザ（Playwright 等）が環境に無いため未実行**。
+    上記は HTTP レベル（UI が呼ぶ API 契約を実 session で全通過）＋ページ render 200 ＋ UI コードレビューによる代替検証。
+  - **cleanup**: 作成した test room / participants / messages / results を service_role で **cascade 削除（residual 0）**、
+    test member 4 名削除（`auth users → 0`）、`career_gd_rooms` 等 4 table は全 0 行の想定状態を確認。
+  - **static**: `tsc --noEmit` / `eslint` / `next build` clean・secret leak scan clean・**コード変更なし**。
+  - **残課題（本 STEP 非対象）**: ① 実ブラウザ操作 E2E（Playwright 等の導入）② host start 促し UI
+     ③ lobby/create・join の rate limit ④ 完全ランダムマッチ（`career_gd_match_queue`）⑤ Realtime（Phase3）。
