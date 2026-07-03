@@ -13,13 +13,18 @@ import { useAuthStatus, useIsMember } from '@/app/components/AuthProvider';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { GD_FORMAT_LABELS, GD_FORMAT_DESCRIPTIONS } from '../../gdRoles';
 import type { CareerGdRoomCreateResponse, GdFormat } from '@/types/careerGd';
+import {
+  CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
+  DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+} from '@/lib/careerGd/participantCount';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
 const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
-const COUNT_OPTIONS = [3, 4, 5, 6];
+// 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
+const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
 const TIME_OPTIONS = [
   { sec: 600, label: '10分' },
   { sec: 900, label: '15分' },
@@ -37,7 +42,9 @@ export default function CareerGdRoomCreatePage() {
   const isMember = useIsMember();
 
   const [format, setFormat] = useState<GdFormat>('free');
-  const [participantCount, setParticipantCount] = useState(4);
+  const [participantCount, setParticipantCount] = useState<number>(
+    DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+  );
   const [timeLimitSec, setTimeLimitSec] = useState(900);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -211,14 +218,14 @@ export default function CareerGdRoomCreatePage() {
       </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">予定人数（自分を含む）</p>
-        <div className="grid grid-cols-4 gap-3">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">参加人数（自分を含む）</p>
+        <div className="grid grid-cols-3 gap-3">
           {COUNT_OPTIONS.map((c) => (
             <Chip key={c} label={`${c}人`} active={participantCount === c} onClick={() => setParticipantCount(c)} />
           ))}
         </div>
         <p className="mt-3 text-xs text-slate-500 leading-relaxed">
-          集まった人数が予定に満たない場合、開始時に不足分をAIが補完します。
+          実際の参加者が足りない場合は、開始時にAIメンバーが自動で補完します。
         </p>
       </Card>
 

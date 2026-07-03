@@ -1,8 +1,8 @@
 // PASSAI 就活版 — GD 公開ロビー 実ブラウザ E2E（STEP-GD-20-H）。
 // 実際のクリック/遷移/polling/満員/開始/発言/終了/評価/履歴までブラウザで検証する。
 // 秘密（token/cookie/email）は扱わず、storageState 経由でログイン済み context を使う。
-import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import { memberContext, recordRoom, roomIdFromUrl } from './helpers';
+import { test, expect } from '@playwright/test';
+import { memberContext, roomIdFromUrl, createPublicRoom, lobbyCard as card } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -10,25 +10,6 @@ test.describe.configure({ mode: 'serial' });
 let hostRoomId = '';
 let pollRoomId = '';
 let fullRoomId = '';
-
-// ── 共通操作 ─────────────────────────────────────────────
-async function createPublicRoom(page: Page, plannedCount: number, hostName: string): Promise<string> {
-  await page.goto('/career/gd/lobby');
-  const createBtn = page.getByRole('button', { name: '公開ルームを作成', exact: true });
-  await expect(createBtn).toBeVisible();
-  await page.selectOption('#gd-lobby-count', String(plannedCount));
-  await page.fill('#gd-lobby-name', hostName);
-  await createBtn.click();
-  await page.waitForURL(/\/career\/gd\/room\/[0-9a-f-]{36}$/i);
-  const id = roomIdFromUrl(page.url());
-  expect(id).not.toBe('');
-  recordRoom(id);
-  return id;
-}
-
-function card(page: Page, roomId: string) {
-  return page.locator(`[data-room-id="${roomId}"]`);
-}
 
 test.describe('GD public lobby browser E2E', () => {
   // ─────────────── A. ページ render ───────────────
@@ -152,31 +133,40 @@ test.describe('GD public lobby browser E2E', () => {
     }
   });
 
-  // ─────────────── E. 満員 disabled ───────────────
-  test('E. 満員room は参加ボタンが disabled で満員表示', async ({ browser }) => {
-    const host = await memberContext(browser, 1); // FullRoom host (planned=2)
-    const filler = await memberContext(browser, 2); // 参加して満員に
-    const late = await memberContext(browser, 3); // 満員後に一覧を見る
+  // ─────────────── E. 満員 disabled（planned=4・最小人数） ───────────────
+  // 最小人数が 4 になったため、満員(4/4)を作るには 4 人参加＋観測者 1 人が必要。
+  test('E. 満員room(4人) は参加ボタンが disabled で満員表示', async ({ browser }) => {
+    const host = await memberContext(browser, 1); // FullRoom host (planned=4) => 1 human
+    const j2 = await memberContext(browser, 2);
+    const j3 = await memberContext(browser, 3);
+    const j4 = await memberContext(browser, 4);
+    const late = await memberContext(browser, 5); // 満員後に一覧を見る未参加観測者
     try {
-      fullRoomId = await createPublicRoom(host.page, 2, 'FullHost');
+      fullRoomId = await createPublicRoom(host.page, 4, 'FullHost');
 
-      await filler.page.goto('/career/gd/lobby');
-      const fc = card(filler.page, fullRoomId);
-      await expect(fc).toHaveAttribute('data-full', 'false');
-      await fc.getByRole('button', { name: '参加する' }).click();
-      await filler.page.waitForURL(`**/career/gd/room/${fullRoomId}`);
+      // host 含め 4 人になるよう 3 人参加させて満員(4/4)にする。
+      for (const j of [j2, j3, j4]) {
+        await j.page.goto('/career/gd/lobby');
+        const c = card(j.page, fullRoomId);
+        await expect(c).toBeVisible();
+        await c.getByRole('button', { name: '参加する' }).click();
+        await j.page.waitForURL(`**/career/gd/room/${fullRoomId}`);
+      }
 
-      // 満員後、別memberの一覧では満員表示＆disabled。
+      // 満員後、未参加memberの一覧では満員表示＆disabled。
       await late.page.goto('/career/gd/lobby');
       const lc = card(late.page, fullRoomId);
       await expect(lc).toHaveAttribute('data-full', 'true');
-      await expect(lc).toHaveAttribute('data-count', '2');
+      await expect(lc).toHaveAttribute('data-count', '4');
       const fullBtn = lc.getByRole('button', { name: '満員' });
       await expect(fullBtn).toBeVisible();
       await expect(fullBtn).toBeDisabled();
     } finally {
       await host.context.close();
-      await filler.context.close();
+      await j2.context.close();
+      await j3.context.close();
+      await j4.context.close();
+      await late.context.close();
       await late.context.close();
     }
   });

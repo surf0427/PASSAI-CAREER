@@ -286,3 +286,39 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   - **残課題**: ① host start 促し UI ② lobby/create・join の rate limit ③ 完全ランダムマッチ（`career_gd_match_queue`）
      ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/owner-select RLS 整理の要否確認。
      （20-G 残課題①「実ブラウザ操作 E2E」は本 STEP で **完了**。）
+
+- **STEP-GD-20-I（GD 参加人数を 4/6/8 の 3 択固定・本節）**:
+  - **目的**: GD の参加人数仕様を、全モード共通で **4 / 6 / 8 の 3 択のみ**に固定する（将来のランダムマッチでも共通化）。
+  - **仕様**:
+    - ソロ: 自分 1 人 + AI で planned まで補完（AI = planned − 1）。
+    - フレンド/合言葉: room capacity = planned。開始時に人間不足分を AI 補完。
+    - 公開ロビー: 作成時に 4/6/8 を選択。参加上限 = planned。開始時に不足分 AI 補完。
+    - ランダムマッチ: 本 STEP では本体未実装。将来 **人数別キュー**（4/6/8）に分ける前提で型/定数/TODO のみ用意。
+  - **正本（single source of truth）**: [`lib/careerGd/participantCount.ts`](../../lib/careerGd/participantCount.ts)。
+    `CAREER_GD_ALLOWED_PARTICIPANT_COUNTS = [4,6,8]`、`CareerGdParticipantCount` 型、`isCareerGdParticipantCount` 型ガード、
+    `DEFAULT_CAREER_GD_PARTICIPANT_COUNT = 4`、`parseParticipantCount`（未指定→既定4 / 指定不正→拒否・**silently fallback しない**）、
+    `coerceParticipantCount`（表示用）、`CAREER_GD_MATCH_QUEUE_KEY`（将来の人数別キュー・TODO）。**UI/API/DB/テストは本定数を参照（重複定義禁止）**。
+  - **DB**: `career_gd_rooms.planned_participant_count` の CHECK を `BETWEEN 2 AND 8` → **`IN (4,6,8)`** に変更。
+    - [`supabase/career_gd_multi_apply.sql`](../../supabase/career_gd_multi_apply.sql)（新規適用の正本）を更新。
+    - 既存 DB 反映用に **idempotent 増分** [`supabase/career_gd_participant_count_apply.sql`](../../supabase/career_gd_participant_count_apply.sql) を新設。
+      **既存に 4/6/8 以外の行があれば自動で丸めず RAISE EXCEPTION で停止**し手動修正を促す（テーブル未作成なら NOTICE でスキップ）。
+    - ※ `career_gd_*` は `supabase/schema.sql` には無く apply SQL が正本（schema.sql への反映は不要）。
+    - ※ **DB DDL は運用者が Supabase 上で適用**（20-A と同様。JS client では DDL 実行不可・QA harness に DB 資格情報なし）。
+      アプリ層の 400 バリデーションが UI 改ざんに対する主要防御で、DB CHECK は defense-in-depth（本 QA で API 400 を検証済み）。
+  - **API バリデーション**: `lib/careerGd/publicLobby.ts`（公開ロビー create）・`app/api/career/gd/room/create`（合言葉 create）で
+    4/6/8 以外を **400 `INVALID_COUNT`**。未指定は既定 4。`app/api/career/gd/theme` の人数解決も 4/6/8 準拠に整合。
+    start 時の AI 補完数は既存どおり `planned − 人間参加者`（`start` route・`buildAiRoomMembers` は元々 planned 依存で 6/8 も動作）。
+  - **UI**: 人数選択を **4人/6人/8人 の 3 択・既定 4** に統一（`app/career/gd/lobby`＝select、`app/career/gd/setup`＝ソロ Chip、
+    `app/career/gd/room/create`＝合言葉 Chip）。「実際の参加者が足りない場合は AI が補完」文言を明記。8 人でもレイアウト非破綻を E2E で確認。
+  - **AI 補完**: room 側（`aiMembers.ts`：persona 10 種）は元々 planned 依存で 4/6/8 対応。ソロ側の名前/スタイル候補を 8 人分（AI 最大 7）に拡張（`gdRoles.ts`）。
+    満員判定（`isFull`/`data-full`/`data-count`/`ROOM_FULL`/RPC `career_gd_lobby_join` の `v_human >= v_planned`）はすべて planned 基準で一致。
+  - **Playwright E2E（17/17 PASS・実ブラウザ）**: 4人フロー（A–G：create/join/polling/満員disabled/host start/AI補完/message/finish/result/history）＋
+    **6人**（create→上限/6→2人start→AI補完4→計6→result）＋**8人**（同→AI補完6→計8・roster/評価非破綻）＋
+    **API 不正値拒否**（3/5/7/9/10/文字列→400、4/6/8→200、未指定/null→既定4）＋**合言葉 8人**（作成→参加→start→AI補完6→計8→result）。
+  - **HTTP/API QA（25/25 PASS）**: 不正値 400（2/3/5/7/9/10/12/文字列）・有効値 200（4/6/8）・6人roomで5人join（>4・上限未達）・
+    8人roomで6人join→start で AI 補完2→計8・4人room満員時 5人目 409 `ROOM_FULL`・同時 join で定員超過なし（planned 基準）。
+  - **cleanup**: 作成した rooms/members/messages/results を service_role で削除（全 0）、テスト member（今回 6 名）削除（`auth users`→0）、
+    storageState/creds/manifest 削除。※満員(4人)の disabled を未参加者視点で観測するため、最小人数 4 に伴い **テスト member を 6 名**用意（4 名充填＋観測＋予備）。
+  - **static**: `tsc --noEmit`/`eslint`/`next build` clean・E2E 17/17・HTTP QA 25/25・secret leak scan clean。
+  - **残課題**: ① host start 促し UI ② lobby/create・join の rate limit ③ 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）
+     ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/RLS 整理の要否確認 ⑥ CI 用 Playwright browser setup（現状 system Chrome 依存）。

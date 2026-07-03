@@ -20,13 +20,18 @@ import {
   buildSoloParticipants,
 } from '../gdRoles';
 import { upsertGdSession } from '../gdStorage';
+import {
+  CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
+  DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+} from '@/lib/careerGd/participantCount';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
 const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
-const COUNT_OPTIONS = [3, 4, 5];
+// 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
+const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
 const TIME_OPTIONS = [
   { sec: 600, label: '10分' },
   { sec: 900, label: '15分' },
@@ -43,7 +48,9 @@ function newId(): string {
 export default function CareerGdSetupPage() {
   const router = useRouter();
   const [format, setFormat] = useState<GdFormat>('free');
-  const [participantCount, setParticipantCount] = useState(4);
+  const [participantCount, setParticipantCount] = useState<number>(
+    DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+  );
   const [timeLimitSec, setTimeLimitSec] = useState(900);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

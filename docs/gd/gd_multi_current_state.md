@@ -262,9 +262,17 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         **本番コード変更は非機能の data-* test hooks 2箇所のみ**（lobby RoomCard／room MembersCard・DOM 属性追加・挙動不変）。
         `tests/**` は tsc/eslint/build 除外・`test-results/`・`.e2e-tmp/` gitignore。cleanup で rooms4/members12/messages3/results4・
         test member4 を削除（全 table 0・auth users 0）・storageState/creds 削除。`tsc`/`lint`/`build` clean・E2E 10/10・secret scan clean。
-      - **残課題**: ① host start 促し ② lobby rate limit ③ 完全ランダムマッチ（`career_gd_match_queue`）
-        ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認。
-        （20-G 残課題「実ブラウザ操作 E2E」は 20-H で **完了**。）
+      - **20-I（参加人数 4/6/8 の 3 択固定・最新）**: GD 人数を全モード共通で **4/6/8 のみ**に固定。正本
+        [`lib/careerGd/participantCount.ts`](../../lib/careerGd/participantCount.ts)（定数/型/ガード/既定4/`parseParticipantCount`/将来の人数別キュー定数）を
+        UI/API/DB/テストが参照。**DB**: `career_gd_rooms_planned_count_chk` を `IN (4,6,8)` に（`career_gd_multi_apply.sql` 更新＋
+        idempotent 増分 `career_gd_participant_count_apply.sql`・既存不正値は丸めず RAISE で停止・**運用者適用**）。**API**: 公開ロビー/合言葉 create で
+        4/6/8 以外を 400 `INVALID_COUNT`・未指定は既定4。**UI**: lobby/setup/room-create を 4人/6人/8人 の 3 択・既定4。**AI 補完**: room 側は元々 planned 依存で
+        6/8 動作、ソロ側 AI 名/スタイルを 8 人分に拡張。満員判定・RPC `career_gd_lobby_join` は planned 基準で一致。
+        検証: **Playwright 17/17 PASS**（4人 A–G ＋ 6人 ＋ 8人 ＋ API不正値拒否 ＋ 合言葉8人）・**HTTP QA 25/25 PASS**（不正値400/有効200/6人5join/8人6join→AI補完2→計8/
+        満員409/同時join定員超過なし）。cleanup で全 table 0・auth users 0（テスト member は満員観測のため 6 名）。`tsc`/`lint`/`build`・secret scan clean。
+      - **残課題**: ① host start 促し ② lobby rate limit ③ 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）
+        ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認 ⑥ CI 用 Playwright browser setup。
+        （20-G「HTTP E2E」・20-H「実ブラウザ E2E」・20-I「人数 4/6/8 固定」は **完了**。）
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

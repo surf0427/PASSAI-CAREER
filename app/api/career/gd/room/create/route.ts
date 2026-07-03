@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
 import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
 import { generateSixDigitJoinCode, hashJoinCode } from '../roomCode';
+import { parseParticipantCount } from '@/lib/careerGd/participantCount';
 
 export const maxDuration = 30;
 
@@ -69,10 +70,12 @@ export async function POST(req: Request) {
   if (!format) {
     return jsonError('INVALID_FORMAT', '形式は free / case / abstract のいずれかにしてください。', 400);
   }
-  const plannedParticipantCount = Number(b.plannedParticipantCount);
-  if (!Number.isInteger(plannedParticipantCount) || plannedParticipantCount < 2 || plannedParticipantCount > 8) {
-    return jsonError('INVALID_COUNT', '予定人数は 2〜8 人にしてください。', 400);
+  // 参加人数は 4/6/8 のみ許可。未指定は既定 4、指定不正は 400（silently fallback しない）。
+  const parsedCount = parseParticipantCount(b.plannedParticipantCount);
+  if (!parsedCount.ok) {
+    return jsonError('INVALID_COUNT', '参加人数は 4人・6人・8人 のいずれかにしてください。', 400);
   }
+  const plannedParticipantCount = parsedCount.value;
   const timeLimitSec = Number(b.timeLimitSec);
   if (!Number.isFinite(timeLimitSec) || timeLimitSec < 300 || timeLimitSec > 1800) {
     return jsonError('INVALID_TIME', '制限時間は 300〜1800 秒にしてください。', 400);

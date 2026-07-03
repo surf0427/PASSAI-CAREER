@@ -27,9 +27,14 @@ import type {
   LobbyRoomsResponse,
   LobbyJoinResponse,
 } from '@/lib/careerGd/publicLobbyTypes';
+import {
+  CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
+  DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+} from '@/lib/careerGd/participantCount';
 
 const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
-const COUNT_OPTIONS = [2, 3, 4, 5, 6, 7, 8];
+// 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
+const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
 const TIME_OPTIONS = [
   { sec: 600, label: '10分' },
   { sec: 900, label: '15分' },
@@ -75,7 +80,9 @@ export default function CareerGdLobbyPage() {
 
   // ── 作成フォーム ──
   const [format, setFormat] = useState<GdFormat>('free');
-  const [plannedParticipantCount, setPlannedParticipantCount] = useState(4);
+  const [plannedParticipantCount, setPlannedParticipantCount] = useState<number>(
+    DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+  );
   const [timeLimitSec, setTimeLimitSec] = useState(900);
   const [displayName, setDisplayName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -233,7 +240,7 @@ export default function CareerGdLobbyPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="gd-lobby-count" className="block text-[11px] font-bold text-slate-500 mb-1.5">
-                予定人数
+                参加人数
               </label>
               <select
                 id="gd-lobby-count"
@@ -247,6 +254,9 @@ export default function CareerGdLobbyPage() {
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                実際の参加者が足りない場合は、AIメンバーが自動で補完されます。
+              </p>
             </div>
 
             <div>

@@ -61,8 +61,10 @@ CREATE TABLE IF NOT EXISTS career_gd_rooms (
     CHECK (status IN ('waiting', 'active', 'finished', 'cancelled')),
   CONSTRAINT career_gd_rooms_format_chk
     CHECK (format IN ('free', 'case', 'abstract')),
+  -- 参加人数は全モード共通で 4 / 6 / 8 の 3 択のみ（STEP-GD-20-I）。
+  -- 正本: lib/careerGd/participantCount.ts。既存 DB への反映は career_gd_participant_count_apply.sql。
   CONSTRAINT career_gd_rooms_planned_count_chk
-    CHECK (planned_participant_count BETWEEN 2 AND 8),
+    CHECK (planned_participant_count IN (4, 6, 8)),
   CONSTRAINT career_gd_rooms_time_limit_chk
     CHECK (time_limit_sec BETWEEN 300 AND 1800)
 );

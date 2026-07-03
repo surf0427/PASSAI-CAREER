@@ -13,6 +13,7 @@ import {
   buildThemeUser,
   parseThemeJson,
 } from '../gdPrompt';
+import { coerceParticipantCount } from '@/lib/careerGd/participantCount';
 
 export const maxDuration = 80;
 
@@ -20,10 +21,9 @@ function resolveFormat(value: unknown): GdFormat {
   return value === 'case' || value === 'abstract' ? value : 'free';
 }
 
+// テーマ生成プロンプト用の参加人数（4/6/8・不正は既定 4）。UI 表示・検証は各 create route が担う。
 function resolveCount(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return 4;
-  return Math.min(6, Math.max(3, Math.round(n)));
+  return coerceParticipantCount(value);
 }
 
 function resolveTimeLimit(value: unknown): number {

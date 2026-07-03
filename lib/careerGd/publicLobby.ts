@@ -10,15 +10,18 @@
 import 'server-only';
 import type { GdFormat } from '@/types/careerGd';
 import { isUndefinedTable } from '@/app/api/career/gd/room/roomAuth';
+import {
+  DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
+  parseParticipantCount,
+} from '@/lib/careerGd/participantCount';
 
 // ── 定数（MVP 固定値） ────────────────────────────────────────
 export const PUBLIC_ROOM_TYPE = 'public_lobby' as const;
 export const PUBLIC_JOIN_POLICY = 'public' as const;
 export const DEFAULT_FORMAT: GdFormat = 'free';
-export const DEFAULT_PLANNED_COUNT = 4;
+// 参加人数の正本は lib/careerGd/participantCount.ts（4/6/8）。ここでは既定値のみ再エクスポート。
+export const DEFAULT_PLANNED_COUNT = DEFAULT_CAREER_GD_PARTICIPANT_COUNT;
 export const DEFAULT_TIME_LIMIT_SEC = 900;
-export const MIN_PLANNED_COUNT = 2;
-export const MAX_PLANNED_COUNT = 8;
 export const MIN_TIME_LIMIT_SEC = 300;
 export const MAX_TIME_LIMIT_SEC = 1800;
 export const LOBBY_LIST_LIMIT = 50;
@@ -107,17 +110,15 @@ export function parseCreateInput(body: unknown): ParsedCreateInput {
 
   const format = FORMATS.includes(b.format as GdFormat) ? (b.format as GdFormat) : DEFAULT_FORMAT;
 
-  let plannedParticipantCount = DEFAULT_PLANNED_COUNT;
-  if (b.plannedParticipantCount !== undefined) {
-    const n = Number(b.plannedParticipantCount);
-    if (!Number.isInteger(n) || n < MIN_PLANNED_COUNT || n > MAX_PLANNED_COUNT) {
-      return {
-        ok: false,
-        response: jsonError('INVALID_COUNT', '予定人数は 2〜8 人にしてください。', 400),
-      };
-    }
-    plannedParticipantCount = n;
+  // 参加人数は 4/6/8 のみ許可。未指定は既定 4、指定不正は 400（silently fallback しない）。
+  const parsedCount = parseParticipantCount(b.plannedParticipantCount);
+  if (!parsedCount.ok) {
+    return {
+      ok: false,
+      response: jsonError('INVALID_COUNT', '参加人数は 4人・6人・8人 のいずれかにしてください。', 400),
+    };
   }
+  const plannedParticipantCount = parsedCount.value;
 
   let timeLimitSec = DEFAULT_TIME_LIMIT_SEC;
   if (b.timeLimitSec !== undefined) {

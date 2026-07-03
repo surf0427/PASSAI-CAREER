@@ -132,9 +132,9 @@ export function assignRoles(
 
 // ── AI 補完参加者の生成 ───────────────────────────────────────────
 
-// AI の発言スタイル候補（多様性を出すために分散させる）。
-const AI_STYLES = ['論理型', '共感型', 'アイデア発散型', '慎重型', '推進型'];
-const AI_NAMES = ['AI・さくら', 'AI・りく', 'AI・みなと', 'AI・ひなた', 'AI・あおい'];
+// AI の発言スタイル候補（多様性を出すために分散させる）。8人GD（AI最大7人）まで賄えるよう用意。
+const AI_STYLES = ['論理型', '共感型', 'アイデア発散型', '慎重型', '推進型', 'データ重視型', '批判検証型', '協調型'];
+const AI_NAMES = ['AI・さくら', 'AI・りく', 'AI・みなと', 'AI・ひなた', 'AI・あおい', 'AI・つむぎ', 'AI・はると', 'AI・ゆい'];
 
 function newId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

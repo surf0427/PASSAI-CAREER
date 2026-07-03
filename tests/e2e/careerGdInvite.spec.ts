@@ -74,4 +74,53 @@ test.describe('GD invite (合言葉) room regression', () => {
       await looker.context.close();
     }
   });
+
+  // 合言葉 room でも 4/6/8 が選べる。8人で start → AI 補完(6) → 計8 → result まで確認。
+  test('I. 合言葉 8人room: create(8人) → 参加 → start → AI補完6→計8 → result', async ({ browser }) => {
+    const host = await memberContext(browser, 0);
+    const joiner = await memberContext(browser, 1);
+    try {
+      await host.page.goto('/career/gd/room/create');
+      // 参加人数チップで 8人 を選択して作成。
+      await host.page.getByRole('button', { name: '8人', exact: true }).click();
+      await host.page.getByRole('button', { name: 'ルームを作成 →' }).click();
+      await expect(host.page.getByText('参加コード（合言葉）')).toBeVisible();
+      // 設定サマリに 8人 が反映されている。
+      await expect(host.page.getByText('8人')).toBeVisible();
+      const code = (await host.page.locator('p.select-all').innerText()).trim();
+      expect(code).toMatch(/^[0-9]{6}$/);
+
+      // 参加 → room 詳細。
+      await joiner.page.goto('/career/gd/room/join');
+      await joiner.page.fill('input[placeholder="000000"]', code);
+      await joiner.page.getByRole('button', { name: '参加する →' }).click();
+      await joiner.page.waitForURL(/\/career\/gd\/room\/[0-9a-f-]{36}$/i);
+      const roomId = roomIdFromUrl(joiner.page.url());
+      expect(roomId).not.toBe('');
+      recordRoom(roomId);
+      await expect(joiner.page.getByText('参加者（2 / 8）')).toBeVisible();
+
+      // host start → AI 補完6 → 計8。
+      await host.page.goto(`/career/gd/room/${roomId}`);
+      await host.page.getByRole('button', { name: 'AIメンバーを補完して開始' }).click();
+      await expect(host.page.getByText('GD進行中')).toBeVisible({ timeout: 20_000 });
+      await expect(host.page.locator('[data-testid="gd-member-row"]')).toHaveCount(8);
+      await expect(host.page.locator('[data-testid="gd-member-row"][data-ai="true"]')).toHaveCount(6);
+
+      // message → finish → result。
+      const msg = 'E2E合言葉8人: 役割を分担して進めましょう。';
+      await host.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msg);
+      await host.page.getByRole('button', { name: '発言する' }).click();
+      await expect(host.page.getByText(msg)).toBeVisible();
+
+      host.page.once('dialog', (d) => d.accept());
+      await host.page.getByRole('button', { name: 'GDを終了する' }).click();
+      await expect(host.page.getByText('GDは終了しました')).toBeVisible({ timeout: 15_000 });
+      await host.page.getByRole('button', { name: '評価を見る' }).click();
+      await expect(host.page.getByRole('link', { name: 'GD履歴（結果一覧）を見る →' })).toBeVisible({ timeout: 70_000 });
+    } finally {
+      await host.context.close();
+      await joiner.context.close();
+    }
+  });
 });
