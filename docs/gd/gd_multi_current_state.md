@@ -253,8 +253,18 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         **⚠ 実ブラウザ操作 E2E はヘッドレスブラウザ不在で未実行**（HTTP＋render＋コードレビューで代替）。
         cleanup で test room/members/messages/results を cascade 削除（residual 0）・test member 削除（`auth users`→0）・4 table 全 0 行を確認。
         `tsc`/`lint`/`build`・secret scan clean・**コード変更なし**。
-      - **残課題**: ① 実ブラウザ操作 E2E（Playwright 等の導入）② host start 促し ③ lobby rate limit
-        ④ 完全ランダムマッチ（`career_gd_match_queue`）⑤ Realtime（Phase3）。
+      - **20-H（公開ロビー 実ブラウザ E2E・最新）**: **Playwright（`@playwright/test` 1.61.1）＋ システム Chrome
+        `channel:'chrome'` headless**（browser バイナリDLは環境制約で不可）で公開ロビーを実操作。テスト member の storageState
+        （auth cookie・秘密は tracked 非混入）で認証し、**10/10 PASS**：render / 作成→room遷移 / reused / 一覧→参加 /
+        isMine·isJoined ボタン切替 / **lobby 10秒auto-poll の人数更新** / **満員ボタン disabled** / 非host開始不可・host start＝active＋theme＋
+        **AI補完2/総勢4** / 発言→表示・**他member発言が3秒polling反映**・finish・**AI評価描画**・`/career/gd/view` 履歴表示 /
+        **合言葉回帰**（誤コード拒否・invite は公開ロビー非表示・start/message/finish/result）。実行中 `career_gd_room_results` 4行 persist を確認。
+        **本番コード変更は非機能の data-* test hooks 2箇所のみ**（lobby RoomCard／room MembersCard・DOM 属性追加・挙動不変）。
+        `tests/**` は tsc/eslint/build 除外・`test-results/`・`.e2e-tmp/` gitignore。cleanup で rooms4/members12/messages3/results4・
+        test member4 を削除（全 table 0・auth users 0）・storageState/creds 削除。`tsc`/`lint`/`build` clean・E2E 10/10・secret scan clean。
+      - **残課題**: ① host start 促し ② lobby rate limit ③ 完全ランダムマッチ（`career_gd_match_queue`）
+        ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認。
+        （20-G 残課題「実ブラウザ操作 E2E」は 20-H で **完了**。）
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

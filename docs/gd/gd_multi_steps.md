@@ -247,3 +247,42 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   - **static**: `tsc --noEmit` / `eslint` / `next build` clean・secret leak scan clean・**コード変更なし**。
   - **残課題（本 STEP 非対象）**: ① 実ブラウザ操作 E2E（Playwright 等の導入）② host start 促し UI
      ③ lobby/create・join の rate limit ④ 完全ランダムマッチ（`career_gd_match_queue`）⑤ Realtime（Phase3）。
+
+- **STEP-GD-20-H（公開ロビー 実ブラウザ E2E・本節）**:
+  - **目的**: 20-G で HTTP レベル完走済みの公開ロビーを **Playwright で実ブラウザ操作**し、クリック/遷移/満員表示/
+    エラー表示/polling 反映まで UI で確認する（20-G 残課題①の解消）。
+  - **実行環境**: `@playwright/test` 1.61.1。Playwright の browser バイナリDLは環境制約（CDN throttled）で不可のため、
+    **システム Google Chrome を `channel:'chrome'`（headless）で駆動**。サーバは `next start -p 3111`。認証はテスト member の
+    **storageState（Supabase auth cookie）**で行い、token/cookie/email/password/user_id は一切ログ出力・tracked files 非混入。
+  - **導入（最小テスト設定）**: devDependency `@playwright/test`、`playwright.config.ts`、`tests/e2e/`。`tests/**` は
+    tsc/eslint/Next build から除外（Playwright 独自 TS 解決）。`test-results/` `.e2e-tmp/` 等を `.gitignore`。
+  - **本番コード変更（最小・非機能）**: 実ブラウザで特定 room を一意特定し live 状態を assert するための **data-* test hooks** を
+    2 箇所追加。① `app/career/gd/lobby/page.tsx` の RoomCard 内 div に `data-room-id`/`data-count`/`data-full`/`data-mine`/`data-joined`、
+    ② `app/career/gd/room/[roomId]/page.tsx` の MembersCard の `<li>` に `data-testid="gd-member-row"`/`data-ai`。
+    **理由**: ロビーは多カード・満員・人数が動的で text-scoping が不安定なため。**影響**: DOM 属性追加のみで
+    レンダリング・挙動・スタイルは不変（Card コンポーネントは props を spread しないため内側 div に付与）。
+  - **検証結果（10/10 PASS・実ブラウザ）**:
+    - **A render**: `/career/gd`・`/career/gd/lobby`・`/career/gd/view` が 200・error page なし・主要UI表示。
+    - **B create**: UI から公開room作成 → `/career/gd/room/{id}` へ遷移、`参加者（1 / 4）`・ホストバッジ・`参加受付中` 表示。
+    - **B2 reused**: 同一 host の再作成が既存 room（同一 id）へ復帰。
+    - **C join**: 別 member が一覧で room を見て（`data-mine=false`/`data-joined=false`）参加ボタン → room 詳細（`参加者（2 / 4）`）。
+    - **C2 states**: `isJoined` → 「ルームへ戻る」、`isMine` → 「自分のルームへ戻る」リンクに切替（破綻なし）。
+    - **D polling**: lobby は **10 秒 auto-poll** でカード人数が 1→2 に更新（リロード無し）。waiting 詳細は「更新」ボタンで反映
+      （waiting は auto-poll なし・設計どおり）。active の **3 秒 auto-poll は G で検証**。
+    - **E full**: planned=2 を満員化 → 別 member の一覧で `data-full=true`・`data-count=2`・**「満員」ボタン disabled**。
+    - **F start**: 非 host は開始ボタンなし（「ホストの開始を待っています」）、host start → `GD進行中`・theme 確定（プレースホルダ消滅）・
+      **AI 補完 2・総勢 4**（`data-ai=true` 行が 2）。
+    - **G message/finish/result/history**: 発言送信 → 自画面表示、他 member の発言が **3 秒 polling** で反映、finish（confirm accept）
+      → `GDは終了しました`、**評価生成（AI）→ GdEvaluationDetail ＋「GD履歴（結果一覧）を見る」**、`/career/gd/view` に
+      「ルームGD（マルチ）の履歴」表示（localStorage canonical・空状態でない）。
+    - **H invite 回帰**: 合言葉作成 → **誤コード拒否** → 正コード参加（room 詳細遷移）→ **invite room は公開ロビーに出ない**
+      （`data-room-id` カード 0 件）→ start/AI補完/message/finish/result。
+  - **実ブラウザで確認できた範囲（HTTP でなく）**: 実 DOM・クリック・画面遷移・フォーム入力・`select`/textarea 操作・
+    auto-poll による無リロード更新・disabled 状態・`window.confirm` ダイアログ・AI 評価描画・localStorage 履歴表示。
+  - **DB**: 実行中に `career_gd_room_results` へ 4 行（HostMain 2＋invite 2）persist を確認（durable mirror）。
+  - **cleanup**: 作成した rooms 4 / members 12 / messages 3 / results 4 と test member 4 名を service_role で削除
+    （全 table 0・auth users 0）、storageState / creds / manifest ファイルを削除。
+  - **static**: `tsc --noEmit` / `eslint` / `next build` clean・E2E **10/10 PASS**・secret leak scan clean。
+  - **残課題**: ① host start 促し UI ② lobby/create・join の rate limit ③ 完全ランダムマッチ（`career_gd_match_queue`）
+     ④ Realtime（Phase3）⑤ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/owner-select RLS 整理の要否確認。
+     （20-G 残課題①「実ブラウザ操作 E2E」は本 STEP で **完了**。）

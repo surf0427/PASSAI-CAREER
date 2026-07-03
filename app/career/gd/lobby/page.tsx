@@ -383,7 +383,16 @@ function RoomCard({
 
   return (
     <Card padding="md">
-      <div className="flex items-start justify-between gap-3">
+      <div
+        className="flex items-start justify-between gap-3"
+        // E2E test hooks (STEP-GD-20-H): non-functional attributes for Playwright
+        // to locate a specific room card and assert its live state. No behavior change.
+        data-room-id={room.roomId}
+        data-count={room.currentHumanCount}
+        data-full={String(room.isFull)}
+        data-mine={String(room.isMine)}
+        data-joined={String(room.isJoined)}
+      >
         <div className="min-w-0">
           <p className="text-sm font-bold text-slate-900">{GD_FORMAT_LABELS[room.format]}</p>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">

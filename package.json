@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:e2e": "playwright test",
     "qa:step15": "npx tsx scripts/step15-qa.ts",
     "qa:step15:dry": "npx tsx scripts/step15-qa.ts --dry",
     "qa:applicantType": "npx tsx scripts/step-applicant-type-qa.ts",
@@ -34,6 +35,7 @@
     "undici": "^8.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

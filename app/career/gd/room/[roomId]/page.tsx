@@ -684,7 +684,8 @@ function MembersCard({
       </p>
       <ul className="flex flex-col gap-2.5">
         {members.map((m) => (
-          <li key={m.id} className="text-sm">
+          // E2E test hook (STEP-GD-20-H): non-functional attrs for Playwright roster assertions.
+          <li key={m.id} className="text-sm" data-testid="gd-member-row" data-ai={String(m.isAi)}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold text-slate-800">{m.displayName}</span>
               {m.isHost && (
