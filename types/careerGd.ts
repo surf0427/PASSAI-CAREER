@@ -336,6 +336,28 @@ export type CareerGdRoomLog = {
   consultationSummary: string; // 相談AI 連携用の圧縮サマリー（overall_summary 由来）
 };
 
+// GD 結果履歴 hydrate（GET /api/career/gd/room/results）の 1 件。
+// 本人が参加した room の「自分ぶん」の結果のみ。PII（user_id/email/join_code_hash）は含めない。
+export type CareerGdRoomResultHistoryItem = {
+  roomId: string;
+  resultId: string;
+  roomType: 'public_lobby' | 'invite' | 'random_match' | 'unknown';
+  theme: string | null;
+  format: GdFormat;
+  participantCount: number; // 人間＋AI
+  humanParticipantCount: number;
+  aiParticipantCount: number;
+  createdAt: string;
+  durationSec: number;
+  participantId: string; // 本人の participant_id（ranking 強調用）
+  evaluation: CareerGdEvaluation; // 本人の 6 軸評価
+  ranking: CareerGdRankingEntry[]; // 参加者内スコア順（共有）
+  matchingHints: CareerGdMatchingHints; // 本人ぶん
+  consultationSummary: string; // overall_summary 由来
+};
+
+export type CareerGdRoomResultsResponse = { results: CareerGdRoomResultHistoryItem[] };
+
 // 完了結果 1 件（localStorage: 'careerGdResults'）。
 export type CareerGdResult = {
   id: string; // = session.id

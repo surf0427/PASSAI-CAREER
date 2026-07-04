@@ -284,9 +284,17 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         ボタン永久 disabled にならない）。util `lib/rateLimit/`（将来 ES/面接/プレゼン再利用可）。検証: **unit 19/19**（`npm run qa:rateLimit`）・**HTTP QA 17/17**
         （create/join 429・別member非影響・namespace 分離）・**Playwright @ratelimit 2/2**（UI 429 alert・満員と区別）・**回帰 Playwright 21/21＋counts QA 25/25**（bypass）。
         cleanup で全 table 0・auth users 0・rate limit test key は in-memory（サーバ停止で消滅）。`tsc`/`lint`/`build`・secret scan clean。
-      - **残課題**: ① 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認
-        ④ CI 用 Playwright browser setup ⑤ DB CHECK 4/6/8 の本番/preview 適用状況 ⑥ 必要なら invite rate limit チューニング ⑦ 将来的な Bot 対策/CAPTCHA。
-        （20-G/H/I/J に加え **20-K「lobby create/join rate limit」も完了**。）
+      - **20-L（GD 結果履歴 DB hydrate / SELECT・RLS 整理・最新）**: 別デバイス・再ログイン・localStorage 消失後でも
+        「**本人が参加した room の自分の結果だけ**」復元可能に。**owner-select RLS**（`auth.uid()=user_id`）＋`GRANT SELECT TO authenticated`
+        （[`career_gd_results_hydrate_apply.sql`](../../supabase/career_gd_results_hydrate_apply.sql)・idempotent・運用者適用・本 project は適用済み確認）。
+        取得は新規 **server route `GET /api/career/gd/room/results`**（member 必須・`user_id=session` をサーバ強制・theme/人数を join・**RLS 未適用でも動作**・PII 非返却）。
+        client は route→`CareerGdRoomLog` 正規化→ `mergeGdRoomLogs`（roomId 重複排除・local 優先・merge only・DB 失敗でも LS 維持）。UI（`MultiGdHistorySection`）は
+        loading/「別デバイス保存分も表示中」/失敗時の控えめ警告を表示。**owner-scoped 採用理由**: member-scoped は共有 room の他人 self_feedback が読めてしまい厳守事項に反するため。
+        検証: **security/API 18/18**（A/B/C の自分のみ・他人不可視・401・PII非混入・共有room人数）・**Playwright @hydrate 4/4**（別デバイス復元/他人不可視/重複なし/DB失敗fallback）・
+        **回帰 21/21＋@ratelimit 2/2＋counts 25/25＋rate unit 19/19**。cleanup で全 table 0・auth users 0。`tsc`/`lint`/`build`・secret scan clean。
+      - **残課題**: ① 完全ランダムマッチ（`career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ CI 用 Playwright browser setup ④ DB CHECK 4/6/8 の本番/preview 適用状況
+        ⑤ Upstash Redis の本番/preview 設定状況 ⑥ room timeout / abandon cleanup ⑦ 将来的な Bot 対策/CAPTCHA。
+        （20-G/H/I/J/K に加え **20-L「結果履歴 DB hydrate / SELECT・RLS 整理」も完了**。）
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

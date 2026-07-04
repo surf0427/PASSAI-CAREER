@@ -389,3 +389,34 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   - **残課題**: ① 完全ランダムマッチ（`career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理
      ④ CI 用 Playwright browser setup ⑤ DB CHECK 4/6/8 の本番/preview 適用状況 ⑥ 必要なら invite rate limit のチューニング ⑦ 将来的な Bot 対策/CAPTCHA。
      （**lobby/create・join の rate limit は本 STEP で完了**。）
+
+- **STEP-GD-20-L（GD 結果履歴の DB hydrate / SELECT・RLS 整理・本節）**:
+  - **目的**: マルチGD 結果履歴を、**別デバイス・再ログイン・localStorage 消失後でも「ログイン本人が参加した room の自分の結果だけ」安全に復元**できるようにする。
+    方針は `localStorage canonical + authenticated DB durable mirror`（localStorage は即時表示 canonical・DB は復元用 mirror）。
+  - **RLS/GRANT 方針（owner-scoped・他人の結果は読ませない）**: [`supabase/career_gd_results_hydrate_apply.sql`](../../supabase/career_gd_results_hydrate_apply.sql)（idempotent・
+    `DROP POLICY IF EXISTS`→`CREATE`・運用者適用）。`career_gd_room_results` **のみ** に `GRANT SELECT ... TO authenticated`＋
+    **owner-select RLS** `USING (auth.uid() = user_id)`。anon は付与なし（42501 拒否）。service_role は従来どおり（RLS bypass）。
+    ※ 依頼例の member-scoped（EXISTS on career_gd_room_members）は**共有 room の他人 self_feedback（本人のみ表示の私的評価）が読めてしまい**、
+      厳守事項「他人のGD結果が読める状態にしない」に反するため採らず、**owner-scoped（自分の user_id 行のみ）**を採用。
+    ※ 本 project では **既に適用済み**を確認（authenticated 直 SELECT は自分の 2 行のみ返り他人ゼロ・anon は 42501）。
+  - **取得経路（server route 優先）**: 新規 [`GET /api/career/gd/room/results`](../../app/api/career/gd/room/results/route.ts)。member 必須（未ログイン 401）・
+    service_role ＋ **`user_id = session.user.id` をサーバ側で強制**（user_id は入力で受け取らない＝他人 result は取得不能）。
+    theme / room_type / 人間・AI 人数は `career_gd_rooms` / `career_gd_room_members` を join して補完。**RLS 未適用でも動作**（route は service_role）。
+    直 SELECT（方針A）用の [`lib/supabase/careerGdRoomResults.ts`](../../lib/supabase/careerGdRoomResults.ts) は RLS 適用済み環境向けの defense-in-depth として残置。
+  - **返却 shape**（PII 非返却）: `CareerGdRoomResultHistoryItem`（roomId/resultId/roomType/theme/format/participantCount/humanParticipantCount/
+    aiParticipantCount/createdAt/durationSec/participantId/evaluation/ranking/matchingHints/consultationSummary）。**user_id/email/join_code_hash/sender_user_id は返さない**。
+  - **merge 方針**: [`lib/careerGd/roomResultHistory.ts`](../../lib/careerGd/roomResultHistory.ts) が route を叩き `CareerGdRoomLog` に正規化 → 既存 `mergeGdRoomLogs`
+    で localStorage(`careerGdRoomLogs`) へ **merge only**（重複キー=**roomId**・両方あれば local 優先で richer 維持・DB のみは追加・新しい順）。DB 取得失敗でも localStorage は壊さない。未ログインは hydrate しない。never throw。
+  - **UI**: [`MultiGdHistorySection`](../../app/career/gd/MultiGdHistorySection.tsx) を route hydrate に切替。ログイン時に 1 回 hydrate、loading「保存済みのルームGD履歴を確認しています…」・
+    成功で「別デバイス保存分も表示中」バッジ・失敗は控えめに「オンライン履歴の取得に失敗しました。端末内の履歴のみ表示しています。」（画面全体は壊さない）。
+  - **RLS/security QA（18/18 PASS）**: seed（A 専用 / B 専用 / A+B 共有 / C 専用 room＋result）に対し、route で **A は自分の 2 件のみ（B/C 専用は不可視）**・
+    B も同様・C は自分のみ・未ログイン 401・返却に PII なし・共有 room の人数（humans=2/ai=1）正確。加えて **authenticated 直 SELECT は自分の行のみ・anon は 42501** を確認。
+  - **Playwright（@hydrate・4/4 PASS）** [`careerGdHydrate.spec.ts`](../../tests/e2e/careerGdHydrate.spec.ts): A) localStorage 無し＋DB あり → DB から復元・**他人 room 不可視**・同期バッジ／
+    B) 別 member は自分の履歴のみ／C) 同一 roomId が local にもある状態で **重複表示なし**／D) results API を 500 に固定 → **localStorage 履歴は表示継続＋控えめ警告**。
+  - **既存回帰**: 非 @ratelimit/@hydrate の Playwright **21/21 PASS**・@ratelimit **2/2**・HTTP counts QA **25/25**・rate limit unit **19/19**（結果生成/合言葉/4-6-8/rate limit/host prompt 全て非破壊）。
+  - **cleanup**: seed 含む rooms/members/messages/results と test member（6 名）削除（全 table 0・auth users 0）・storageState/creds/hydrate-manifest 削除。
+    ※テスト harness の注意: RLS 直 SELECT 検証の `signOut` は **`scope:'local'`**（global だと他セッションの refresh token を revoke し storageState を壊すため）。
+  - **static**: `tsc --noEmit`/`eslint`/`next build` clean・security/API 18/18・@hydrate 4/4・回帰 21/21＋2/2＋25/25＋19/19・secret leak scan clean（user_id/join_code_hash/token 非混入）。
+  - **残課題**: ① 完全ランダムマッチ ② Realtime（Phase3）③ CI 用 Playwright browser setup ④ DB CHECK 4/6/8 の本番/preview 適用状況
+     ⑤ Upstash Redis の本番/preview 設定状況 ⑥ room timeout / abandon cleanup ⑦ 将来的な Bot 対策/CAPTCHA/abuse monitoring。
+     （**別デバイス hydrate 用 `career_gd_room_results` SELECT/RLS 整理は本 STEP で完了**。）

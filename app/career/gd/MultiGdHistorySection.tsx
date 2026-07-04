@@ -14,7 +14,7 @@ import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { GD_FORMAT_LABELS } from './gdRoles';
 import { GdEvaluationDetail, GD_GRADE_STYLE } from './GdEvaluationDetail';
 import { loadGdRoomLogs, removeGdRoomLog, mergeGdRoomLogs } from './gdRoomLogStorage';
-import { listCareerGdRoomResultsFromSupabase } from '@/lib/supabase/careerGdRoomResults';
+import { fetchCareerGdRoomResultHistory } from '@/lib/careerGd/roomResultHistory';
 import type { CareerGdRoomLog, GdCompanyGrade } from '@/types/careerGd';
 
 const subscribeMount = () => () => {};
@@ -55,24 +55,36 @@ export function MultiGdHistorySection() {
   const [scoreBand, setScoreBand] = useState<(typeof SCORE_BANDS)[number]['key']>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // STEP-GD-19: 初回表示時に 1 回だけ Supabase（durable mirror）から自分の結果を hydrate → merge。
-  // localStorage canonical は維持（merge only・local は消さない）。失敗は無視して localStorage 表示を継続。
+  // STEP-GD-20-L: 初回表示時に 1 回だけ DB（durable mirror）から自分の結果を hydrate → merge。
+  // GET /api/career/gd/room/results（session 必須・自分の結果のみ）。localStorage canonical は維持
+  // （merge only・local は消さない）。DB 取得失敗でも localStorage 表示を継続（控えめに警告）。未ログインは hydrate しない。
   const userId = useCurrentUserId();
   const [synced, setSynced] = useState(false);
+  const [hydrating, setHydrating] = useState(false);
+  const [hydrateError, setHydrateError] = useState(false);
   const hydrateRan = useRef(false);
   useEffect(() => {
     if (!isMounted || !userId || hydrateRan.current) return;
     hydrateRan.current = true; // 無限ループ・再取得を防ぐ（この session で 1 回だけ）。
     let cancelled = false;
+    setHydrating(true);
     void (async () => {
-      // listCareerGdRoomResultsFromSupabase は never throw（失敗時 []）。
-      const remote = await listCareerGdRoomResultsFromSupabase(userId);
-      if (cancelled || remote.length === 0) return;
-      const { added } = mergeGdRoomLogs(remote);
+      // fetchCareerGdRoomResultHistory は never throw（失敗時 { ok:false, logs:[] }）。
+      const { ok, logs: remote } = await fetchCareerGdRoomResultHistory();
       if (cancelled) return;
-      setSynced(true);
-      // 新規追加があったときだけ再読込（loadGdRoomLogs を version で読み直す）。
-      if (added > 0) setVersion((v) => v + 1);
+      if (!ok) {
+        setHydrateError(true);
+        setHydrating(false);
+        return;
+      }
+      if (remote.length > 0) {
+        const { added } = mergeGdRoomLogs(remote);
+        if (cancelled) return;
+        setSynced(true);
+        // 新規追加があったときだけ再読込（loadGdRoomLogs を version で読み直す）。
+        if (added > 0) setVersion((v) => v + 1);
+      }
+      setHydrating(false);
     })();
     return () => {
       cancelled = true;
@@ -115,22 +127,44 @@ export function MultiGdHistorySection() {
 
   if (logs.length === 0) {
     return (
-      <Card variant="soft" padding="md" className="mb-5">
+      <Card variant="soft" padding="md" className="mb-5" data-testid="gd-history-section">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">ルームGD（マルチ）の履歴</p>
-        <p className="text-sm text-slate-600">まだGD履歴がありません。</p>
+        {hydrating ? (
+          <p className="text-sm text-slate-500" data-testid="gd-history-hydrating">
+            保存済みのルームGD履歴を確認しています…
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-slate-600">まだGD履歴がありません。</p>
+            {hydrateError && (
+              <p className="mt-1 text-xs text-slate-400" role="status">
+                オンライン履歴の取得に失敗しました。端末内の履歴のみ表示しています。
+              </p>
+            )}
+          </>
+        )}
       </Card>
     );
   }
 
   return (
-    <div className="mb-6">
+    <div className="mb-6" data-testid="gd-history-section">
       {/* 統計 */}
       <Card variant="soft" padding="md" className="mb-4">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
           <p className="text-[11px] font-bold text-blue-700 tracking-widest">ルームGD（マルチ）の履歴</p>
           {synced && (
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-              クラウド同期済み
+            <span
+              className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+              data-testid="gd-history-synced"
+            >
+              別デバイス保存分も表示中
+            </span>
+          )}
+          {hydrating && <span className="text-[10px] text-slate-400">同期を確認中…</span>}
+          {hydrateError && (
+            <span className="text-[10px] text-slate-400" role="status">
+              オンライン履歴の取得に失敗（端末内のみ表示）
             </span>
           )}
         </div>
