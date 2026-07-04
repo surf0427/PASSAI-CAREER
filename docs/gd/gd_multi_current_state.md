@@ -311,12 +311,18 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         rate limit: enter 10/60s・30/3600s、status 60/60s・600/3600s、cancel 10/60s・30/3600s（超過 429）。
       - **UI**: 4/6/8 選択→参加→waiting（`waitingCount` 表示）＋キャンセル・5秒 polling（matched で `router.push`・離脱で cleanup・429 でも壊さない）・
         ソロGD導線。非機能 test hooks（`data-testid=gd-random-match-panel`/`data-phase`/`data-waiting-count`）。秘匿列は非表示。
-      - **QA**: **SQL/マッチングロジック（実 Postgres=PGlite・42/42）**＝4/6/8 満員成立=1room・全員同 roomId・AI補完早期成立・ソロ不成立・
-        **queue 分離（4↔6 別 room・相互不混入）**・冪等 enter・post-match 冪等・cancel/再enter・expired・**random room 非公開/hex 検索非該当**（真の並行競合は PGlite 単一接続のためロジック＋コードレビューで担保）。
-        **Live HTTP/API（`next start`・17/17）**＝未ログイン 401・不正人数 400 `INVALID_COUNT`・認証済み 503 `DB_NOT_APPLIED`・PII/token 非返却・test member 作成→削除（auth users 0）。
+      - **reconciliation（STEP-GD-21.1・実DB適用時）**: 先行適用された参照実装に **`career_gd_rooms.planned_count`（存在しない列）へ INSERT する致命バグ**が
+        あり room 生成が必ず失敗（4人 enter しても matched にならない）。加えて公開契約が異なった（`enter` 2引数・戻り値 camelCase・`expire_stale()` あり）。
+        → SQL を **reconciled 版に書き換え**（契約＝`enter(uuid,int,int)`/`poll(uuid[,int])`/`cancel(uuid)`/`try(int[,int])`/`expire_stale()`・
+        戻り値 camelCase を維持しつつ **列名を `planned_participant_count` に修正**・旧シグネチャ DROP→再作成の冪等・`service_role` にテーブル CRUD GRANT）。
+        API route も camelCase/3引数契約に適合。**⚠ 実DB の再適用が必須**（関数バグは DB 側にあるためコードだけでは直らない）。
+      - **QA**: **SQL/マッチングロジック（実 Postgres=PGlite）**：reconciled 版 **34/34**（4/6/8 満員成立=1room・members一致・planned一致・AI補完早期成立・ソロ不成立・
+        **queue 分離（4↔6 別 room・相互不混入）**・冪等 enter・post-match 冪等・cancel/再enter・expired・switch・**random room 非公開**・try 診断 camelCase・expire_stale）。
+        （先行 snake_case 版は 42/42。真の並行競合は PGlite 単一接続のためロジック＋コードレビューで担保。）
         **Playwright** [`careerGdRandomMatch.spec.ts`](../../tests/e2e/careerGdRandomMatch.spec.ts)（enter/waiting/cancel・2人成立・4人満員・queue分離・公開ロビー非表示）を追加し
-        **DB 未適用時は自動 skip**（実ブラウザ matching は DB 適用後）。`tsc`/`lint`/`build`・rate unit 19/19・secret scan clean。cleanup で全 career_gd_* 0・auth users 0・一時 QA 資材（`.e2e-tmp/`）削除。
-      - **残課題**: 運用者による `career_gd_match_queue_apply.sql` 適用（適用後に 実ブラウザ matching E2E ＋ 実 DB 並行 enter 競合 QA）/ Realtime（Phase3）/
+        **DB 未適用/未一致時は自動 skip**。`tsc`/`lint`/`build`・rate unit 19/19・secret scan clean。cleanup で全 career_gd_* 0・auth users 0・一時 QA 資材（`.e2e-tmp/`）削除。
+        **⏳ 実DB matching QA・実DB 並行 enter 競合 QA・実ブラウザ matching E2E は reconciled SQL 再適用後に実施予定（本 commit 時点は未実施）。**
+      - **残課題**: 運用者による reconciled `career_gd_match_queue_apply.sql` **再適用**（適用後に 実ブラウザ matching E2E ＋ 実 DB 並行 enter 競合 QA）/ Realtime（Phase3）/
         CI 用 Playwright browser setup / DB CHECK 4/6/8 の本番/preview 適用 / Upstash Redis 設定 / room timeout・abandon cleanup（本 STEP は期限切れ expire の最小 cleanup のみ）/
         Bot/CAPTCHA/abuse monitoring / ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
 - [ ] STEP-GD-22 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。

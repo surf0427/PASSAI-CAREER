@@ -62,11 +62,12 @@ export async function POST(req: Request) {
   const admin = adminRes.admin;
 
   // ── 4) enter RPC（キュー投入＋マッチング試行） ──
+  //    RPC 契約は camelCase 戻り値（roomId / queueId / plannedCount / waitingCount）。
+  //    p_wait_override_sec は test/local 用（本番は null＝人数別しきい値 30/45/60s）。
   const { data, error } = await admin.rpc('career_gd_match_enter', {
     p_user_id: userId,
     p_planned_count: plannedCount,
-    p_min_wait_sec: matchWaitOverrideSec(),
-    p_min_humans: 2,
+    p_wait_override_sec: matchWaitOverrideSec(),
   });
 
   if (error) {
@@ -80,18 +81,18 @@ export async function POST(req: Request) {
 
   const result = (data ?? {}) as {
     status?: string;
-    room_id?: string;
-    queue_id?: string;
-    planned_count?: number;
-    waiting_count?: number;
+    roomId?: string;
+    queueId?: string;
+    plannedCount?: number;
+    waitingCount?: number;
   };
 
-  if (result.status === 'matched' && result.room_id) {
+  if (result.status === 'matched' && result.roomId) {
     const res: MatchEnterResponse = {
       ok: true,
       status: 'matched',
-      roomId: result.room_id,
-      redirectTo: matchRedirectTo(result.room_id),
+      roomId: result.roomId,
+      redirectTo: matchRedirectTo(result.roomId),
     };
     return Response.json(res);
   }
@@ -99,9 +100,9 @@ export async function POST(req: Request) {
   const res: MatchEnterResponse = {
     ok: true,
     status: 'waiting',
-    queueId: String(result.queue_id ?? ''),
+    queueId: String(result.queueId ?? ''),
     plannedCount,
-    waitingCount: typeof result.waiting_count === 'number' ? result.waiting_count : 0,
+    waitingCount: typeof result.waitingCount === 'number' ? result.waitingCount : 0,
   };
   return Response.json(res);
 }

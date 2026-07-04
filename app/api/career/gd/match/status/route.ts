@@ -42,11 +42,10 @@ export async function GET() {
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
 
-  // ── 3) poll RPC（状態取得＋waiting なら成立試行） ──
+  // ── 3) poll RPC（状態取得＋waiting なら成立試行）。戻り値は camelCase。 ──
   const { data, error } = await admin.rpc('career_gd_match_poll', {
     p_user_id: userId,
-    p_min_wait_sec: matchWaitOverrideSec(),
-    p_min_humans: 2,
+    p_wait_override_sec: matchWaitOverrideSec(),
   });
 
   if (error) {
@@ -57,18 +56,18 @@ export async function GET() {
 
   const result = (data ?? { status: 'none' }) as {
     status?: string;
-    room_id?: string;
-    queue_id?: string;
-    planned_count?: number;
-    waiting_count?: number;
+    roomId?: string;
+    queueId?: string;
+    plannedCount?: number;
+    waitingCount?: number;
   };
 
-  if (result.status === 'matched' && result.room_id) {
+  if (result.status === 'matched' && result.roomId) {
     const res: MatchStatusResponse = {
       ok: true,
       status: 'matched',
-      roomId: result.room_id,
-      redirectTo: matchRedirectTo(result.room_id),
+      roomId: result.roomId,
+      redirectTo: matchRedirectTo(result.roomId),
     };
     return Response.json(res);
   }
@@ -76,9 +75,9 @@ export async function GET() {
     const res: MatchStatusResponse = {
       ok: true,
       status: 'waiting',
-      queueId: String(result.queue_id ?? ''),
-      plannedCount: (result.planned_count as CareerGdParticipantCount) ?? 4,
-      waitingCount: typeof result.waiting_count === 'number' ? result.waiting_count : 0,
+      queueId: String(result.queueId ?? ''),
+      plannedCount: (result.plannedCount as CareerGdParticipantCount) ?? 4,
+      waitingCount: typeof result.waitingCount === 'number' ? result.waitingCount : 0,
     };
     return Response.json(res);
   }

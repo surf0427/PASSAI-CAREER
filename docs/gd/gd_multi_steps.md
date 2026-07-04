@@ -447,19 +447,22 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   ＝**同一 user は waiting を同時に 1 つだけ**（二重参加・二重投入・二重room を根本で防ぐ）。取り出し用の部分 index も追加。
 - **RLS**: 既存 career_gd_* と同じ **deny-by-default**（許可ポリシー無し・anon/authenticated 直アクセス不可）。
   将来 authenticated 直読みを許すための `GRANT SELECT`＋owner-select policy は**コメントで用意（本 STEP では適用しない）**。
-- **競合制御 RPC（SECURITY DEFINER / `search_path=public,pg_temp` / service_role のみ EXECUTE）**:
-  - `career_gd_match_try(planned, min_wait, min_humans)`: 人数バケットの waiting を先着順に
+- **競合制御 RPC（SECURITY DEFINER / `search_path=public,pg_temp` / service_role のみ EXECUTE・戻り値 camelCase）**:
+  - `career_gd_match_try(p_planned_count, p_wait_override_sec)`: 人数バケットの waiting を先着順に
     **`FOR UPDATE SKIP LOCKED` で planned 件まで掴み**、成立条件を満たせば room（`room_type='random_match'` /
-    `join_policy='matched_only'` / `join_code_hash='rnd_'+uuid` / planned=選択人数 / status='waiting' /
+    `join_policy='matched_only'` / `join_code_hash='rnd_'+uuid` / **`planned_participant_count`**=選択人数 / status='waiting' /
     host=最古の待機者）を作り、選ばれた user を members に insert、掴んだ queue 行を matched に更新。
-    SKIP LOCKED により同時 enter でも同じ待機者を二重に掴まない＝**二重 room・定員超過が起きない**。
-  - `career_gd_match_enter(p_user_id, planned, min_wait, min_humans)`: 人数バケットの
-    `pg_advisory_xact_lock`→期限切れ expire→matched 既存なら冪等返却→別人数 waiting は cancel（1 waiting/user 維持）→
+    SKIP LOCKED により同時 enter でも同じ待機者を二重に掴まない＝**二重 room・定員超過が起きない**。戻り値は診断
+    `{status,plannedCount,waitingCount,thresholdSeconds,oldestWaitSeconds}`。
+  - `career_gd_match_enter(p_user_id, p_planned_count, p_wait_override_sec)`: 人数バケットの
+    `pg_advisory_xact_lock`→matched 既存なら冪等返却→別人数 waiting は cancel（1 waiting/user 維持）→
     同人数 waiting は再利用/無ければ insert→`match_try`→本人行を読み直して matched or waiting を返す。**INVALID_COUNT を RAISE**。
-  - `career_gd_match_poll(p_user_id, min_wait, min_humans)`: 本人の最新行を返す。waiting なら
-    バケット lock ＋ `match_try` を回して**polling で成立に収束**（新規 enter が無くても成立）。期限切れは expired 化。
-  - `career_gd_match_cancel(p_user_id)`: 本人の waiting を cancelled に。matched 後は対象外（room 移動済み）。
-  - `p_user_id` は **API が session.user.id を強制**（body の userId は受け取らない）。
+    戻り値 matched `{status,roomId}` / waiting `{status,queueId,plannedCount,waitingCount}`。
+  - `career_gd_match_poll(p_user_id, p_wait_override_sec)`: 本人の最新行を返す。waiting なら
+    `match_try` を回して**polling で成立に収束**（新規 enter が無くても成立）。期限切れは expired 化。matched/waiting/cancelled/expired/none。
+  - `career_gd_match_cancel(p_user_id)`: 本人の waiting を cancelled に。`{ok:true,cancelled}`。matched 後は対象外（room 移動済み）。
+  - `career_gd_match_expire_stale()`: 期限切れ waiting を一括 expired に（戻り値=件数）。cron からも実行可。
+  - `p_user_id` は **API が session.user.id を強制**（body の userId は受け取らない）。`p_wait_override_sec` は test/local 用（本番 null＝30/45/60s）。
 
 ### API（member 必須・service_role・rate limit・DB 未適用は 503 縮退）
 
@@ -501,10 +504,30 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
 - **cleanup**: PGlite は in-memory（プロセス終了で消滅）・HTTP QA の test member 削除・全 career_gd_* table 0 行・auth users にテスト残留 0・
   一時 QA スクリプト/依存（gitignore 済み `.e2e-tmp/`）を削除（credentials/storageState/token ファイルは未作成＝tracked 非混入）。
 
+### STEP-GD-21.1: 実DB 適用時の reconciliation（先行適用版の致命バグ修正）
+
+運用者が最初に適用した参照実装（`bhhmvupzcxoaonrowikg`）は、**公開契約が異なり（`enter` 2引数・戻り値
+camelCase・`expire_stale()` あり）**、かつ **room 作成時に `career_gd_rooms.planned_count`（存在しない列。
+正しくは `planned_participant_count`）へ INSERT していて room 生成が必ず失敗する致命バグ**があった
+（実DB probe で `enter u3 => column "planned_count" of relation "career_gd_rooms" does not exist` を確認・
+4 人 enter しても誰も matched にならず waiting のまま）。
+
+対応（コードを deployed 契約に合わせる方針・ユーザー選択）:
+- `career_gd_match_queue_apply.sql` を **reconciled 版に書き換え**：公開契約（`enter(uuid,int,int)` /
+  `poll(uuid[,int])` / `cancel(uuid)` / `try(int[,int])` / `expire_stale()`・戻り値 **camelCase**
+  `roomId/queueId/plannedCount/waitingCount/thresholdSeconds/oldestWaitSeconds`）は維持しつつ、
+  **列名バグを `planned_participant_count` に修正**。冪等（旧シグネチャを `DROP FUNCTION IF EXISTS` で掃除→再作成）・
+  `service_role` にテーブル CRUD を GRANT（既存 career_gd_* と同方針・QA/運用の直読み可能化）。
+- API route を **camelCase / 3引数（enter）契約に適合**（`app/api/career/gd/match/{enter,status}` の RPC 呼び出し・戻り値解釈を更新）。
+- **PGlite 34/34 PASS**（reconciled SQL）: try 診断 camelCase・`expire_stale` 整数・INVALID_COUNT・冪等・
+  ソロ不成立・AI補完早期成立・4/6/8 満員成立（room1・members一致・planned一致）・queue 分離・cancel/expiry/switch・非公開。
+- **⚠ 実DB の再適用が必須**（先行版の関数バグは DB 側にあるためコードだけでは直らない）。再適用後に
+  実DB matching QA・並行 enter 競合 QA・実ブラウザ E2E を実施予定。
+
 ### 残課題（STEP-GD-21 時点）
 
-- **DB 適用（運用者）**: `career_gd_match_queue_apply.sql` を対象 project（`bhhmvupzcxoaonrowikg`）へ適用（本 STEP では PostgREST 経由で DDL 実行不可＝コード先行・
-  20-A/RPC/results-hydrate と同じ「運用者が SQL 適用」方式）。適用後に **実ブラウザ matching E2E** と **実 DB 並行 enter 競合 QA** を実施。
+- **DB 再適用（運用者）**: reconciled `career_gd_match_queue_apply.sql` を `bhhmvupzcxoaonrowikg` へ再適用（PostgREST 経由で DDL 実行不可＝
+  20-A/RPC/results-hydrate と同じ「運用者が SQL 適用」方式）。**適用後に 実ブラウザ matching E2E と 実 DB 並行 enter 競合 QA を実施**（本節時点は未実施）。
 - Realtime（Phase3）／ CI 用 Playwright browser setup ／ DB CHECK 4/6/8 の本番/preview 適用状況 ／ Upstash Redis の本番/preview 設定 ／
   room timeout / abandon cleanup（本 STEP は enter/poll 内の期限切れ expire のみの最小 stale cleanup）／ Bot/CAPTCHA/abuse monitoring ／
   ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
