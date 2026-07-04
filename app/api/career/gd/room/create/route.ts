@@ -15,6 +15,7 @@ import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
 import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
 import { generateSixDigitJoinCode, hashJoinCode } from '../roomCode';
 import { parseParticipantCount } from '@/lib/careerGd/participantCount';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
 
@@ -96,6 +97,10 @@ export async function POST(req: Request) {
     return jsonError('MEMBER_REQUIRED', 'マルチGDはログイン（メール登録）済みのユーザーのみ作成できます。', 403);
   }
   const userId = userData.user.id;
+
+  // ── 2.5) rate limit（user 単位・合言葉 create。超過は 429） ──
+  const limited = await enforceRateLimit(userId, CAREER_GD_RATE_LIMITS.inviteCreate);
+  if (limited) return limited;
 
   // ── 3) service-role クライアント（未設定なら分かりやすく失敗） ──
   let admin: SupabaseClient;

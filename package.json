@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
+    "qa:rateLimit": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-gd-rate-limit-qa.ts",
     "qa:step15": "npx tsx scripts/step15-qa.ts",
     "qa:step15:dry": "npx tsx scripts/step15-qa.ts --dry",
     "qa:applicantType": "npx tsx scripts/step-applicant-type-qa.ts",

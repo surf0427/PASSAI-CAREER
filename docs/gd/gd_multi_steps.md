@@ -351,3 +351,41 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
      ④ 別デバイス hydrate 用 `career_gd_room_results` の `GRANT SELECT`/RLS 整理の要否確認 ⑤ CI 用 Playwright browser setup
      ⑥ DB CHECK 4/6/8 の本番/preview 適用状況（`career_gd_participant_count_apply.sql`・運用者適用）。
      （**host start 促し UI は本 STEP で完了**。）
+
+- **STEP-GD-20-K（公開ロビー create/join rate limit・本節）**:
+  - **目的**: 公開GDロビーの create/join がログイン済みユーザーに連打・改ざんで荒らされるリスクを下げる MVP rate limit。
+    完璧な Bot 対策ではなく「過剰リクエストを 429 で止める」第一段階。
+  - **対象 API**: `POST /api/career/gd/lobby/create`・`POST /api/career/gd/lobby/join`（主対象）＋
+    `POST /api/career/gd/room/create`・`POST /api/career/gd/room/join`（合言葉。cheap なので同時対応）。
+  - **key 設計**: **member `auth.uid()` 単位**（email/IP は使わない）。key は SHA-256 の先頭 20 桁に hash 化してから store/ログに渡す
+    （生の user_id を store・ログ・response に出さない）。namespace で機能別分離（`career_gd_lobby_create`/`_join`/`career_gd_invite_create`/`_join`）。
+  - **limit 値**（短期・中期の 2 window。どちらか超過で 429）:
+    lobby create = **3/60s・10/3600s** / lobby join = **10/60s・30/3600s** / invite create = 5/60s・20/3600s / invite join = 10/60s・40/3600s。
+  - **store 方式**: [`lib/rateLimit/store.ts`](../../lib/rateLimit/store.ts)。**production/preview は Upstash Redis REST**（env
+    `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`・依存追加なし・fetch のみ・INCR+EXPIRE(NX) の固定 window）、
+    **未設定時は in-memory fallback**。**本番で silent no-op にしない**: Upstash 未設定の production では in-memory に落ちるが起動時に
+    一度だけ警告（実効上限は「インスタンス数 × limit」＝保守的 fallback）。接続文字列/token はログに出さない。
+  - **無効化フラグ**: `CAREER_GD_RATE_LIMIT_DISABLED=1|true` で無効化（**local/test/CI 用**・本番では設定しない）。既定=有効なので
+    本番が既定で no-op になることはない。E2E 回帰 run はこのフラグ ON、rate limit 検証 run は OFF（enabled）で別サーバ実行。
+  - **429 response**: `{ error:'RATE_LIMITED', message, detail, retryAfterSeconds }`＋header `Retry-After` / `X-RateLimit-Limit` /
+    `X-RateLimit-Remaining` / `X-RateLimit-Reset`。secret/PII/user_id/room_id を含めない。`ROOM_FULL`/`INVALID_COUNT`/`NOT_HOST` と混同しない安定コード。
+  - **UI**: [`/career/gd/lobby`](../../app/career/gd/lobby/page.tsx) の `friendlyError` に **RATE_LIMITED（429）** を追加し
+    「短時間に操作が集中しています。少し待ってからもう一度お試しください。」を既存 `role="alert"` に表示。ボタンは永久 disabled にならない（`creating`/`joiningRoomId` を finally で解除）。
+  - **ユーティリティ**: [`lib/rateLimit/index.ts`](../../lib/rateLimit/index.ts)（`checkRateLimit`/`checkRateLimits`/`enforceRateLimit`/`rateLimitedResponse`/`CAREER_GD_RATE_LIMITS`）。将来 ES/面接/プレゼンでも再利用可。
+  - **ログ**: 発火時 `GD rate limited: namespace=... limit=... retryAfterSec=...` のみ（user_id/email/IP/JWT/cookie 非出力）。
+  - **テスト結果**:
+    - **unit（19/19 PASS）** [`scripts/career-gd-rate-limit-qa.ts`](../../scripts/career-gd-rate-limit-qa.ts)（`npm run qa:rateLimit`）: 上限内 allowed / 超過 blocked /
+      user 分離 / namespace 分離 / 短期・長期 window 独立 / window ロール / 無効化フラグ / 429 header・body（PII 非混入）。
+    - **HTTP QA（17/17 PASS）**: create 超過 429（Retry-After/X-RateLimit-*）/ join 超過 429（**ROOM_FULL と非混同**）/
+      別 member 非影響（user 分離）/ create-limited でも join 可・join-limited でも create 可（namespace 分離）/ 429 body PII 非混入。
+    - **Playwright（@ratelimit・2/2 PASS）** [`careerGdRateLimit.spec.ts`](../../tests/e2e/careerGdRateLimit.spec.ts): create/join を上限まで消費 →
+      UI で 429 の `role="alert"` 文言表示・ボタン再有効・満員と区別。fixed-window 境界に依存しないよう「API で 429 を観測してから UI 操作」する設計。
+    - **既存回帰**: 非 @ratelimit の Playwright **21/21 PASS**（render/create/join/polling/満員/host prompt/start/message/finish/result/history/合言葉/4-6-8 validation）
+      ＋ HTTP counts QA **25/25 PASS**（bypass サーバ）。※AI result は Anthropic 一時遅延で 1 度 flake→再実行で緑（コード起因でない）。
+  - **cleanup**: rooms/members/messages/results と test member（6 名）削除（全 table 0・auth users 0）・storageState/creds 削除・
+    rate limit test key は **in-memory**（サーバ停止＝プロセス終了で消滅・TTL でも自然消滅）。
+  - **static**: `tsc --noEmit`/`eslint`/`next build` clean・unit 19/19・HTTP QA 17/17・Playwright 2/2＋21/21・secret leak scan clean（Redis 接続文字列/token 非混入）。
+  - **非目標（TODO 明記）**: 本格 Bot 対策/CAPTCHA/abuse monitoring・IP 単位の本格化・room timeout。
+  - **残課題**: ① 完全ランダムマッチ（`career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理
+     ④ CI 用 Playwright browser setup ⑤ DB CHECK 4/6/8 の本番/preview 適用状況 ⑥ 必要なら invite rate limit のチューニング ⑦ 将来的な Bot 対策/CAPTCHA。
+     （**lobby/create・join の rate limit は本 STEP で完了**。）

@@ -22,6 +22,7 @@ import {
   jsonError,
 } from '@/lib/careerGd/publicLobby';
 import type { LobbyJoinResponse } from '@/lib/careerGd/publicLobbyTypes';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
 
@@ -49,6 +50,10 @@ export async function POST(req: Request) {
   const auth = await authenticateGdMember();
   if (auth.kind === 'reject') return auth.response;
   const userId = auth.userId;
+
+  // ── 2.5) rate limit（user 単位・room lookup / RPC 前に弾く。超過は 429） ──
+  const limited = await enforceRateLimit(userId, CAREER_GD_RATE_LIMITS.lobbyJoin);
+  if (limited) return limited;
 
   // ── 3) service-role ──
   const adminRes = getGdAdmin();

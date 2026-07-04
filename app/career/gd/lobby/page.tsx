@@ -49,10 +49,18 @@ const DB_NOT_APPLIED_MESSAGE =
 // API の { error, detail } を、内部情報を出さない安全なメッセージに写像する。
 function friendlyError(
   status: number,
-  data: { error?: string; detail?: string } | null,
+  data: { error?: string; detail?: string; message?: string } | null,
   fallback: string,
 ): string {
   if (data?.error === 'DB_NOT_APPLIED') return DB_NOT_APPLIED_MESSAGE;
+  // rate limit 超過（429）。ROOM_FULL 等と混同しない安定文言を出す。
+  if (status === 429 || data?.error === 'RATE_LIMITED') {
+    return (
+      data?.detail ??
+      data?.message ??
+      '短時間に操作が集中しています。少し待ってからもう一度お試しください。'
+    );
+  }
   if (status === 401 || status === 403) {
     return 'この操作にはログイン（メール登録済み）が必要です。';
   }

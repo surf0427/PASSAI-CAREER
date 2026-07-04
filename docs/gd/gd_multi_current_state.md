@@ -276,9 +276,17 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         **非host**: 「ホストの開始を待っています」＋AI補完で開始可能な旨・start CTA なし。4/6/8 で文言非破綻・start実行中disabled・失敗は`role="alert"`。
         検証: **Playwright 21/21 PASS**（新規 `careerGdHostPrompt.spec` A host/B 非host/C 満員/D 6人=補完4・8人=補完6 ＋ 既存全回帰）・**HTTP QA 25/25 PASS**。
         cleanup で全 table 0・auth users 0。`tsc`/`lint`/`build`・secret scan clean。（フル E2E は Supabase 一時 DNS 障害で1度失敗→回復後 21/21・コード起因でない）
-      - **残課題**: ① lobby rate limit ② 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）③ Realtime（Phase3）
-        ④ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認 ⑤ CI 用 Playwright browser setup ⑥ DB CHECK 4/6/8 の本番/preview 適用状況。
-        （20-G「HTTP E2E」・20-H「実ブラウザ E2E」・20-I「人数 4/6/8 固定」・**20-J「host start 促し UI」は完了**。）
+      - **20-K（公開ロビー create/join rate limit・最新）**: 連打/改ざん濫用を 429 で止める MVP。**user（auth.uid()）単位**・key は hash 化
+        （生 user_id を store/ログ/response に出さない）・namespace 分離・短期/中期 2 window。lobby create=3/60s・10/3600s、lobby join=10/60s・30/3600s、
+        合言葉 create=5/60s・20/3600s、join=10/60s・40/3600s。store は **Upstash Redis REST（env 設定時）→ 未設定は in-memory fallback**（本番未設定時は起動警告＝
+        silent no-op にしない）。無効化フラグ `CAREER_GD_RATE_LIMIT_DISABLED`（**test/local 用**・既定=有効）。429=`{error:'RATE_LIMITED',message,retryAfterSeconds}`＋
+        `Retry-After`/`X-RateLimit-*` header（PII/user_id/room_id 非混入・`ROOM_FULL`/`INVALID_COUNT` と非混同）。UI は lobby `friendlyError` に 429 文言を追加（`role="alert"`・
+        ボタン永久 disabled にならない）。util `lib/rateLimit/`（将来 ES/面接/プレゼン再利用可）。検証: **unit 19/19**（`npm run qa:rateLimit`）・**HTTP QA 17/17**
+        （create/join 429・別member非影響・namespace 分離）・**Playwright @ratelimit 2/2**（UI 429 alert・満員と区別）・**回帰 Playwright 21/21＋counts QA 25/25**（bypass）。
+        cleanup で全 table 0・auth users 0・rate limit test key は in-memory（サーバ停止で消滅）。`tsc`/`lint`/`build`・secret scan clean。
+      - **残課題**: ① 完全ランダムマッチ（人数別キュー `career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ 別デバイス hydrate 用 `career_gd_room_results` の SELECT/RLS 整理の要否確認
+        ④ CI 用 Playwright browser setup ⑤ DB CHECK 4/6/8 の本番/preview 適用状況 ⑥ 必要なら invite rate limit チューニング ⑦ 将来的な Bot 対策/CAPTCHA。
+        （20-G/H/I/J に加え **20-K「lobby create/join rate limit」も完了**。）
 - [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

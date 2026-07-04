@@ -22,6 +22,7 @@ import {
   dbNotAppliedResponse,
 } from '../roomAuth';
 import { mapMemberRow } from '../roomMappers';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
 
@@ -69,6 +70,10 @@ export async function POST(req: Request) {
   const auth = await authenticateGdMember();
   if (auth.kind === 'reject') return auth.response;
   const userId = auth.userId;
+
+  // ── 3.5) rate limit（user 単位・合言葉 join。既存 IP ベース制限に加えて user 単位を弾く） ──
+  const limited = await enforceRateLimit(userId, CAREER_GD_RATE_LIMITS.inviteJoin);
+  if (limited) return limited;
 
   // ── 4) hash & service-role ──
   const joinCodeHash = hashJoinCode(code);
