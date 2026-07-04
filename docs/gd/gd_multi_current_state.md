@@ -295,7 +295,7 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - **残課題**: ① Realtime（Phase3）② CI 用 Playwright browser setup ③ DB CHECK 4/6/8 の本番/preview 適用状況
         ④ Upstash Redis の本番/preview 設定状況 ⑤ room timeout / abandon cleanup ⑥ 将来的な Bot 対策/CAPTCHA。
         （20-G/H/I/J/K/L に加え **STEP-GD-21「完全ランダムマッチ本体」も完了**＝残課題①の完全ランダムマッチは解消。）
-- [x] STEP-GD-21: **完全ランダムマッチ本体（完了・DB は運用者適用待ち）**。ユーザーが人数（4/6/8）を選び「ランダムマッチに参加」で
+- [x] STEP-GD-21: **完全ランダムマッチ本体（完了・実DB / 実ブラウザ QA 済み）**。ユーザーが人数（4/6/8）を選び「ランダムマッチに参加」で
       同人数希望の他 member と自動で room 成立→room 詳細へ遷移。公開ロビーとは分離した `RandomMatchPanel`（`/career/gd/lobby` 上部）。
       - **方式（自動成立を優先）**: 満員成立（planned に達したら即）＋ AI 補完前提の早期成立（人間≥2 かつ 最古待機者が
         しきい値超過＝4→30s/6→45s/8→60s）。人間1人では成立させない（ソロ化防止・しばらく相手が来なければソロGD導線）。手動開始方式は不採用。
@@ -315,15 +315,15 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         あり room 生成が必ず失敗（4人 enter しても matched にならない）。加えて公開契約が異なった（`enter` 2引数・戻り値 camelCase・`expire_stale()` あり）。
         → SQL を **reconciled 版に書き換え**（契約＝`enter(uuid,int,int)`/`poll(uuid[,int])`/`cancel(uuid)`/`try(int[,int])`/`expire_stale()`・
         戻り値 camelCase を維持しつつ **列名を `planned_participant_count` に修正**・旧シグネチャ DROP→再作成の冪等・`service_role` にテーブル CRUD GRANT）。
-        API route も camelCase/3引数契約に適合。**⚠ 実DB の再適用が必須**（関数バグは DB 側にあるためコードだけでは直らない）。
-      - **QA**: **SQL/マッチングロジック（実 Postgres=PGlite）**：reconciled 版 **34/34**（4/6/8 満員成立=1room・members一致・planned一致・AI補完早期成立・ソロ不成立・
-        **queue 分離（4↔6 別 room・相互不混入）**・冪等 enter・post-match 冪等・cancel/再enter・expired・switch・**random room 非公開**・try 診断 camelCase・expire_stale）。
-        （先行 snake_case 版は 42/42。真の並行競合は PGlite 単一接続のためロジック＋コードレビューで担保。）
-        **Playwright** [`careerGdRandomMatch.spec.ts`](../../tests/e2e/careerGdRandomMatch.spec.ts)（enter/waiting/cancel・2人成立・4人満員・queue分離・公開ロビー非表示）を追加し
-        **DB 未適用/未一致時は自動 skip**。`tsc`/`lint`/`build`・rate unit 19/19・secret scan clean。cleanup で全 career_gd_* 0・auth users 0・一時 QA 資材（`.e2e-tmp/`）削除。
-        **⏳ 実DB matching QA・実DB 並行 enter 競合 QA・実ブラウザ matching E2E は reconciled SQL 再適用後に実施予定（本 commit 時点は未実施）。**
-      - **残課題**: 運用者による reconciled `career_gd_match_queue_apply.sql` **再適用**（適用後に 実ブラウザ matching E2E ＋ 実 DB 並行 enter 競合 QA）/ Realtime（Phase3）/
-        CI 用 Playwright browser setup / DB CHECK 4/6/8 の本番/preview 適用 / Upstash Redis 設定 / room timeout・abandon cleanup（本 STEP は期限切れ expire の最小 cleanup のみ）/
+        API route も camelCase/3引数契約に適合。**reconciled SQL は運用者が再適用済み**（`Success. No rows returned`）。
+      - **実DB / 実ブラウザ QA（STEP-GD-21.2・再適用後・完了）**:
+        **契約/RPC** `career_gd_rooms.planned_count` 参照なし・`planned_participant_count` 使用・enter/poll/cancel/try/expire_stale 解決（DB_APPLIED・camelCase・service_role SELECT 可）。
+        **実DB 並行 enter 競合（真の並行=Promise.all・44/44）**：4/6/8 同時 enter→room1・全員同 roomId・members一致・host最古1名・queue全matched／5名4希望→4名room1＋1waiting／同一user多重→waiting1行。
+        **Live HTTP/API（26/26）**：未ログイン401・不正人数400 INVALID_COUNT・認証 enter→200 waiting（**503でない**）・4member HTTP→同 roomId・match rate limit 429・PII非返却。
+        **Playwright `@random-match`（4/4・WAIT_OVERRIDE=0）**：enter/waiting/cancel/再enter・2人成立→room遷移→host start→AI補完2→active4・非公開・queue分離。
+        **既存回帰**：lobby 9/9（G は AI latency 1回 flake→再実行 PASS）・counts+hostPrompt+invite 8/8・participantApi 4/4・@ratelimit 2/2・rate unit 19/19・hydrate route intact（401/200/PII非返却）。
+        cleanup で全 career_gd_* 0・auth users 0・storageState/一時資材削除。`tsc`/`lint`/`build`・secret scan clean。
+      - **残課題**: Realtime（Phase3）/ CI 用 Playwright browser setup / DB CHECK 4/6/8 の本番/preview 適用 / Upstash Redis 設定 / room timeout・abandon cleanup（本 STEP は期限切れ expire の最小 cleanup のみ）/
         Bot/CAPTCHA/abuse monitoring / ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
 - [ ] STEP-GD-22 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 

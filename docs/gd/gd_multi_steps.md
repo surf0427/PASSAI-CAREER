@@ -521,13 +521,32 @@ camelCase・`expire_stale()` あり）**、かつ **room 作成時に `career_gd
 - API route を **camelCase / 3引数（enter）契約に適合**（`app/api/career/gd/match/{enter,status}` の RPC 呼び出し・戻り値解釈を更新）。
 - **PGlite 34/34 PASS**（reconciled SQL）: try 診断 camelCase・`expire_stale` 整数・INVALID_COUNT・冪等・
   ソロ不成立・AI補完早期成立・4/6/8 満員成立（room1・members一致・planned一致）・queue 分離・cancel/expiry/switch・非公開。
-- **⚠ 実DB の再適用が必須**（先行版の関数バグは DB 側にあるためコードだけでは直らない）。再適用後に
-  実DB matching QA・並行 enter 競合 QA・実ブラウザ E2E を実施予定。
+
+### STEP-GD-21.2: reconciled SQL 再適用後の 実DB / 実ブラウザ QA（**完了**）
+
+運用者が reconciled `career_gd_match_queue_apply.sql` を `bhhmvupzcxoaonrowikg` に再適用（`Success. No rows returned`）。
+実DB に対して以下を完走（作業前後とも全 career_gd_* 0 行・auth users 0）：
+
+- **契約/RPC 確認**: `career_gd_rooms.planned_count` 参照なし・`planned_participant_count` 使用。RPC
+  `career_gd_match_enter(uuid,int,int)` / `poll(uuid,int)` / `cancel(uuid)` / `try(int,int)` / `expire_stale()` が
+  service_role で解決（**PGRST202/DB_NOT_APPLIED に落ちない**）・戻り値 camelCase・INVALID_COUNT・`service_role` テーブル SELECT 可（GRANT 反映）。
+- **実DB 並行 enter 競合 QA（service_role RPC を Promise.all で真の並行実行・44/44 PASS）**: **4/6/8 同時 enter → room は 1 つだけ・
+  全員同一 roomId・human members = 人数・host は最古 1 名・queue 全 matched**／**5名が4人希望同時 → 4名room1・1名waiting・members は 4 を超えない**／
+  **同一user多重並行 enter → waiting 1 行のみ・room 増殖なし**。room は random_match/matched_only/planned一致/`rnd_`。
+- **Live HTTP/API QA（`next start`・26/26 PASS）**: 未ログイン 401／不正人数 3/5/7/9/0/'x'/null → 400 `INVALID_COUNT`／
+  **認証済み enter → 200 `waiting`（DB_APPLIED・503 でない）**／status waiting／cancel→cancelled→再enter／**4 member HTTP enter → 全員同一 roomId・room 4 humans**／
+  match enter rate limit 連打 → 429／レスポンスに email/user_id/token 非混入。
+- **Playwright 実ブラウザ E2E（`@random-match` 4/4 PASS・server `CAREER_GD_MATCH_WAIT_OVERRIDE_SEC=0`）**: A enter→waiting表示→waitingCount→cancel→再enter／
+  **B 2 member 成立→双方 room 遷移→参加者2/4→非host待機・host start→AI補完2→総勢4・GD進行中**／C random_match room が公開ロビー一覧に出ない／D 4希望と6希望が別 queue（相互非マッチ）。
+- **既存回帰**: careerGdLobby **9/9**（create/join/poll/満員/host start・AI補完/発言/finish/評価生成/履歴・test G は AI 生成 latency で1度 70s タイムアウト→再実行 43.6s で PASS＝コード起因でない）／
+  careerGdCounts＋careerGdHostPrompt＋careerGdInvite **8/8**／careerGdParticipantApi **4/4**（4/6/8 valid・invalid 400・合言葉共有）／`@ratelimit` **2/2**／rate limit unit **19/19**／
+  GD result hydrate route `GET /api/career/gd/room/results`（未ログイン 401・認証 200・PII 非返却＝**未改修・intact**）。
+- **cleanup**: 全 test auth users 削除（cascade で queue/members 除去）＋ rooms/results/messages 削除 → **全 career_gd_* 0・auth users 0**・storageState/manifest/一時 QA 資材（`.e2e-tmp/`）削除。
+- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・secret scan clean。
 
 ### 残課題（STEP-GD-21 時点）
 
-- **DB 再適用（運用者）**: reconciled `career_gd_match_queue_apply.sql` を `bhhmvupzcxoaonrowikg` へ再適用（PostgREST 経由で DDL 実行不可＝
-  20-A/RPC/results-hydrate と同じ「運用者が SQL 適用」方式）。**適用後に 実ブラウザ matching E2E と 実 DB 並行 enter 競合 QA を実施**（本節時点は未実施）。
+- 完全ランダムマッチ本体は **実DB matching・実DB 並行 enter 競合・実ブラウザ E2E まで完了**（DB 適用済み）。
 - Realtime（Phase3）／ CI 用 Playwright browser setup ／ DB CHECK 4/6/8 の本番/preview 適用状況 ／ Upstash Redis の本番/preview 設定 ／
   room timeout / abandon cleanup（本 STEP は enter/poll 内の期限切れ expire のみの最小 stale cleanup）／ Bot/CAPTCHA/abuse monitoring ／
   ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
