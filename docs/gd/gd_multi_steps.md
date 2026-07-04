@@ -548,5 +548,55 @@ camelCase・`expire_stale()` あり）**、かつ **room 作成時に `career_gd
 
 - 完全ランダムマッチ本体は **実DB matching・実DB 並行 enter 競合・実ブラウザ E2E まで完了**（DB 適用済み）。
 - Realtime（Phase3）／ CI 用 Playwright browser setup ／ DB CHECK 4/6/8 の本番/preview 適用状況 ／ Upstash Redis の本番/preview 設定 ／
-  room timeout / abandon cleanup（本 STEP は enter/poll 内の期限切れ expire のみの最小 stale cleanup）／ Bot/CAPTCHA/abuse monitoring ／
-  ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
+  Bot/CAPTCHA/abuse monitoring ／ ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
+  （room timeout / abandon cleanup は STEP-GD-22 で実装。）
+
+## STEP-GD-22: room timeout / abandon cleanup（production hardening）
+
+放置された room / match_queue / member / message が本番で残り続けないようにする定期 cleanup。
+**user-facing な履歴（`career_gd_room_results`）と finished room・result 済み room は絶対に消さない。**
+random_match / public_lobby / invite は room_type で区別せず、状態・TTL・結果有無だけで判定する。
+
+### cleanup 状態定義（対象／非対象）
+
+| 対象 | 条件 | アクション |
+|---|---|---|
+| waiting match_queue | `expires_at`（既定10分）超過 | → `expired`（既存 `career_gd_match_expire_stale()`） |
+| 未開始 room | `status='waiting'` かつ `created_at` が waiting TTL（既定60分）より古く **結果なし** | **削除**（＋紐づく match_queue 行・cascade で members） |
+| 放置 active room | `status='active'` かつ `started_at` が active TTL（既定180分）より古く **結果なし** | `cancelled` に **soft-close**（内容=messages は消さない） |
+| 古い cancelled room | `status='cancelled'` かつ `updated_at` が waiting TTL より古く **結果なし** | **削除**（soft-close の二段階目） |
+| 終端 match_queue 行 | `status IN (matched,cancelled,expired)` が queue TTL（既定7日）より古い | **削除**（matchmaking bookkeeping） |
+
+**非対象（絶対に触らない）**: `status='finished'` room（完了セッション）／`career_gd_room_results` を持つ room（別デバイス hydrate の durable mirror）／
+現在マッチング中の `waiting` match_queue 行。QA 用 cleanup（テストデータ全削除）とは別レイヤ。
+
+### DB（[`supabase/career_gd_cleanup_apply.sql`](../../supabase/career_gd_cleanup_apply.sql)・idempotent・**運用者適用待ち**）
+
+- `career_gd_cleanup_abandoned_rooms(p_waiting_ttl_min=60, p_active_ttl_min=180, p_dry_run=false)` → jsonb
+  （dry: `{dryRun,abandonedWaiting,staleActive,cancelledRooms}` / 実行: `{abandonedWaitingDeleted,staleActiveCancelled,cancelledRoomsDeleted,queueRowsDeleted}`）。
+- `career_gd_cleanup_stale_queue(p_ttl_days=7, p_dry_run=false)` → jsonb（`terminalQueueRows(Deleted)`）。
+- 両 RPC は **SECURITY DEFINER・service_role のみ EXECUTE・冪等（DROP→CREATE）・no-result / finished ガード**。
+  既存 `career_gd_match_expire_stale()` は再利用（本ファイルは触らない）。
+
+### API（[`GET|POST /api/cron/gd-cleanup`](../../app/api/cron/gd-cleanup/route.ts)）
+
+- 既存 cron と同方式：**`Authorization: Bearer ${CRON_SECRET}` のみ許可・未設定は fail-closed 401**・public client 不可・secret/PII 非出力（件数のみ）。
+- `?dryRun=true` で mutate せず件数のみ。TTL は `?waitingTtlMin=/?activeTtlMin=/?queueTtlDays=` で上書き可（QA/運用調整）。
+- server-only・runtime nodejs・service_role。**env 未設定でも build は落ちない**（実行時 401/500 で安全に失敗）。
+- 呼ぶ順: ① expire_stale（dry は count）② cleanup_abandoned_rooms ③ cleanup_stale_queue。返却 `{ok,dryRun,startedAt,finishedAt,ttl,expiredQueueCount,rooms,queue}`。
+- **Vercel Cron**: `vercel.json` に `/api/cron/gd-cleanup` を **毎日 16:00 UTC**（`0 16 * * *`）で追加（既存 daily cron に整合。Pro なら頻度を上げてよい）。`.env.example` に `CRON_SECRET` を明記。
+
+### QA 結果
+
+- **cleanup ロジック QA（実 Postgres=PGlite・30/30 PASS）**: expire_stale／**未開始 waiting room 削除＋members cascade＋紐づく queue 行削除**／
+  **recent public_lobby・invite room は誤削除しない**／**old waiting でも result があれば残す**／**放置 active → soft-cancel（message は残す）**／
+  **active/finished/result 済みは残す**／**finished は結果無くても消さない**／**old cancelled(no-result) 削除・result 付き cancelled は残す**／
+  soft-cancel 直後は再削除されない（二段階）／stale_queue は終端古行のみ削除・**waiting は 30 日でも消さない**・recent terminal 残す／**dry-run は mutate しない**。
+- **route auth QA（live・5/5 PASS）**: 未認証 401・誤 secret 401・正 secret は DB へ到達（RPC 未適用時は 500・**secret/PII 非漏洩の clean error**）・レスポンスに CRON_SECRET/JWT/PII 非混入。
+- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・secret scan clean。
+- **⏳ 実DB cleanup QA（QA 用データ backdate → cleanup → 対象削除・非対象維持を実DBで確認）は `career_gd_cleanup_apply.sql` 運用者適用後に実施予定。**
+
+### 残課題（STEP-GD-22 時点）
+
+- `career_gd_cleanup_apply.sql` の運用者適用（PostgREST 経由で DDL 実行不可＝コード先行方式）。適用後に 実DB cleanup QA。
+- finished room 自体の長期アーカイブ方針（現状は残す）／ Realtime（Phase3）／ CI 用 Playwright browser setup ／ Bot/CAPTCHA ／ ランダムマッチ UX 改善。

@@ -325,6 +325,17 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         cleanup で全 career_gd_* 0・auth users 0・storageState/一時資材削除。`tsc`/`lint`/`build`・secret scan clean。
       - **残課題**: Realtime（Phase3）/ CI 用 Playwright browser setup / DB CHECK 4/6/8 の本番/preview 適用 / Upstash Redis 設定 / room timeout・abandon cleanup（本 STEP は期限切れ expire の最小 cleanup のみ）/
         Bot/CAPTCHA/abuse monitoring / ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
-- [ ] STEP-GD-22 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
+- [x] STEP-GD-22: **room timeout / abandon cleanup（production hardening・DB は運用者適用待ち）**。放置 room/queue/member/message が本番で残り続けないよう定期 cleanup。
+      **finished room・result 済み room・現在 waiting の match_queue は絶対に消さない**。random_match/public_lobby/invite は状態・TTL・結果有無だけで判定。
+      - **DB（[`career_gd_cleanup_apply.sql`](../../supabase/career_gd_cleanup_apply.sql)・idempotent・運用者適用待ち）**: `career_gd_cleanup_abandoned_rooms(waiting_ttl=60,active_ttl=180,dry)`
+        （未開始 waiting room[結果なし]削除＋queue 行削除／放置 active[結果なし]→cancelled soft-close／古い cancelled[結果なし]削除）＋`career_gd_cleanup_stale_queue(ttl_days=7,dry)`
+        （終端 match_queue 行削除・waiting は消さない）。両 RPC SECURITY DEFINER・service_role のみ・no-result/finished ガード。waiting queue→expired は既存 `career_gd_match_expire_stale()` 再利用。
+      - **API [`GET|POST /api/cron/gd-cleanup`](../../app/api/cron/gd-cleanup/route.ts)**: `Authorization: Bearer CRON_SECRET`（未設定 fail-closed 401）・`?dryRun=true`・TTL は query 上書き可・secret/PII 非出力・env 未設定でも build 落ちない。
+        `vercel.json` に daily cron（`0 16 * * *`）追加・`.env.example` に `CRON_SECRET` 明記。
+      - **QA**: cleanup ロジック **PGlite 30/30**（abandoned 削除＋cascade＋queue／recent public・invite 誤削除なし／result・finished 保護／active soft-cancel で message 保持／old cancelled 削除／
+        stale_queue 終端のみ・waiting 保護／dry-run 非 mutate）・route auth **live 5/5**（401/正secret DB 到達・PII 非漏洩）・`tsc`/`lint`/`build`・secret scan clean。
+        **⏳ 実DB cleanup QA は `career_gd_cleanup_apply.sql` 運用者適用後に実施予定。**
+      - **残課題**: 運用者適用 → 実DB cleanup QA／finished room 長期アーカイブ方針（現状 残す）。
+- [ ] STEP-GD-23 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

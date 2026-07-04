@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/presentation-cleanup",
       "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/gd-cleanup",
+      "schedule": "0 16 * * *"
     }
   ]
 }
