@@ -12,6 +12,8 @@ import type {
   CareerGdRankingEntry,
   CareerGdMatchingHints,
   CareerGdAxisScores,
+  CareerGdRoomOverallEvaluation,
+  CareerGdRoomRoleEstimate,
   GdCompanyGrade,
   GdFormat,
   GdTheme,
@@ -105,11 +107,55 @@ function normMatching(raw: unknown): CareerGdMatchingHints {
   return { hints: strArray(r.hints), summary: str(r.summary) };
 }
 
+// STEP-GD-27: 議論全体評価の防御的正規化（壊れた/欠落は null）。
+function normRoleEstimates(raw: unknown): CareerGdRoomRoleEstimate[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e): CareerGdRoomRoleEstimate | null => {
+      if (!e || typeof e !== 'object') return null;
+      const r = e as Record<string, unknown>;
+      if (typeof r.participantId !== 'string' || !r.participantId) return null;
+      const role = str(r.role);
+      if (!role) return null;
+      const note = str(r.note);
+      return { participantId: r.participantId, displayName: str(r.displayName) || '参加者', role, ...(note ? { note } : {}) };
+    })
+    .filter((e): e is CareerGdRoomRoleEstimate => e !== null);
+}
+
+function normRoomOverall(raw: unknown): CareerGdRoomOverallEvaluation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const overall: CareerGdRoomOverallEvaluation = {
+    version: 1,
+    summary: str(r.summary),
+    pointOrganization: str(r.pointOrganization),
+    conclusionClarity: str(r.conclusionClarity),
+    processComment: str(r.processComment),
+    goodPoints: strArray(r.goodPoints),
+    improvements: strArray(r.improvements),
+    nextThemes: strArray(r.nextThemes),
+    roleEstimates: normRoleEstimates(r.roleEstimates),
+    ...(r.truncated === true ? { truncated: true } : {}),
+  };
+  const has =
+    overall.summary ||
+    overall.pointOrganization ||
+    overall.conclusionClarity ||
+    overall.processComment ||
+    overall.goodPoints.length > 0 ||
+    overall.improvements.length > 0 ||
+    overall.nextThemes.length > 0 ||
+    overall.roleEstimates.length > 0;
+  return has ? overall : null;
+}
+
 export function normalizeGdRoomLog(raw: unknown): CareerGdRoomLog | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const id = str(r.id) || str(r.roomId);
   if (!id) return null;
+  const overallEvaluation = normRoomOverall(r.overallEvaluation);
   return {
     id,
     roomId: str(r.roomId) || id,
@@ -124,6 +170,8 @@ export function normalizeGdRoomLog(raw: unknown): CareerGdRoomLog | null {
     ranking: normRanking(r.ranking),
     matchingHints: normMatching(r.matchingHints),
     consultationSummary: str(r.consultationSummary),
+    ...(overallEvaluation ? { overallEvaluation } : {}),
+    ...(r.source === 'realtime_room' ? { source: 'realtime_room' as const } : {}),
   };
 }
 

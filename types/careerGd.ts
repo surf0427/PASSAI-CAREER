@@ -304,6 +304,31 @@ export type CareerGdMatchingHints = {
   summary: string; // 相談AI/他機能へ渡す 1〜2 文
 };
 
+// ── STEP-GD-27: room 全体（議論そのもの）の終了後評価 ──────────────────
+// 個人別 CareerGdEvaluation（人間 1 名ぶん）とは別レイヤ。議論全体に対する評価を持つ。
+// AI 出力は server で必ず正規化してから保存する（自由文そのままは保存しない）。
+
+// 役割推定（可能な範囲・断定しない）。対象は人間参加者のみ（AI 参加者は含めない）。
+export type CareerGdRoomRoleEstimate = {
+  participantId: string;
+  displayName: string;
+  role: string; // 例: 進行役 / アイデア出し役 / 分析役 / 調整役 / 結論形成役 / 傾聴支援役
+  note?: string; // 根拠（短文・断定しない）
+};
+
+export type CareerGdRoomOverallEvaluation = {
+  version: 1;
+  summary: string; // 議論全体の要約
+  pointOrganization: string; // 論点整理の評価
+  conclusionClarity: string; // 結論の明確さ
+  processComment: string; // 議論の進め方（時間配分・役割分担など）
+  goodPoints: string[]; // 議論全体として良かった点
+  improvements: string[]; // 議論全体の改善点
+  nextThemes: string[]; // 次回の練習テーマ
+  roleEstimates: CareerGdRoomRoleEstimate[]; // 役割推定（0 件可・断定しない）
+  truncated?: boolean; // 発言ログが長く一部省略して評価した場合 true（⑭ コスト対策）
+};
+
 // 各ユーザーの結果（career_gd_room_results 1 行のクライアント表現）。
 export type CareerGdRoomResultView = {
   roomId: string;
@@ -313,6 +338,8 @@ export type CareerGdRoomResultView = {
   ranking: CareerGdRankingEntry[]; // 全体（共有）
   matchingHints: CareerGdMatchingHints; // 本人ぶん
   consultationSummary: string; // generateCareerGdSummary の出力（相談AI 連携用の圧縮サマリー）
+  // STEP-GD-27: 議論全体の評価（全員共通）。新規生成時のみ含む。冪等再取得や旧結果では null。
+  overallEvaluation?: CareerGdRoomOverallEvaluation | null;
   createdAt: string;
 };
 
@@ -338,6 +365,10 @@ export type CareerGdRoomLog = {
   ranking: CareerGdRankingEntry[]; // 参加者内スコア順（共有）
   matchingHints: CareerGdMatchingHints; // 本人ぶん
   consultationSummary: string; // 相談AI 連携用の圧縮サマリー（overall_summary 由来）
+  // STEP-GD-27: 議論全体の評価（任意・realtime room で生成）。localStorage canonical が保存先。
+  overallEvaluation?: CareerGdRoomOverallEvaluation | null;
+  // STEP-GD-27: この履歴が realtime room（マルチGD）由来であることを示す。既定 'realtime_room'。
+  source?: 'realtime_room';
 };
 
 // GD 結果履歴 hydrate（GET /api/career/gd/room/results）の 1 件。

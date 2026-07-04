@@ -18,6 +18,7 @@ import type {
   CareerGdRankingEntry,
   CareerGdMatchingHints,
   CareerGdRoomResultView,
+  CareerGdRoomOverallEvaluation,
 } from '@/types/careerGd';
 import {
   authenticateGdMember,
@@ -34,6 +35,7 @@ import {
   computeCommunicationGrade,
   verifyQuotes,
   generateCareerGdSummary,
+  normalizeRoomOverall,
 } from '../../roomFeedback';
 
 export const maxDuration = 80;
@@ -172,6 +174,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
   // 評価マップ（participantId → CareerGdEvaluation）。
   const evalByPid = new Map<string, CareerGdEvaluation>();
   const matchByPid = new Map<string, CareerGdMatchingHints>();
+  // STEP-GD-27: 議論全体（room 全体）の評価。AI 評価が走ったときのみ生成（空議論では null）。
+  let overallEvaluation: CareerGdRoomOverallEvaluation | null = null;
 
   if (humansWithSpeech.length === 0) {
     // 空議論 or 人間の発言0件 → 全員採点不能。
@@ -191,6 +195,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     if (!feedback) {
       return jsonError('AI_GD_EVAL_FAILED', '評価の生成に失敗しました。時間をおいて再度お試しください。', 502);
     }
+    // 議論全体の評価（人間参加者のみを roleEstimates の対象にする）。
+    overallEvaluation = normalizeRoomOverall(
+      feedback.overall,
+      humans.map((m) => ({ participantId: String(m.participant_id), displayName: str(m.display_name) || '参加者' })),
+      feedback.truncated,
+    );
     const byPid = new Map<string, Row>();
     for (const p of feedback.participants) {
       if (p && typeof p === 'object' && typeof (p as Row).participantId === 'string') byPid.set((p as Row).participantId as string, p as Row);
@@ -292,6 +302,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     ranking,
     matchingHints: selfMatch,
     consultationSummary: selfRow.overall_summary,
+    overallEvaluation, // STEP-GD-27: 議論全体の評価（空議論・冪等再取得では null）
     createdAt: nowIso,
   };
   return Response.json({ result });

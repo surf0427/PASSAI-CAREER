@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/Card';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { GD_FORMAT_LABELS } from './gdRoles';
 import { GdEvaluationDetail, GD_GRADE_STYLE } from './GdEvaluationDetail';
+import { GdRoomOverallDetail } from './GdRoomOverallDetail';
 import { loadGdRoomLogs, removeGdRoomLog, mergeGdRoomLogs } from './gdRoomLogStorage';
 import { fetchCareerGdRoomResultHistory } from '@/lib/careerGd/roomResultHistory';
 import type { CareerGdRoomLog, GdCompanyGrade } from '@/types/careerGd';
@@ -280,6 +281,7 @@ export function MultiGdHistorySection() {
               履歴を削除
             </button>
           </div>
+          {selected.overallEvaluation && <GdRoomOverallDetail overall={selected.overallEvaluation} />}
           <GdEvaluationDetail
             evaluation={selected.evaluation}
             ranking={selected.ranking}

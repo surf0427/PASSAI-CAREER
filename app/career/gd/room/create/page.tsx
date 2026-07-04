@@ -175,19 +175,22 @@ export default function CareerGdRoomCreatePage() {
           </div>
         </Card>
 
-        {/* ロビー（STEP-GD-12）は近日公開。今は案内のみ。 */}
-        <Card variant="soft" padding="md" className="mb-5 opacity-80">
-          <p className="text-sm font-bold text-slate-800 mb-1">ロビー・参加受付は近日公開</p>
+        {/* ルーム（ロビー）へ入り、参加者を待って手動で開始する（STEP-GD-28: 導線を実ルームへ接続）。 */}
+        <Card variant="soft" padding="md" className="mb-5">
+          <p className="text-sm font-bold text-slate-800 mb-1">ルームで参加者を待ちましょう</p>
           <p className="text-xs text-slate-500 leading-relaxed">
-            参加者の入室待ち・開始（AI補完）・GD進行は次のアップデート（STEP-GD-12以降）で提供します。
-            現在はルーム作成とコード発行までご利用いただけます。
+            「ルームに入る」を押すとロビー（待機画面）に移動します。参加者が合言葉で入室したら、
+            ホストのあなたが「開始」を押してGDを始めます（不足分はAIメンバーが補完されます）。
           </p>
         </Card>
 
         <div className="flex flex-col sm:flex-row gap-3">
-          <Button variant="primary" size="md" disabled className="w-full sm:w-auto">
-            ロビーへ進む（近日公開）
-          </Button>
+          <Link
+            href={`/career/gd/room/${created.roomId}`}
+            className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+          >
+            ルームに入る →
+          </Link>
           <BackLink />
         </div>
       </div>

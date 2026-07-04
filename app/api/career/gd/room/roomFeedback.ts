@@ -15,6 +15,8 @@ import type {
   GdCompanyGrade,
   CareerGdAxisKey,
   CareerGdAxisScores,
+  CareerGdRoomOverallEvaluation,
+  CareerGdRoomRoleEstimate,
 } from '@/types/careerGd';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -148,15 +150,49 @@ export function buildRoomFeedbackSystem(): string {
 type PromptParticipant = { participantId: string; displayName: string; isAi: boolean };
 type PromptUtterance = { participantId: string; content: string; kind: 'speech' | 'system' };
 
-function transcriptText(participants: PromptParticipant[], transcript: PromptUtterance[]): string {
-  if (transcript.length === 0) return '（発言はありません）';
+// ⑭ コスト・トークン対策: AI へ渡す発言ログの上限。1 発言あたり・全体の文字数を制限し、
+// 超過時は「古い発言」から落として最新側を残す（議論の結論に近い部分を優先）。
+const TRANSCRIPT_MAX_CHARS = 24000;
+const MSG_MAX_CHARS = 600;
+
+// 発言ログを整形しつつ上限内に収める。truncated=true なら一部を省略している。
+function buildTranscript(
+  participants: PromptParticipant[],
+  transcript: PromptUtterance[],
+): { text: string; truncated: boolean } {
+  if (transcript.length === 0) return { text: '（発言はありません）', truncated: false };
   const nameOf = (id: string) => {
     const p = participants.find((x) => x.participantId === id);
     return p ? `${p.displayName}${p.isAi ? '(AI)' : '(人間)'}` : '参加者';
   };
-  return transcript
-    .map((u) => (u.kind === 'system' ? `【進行】${u.content}` : `${nameOf(u.participantId)}: ${u.content}`))
-    .join('\n');
+  const all = transcript.map((u) =>
+    u.kind === 'system'
+      ? `【進行】${u.content.slice(0, MSG_MAX_CHARS)}`
+      : `${nameOf(u.participantId)}: ${u.content.slice(0, MSG_MAX_CHARS)}`,
+  );
+  // 末尾（最新）から上限まで詰め、超えたら古い側を落とす。
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const line = all[i];
+    const len = line.length + 1;
+    if (total + len > TRANSCRIPT_MAX_CHARS && kept.length > 0) break;
+    kept.push(line);
+    total += len;
+  }
+  kept.reverse();
+  const truncated = kept.length < all.length;
+  const lines = truncated ? ['（前半の発言は文字数上限のため省略）', ...kept] : kept;
+  return { text: lines.join('\n'), truncated };
+}
+
+// ── 文字列正規化ヘルパー（overall 評価用）─────────────────────────────
+function s(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+function sArr(v: unknown, max = 3): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, max);
 }
 
 export function buildRoomFeedbackUser(input: {
@@ -179,12 +215,14 @@ export function buildRoomFeedbackUser(input: {
     ...input.humans.map((h) => `- id="${h.participantId}" ${h.displayName}`),
     '',
     'GD のやり取り（全ログ）:',
-    transcriptText(allParticipants, input.transcript),
+    buildTranscript(allParticipants, input.transcript).text,
     '',
     '上記の発言内容を根拠に、評価対象の各人について評価してください。',
     'goodQuotes は評価対象本人の「実際の発言」からの短い抜粋のみ（作文しない・言い換えない・原文どおり）。',
     'matchingHints は就活のマッチング傾向（例: 戦略コンサル/営業/PM/マーケ/人事 との相性）。',
     '  ただし断定は禁止。「傾向として〜の可能性がある」レベルの表現に必ず留める。1〜3個。',
+    'overall は議論そのもの（room 全体）への評価。roleEstimates は評価対象（人間）の役割傾向を、',
+    '  発言の根拠がある範囲でのみ推定する（断定しない・根拠が薄ければ空配列でよい・AI参加者は含めない）。',
     '',
     '出力は次の JSON のみ（前後に説明文やコードブロック記号を付けない）:',
     '{',
@@ -201,10 +239,71 @@ export function buildRoomFeedbackUser(input: {
     '      "matchingSummary": string     // 相談AI等へ渡す1〜2文の要約',
     '    }',
     '    // ... 評価対象の人数分',
-    '  ]',
+    '  ],',
+    '  "overall": {',
+    '    "summary": string,              // 議論全体の要約（2〜4文）',
+    '    "pointOrganization": string,    // 論点整理ができていたか（1〜2文）',
+    '    "conclusionClarity": string,    // 結論が明確だったか（1〜2文）',
+    '    "processComment": string,       // 議論の進め方（時間配分・役割分担など・1〜2文）',
+    '    "goodPoints": string[],         // 議論全体として良かった点（1〜3個）',
+    '    "improvements": string[],       // 議論全体の改善点（1〜3個）',
+    '    "nextThemes": string[],         // 次回の練習テーマ（1〜3個）',
+    '    "roleEstimates": [              // 役割傾向（人間のみ・根拠が薄ければ [] ・断定しない）',
+    '      { "participantId": string, "role": "進行役|アイデア出し役|分析役|調整役|結論形成役|傾聴支援役 等", "note": string }',
+    '    ]',
+    '  }',
     '}',
   );
   return lines.join('\n');
+}
+
+// AI overall 出力 → 正規化済み CareerGdRoomOverallEvaluation（人間のみ・上限・断定回避）。
+// 中身が空なら null（UI 非表示）。roleEstimates は既知の人間 participantId のみ採用。
+export function normalizeRoomOverall(
+  raw: unknown,
+  humans: { participantId: string; displayName: string }[],
+  truncated: boolean,
+): CareerGdRoomOverallEvaluation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const nameByPid = new Map(humans.map((h) => [h.participantId, h.displayName]));
+  const roleEstimates: CareerGdRoomRoleEstimate[] = (Array.isArray(r.roleEstimates) ? r.roleEstimates : [])
+    .map((e): CareerGdRoomRoleEstimate | null => {
+      if (!e || typeof e !== 'object') return null;
+      const o = e as Record<string, unknown>;
+      const pid = s(o.participantId);
+      const displayName = nameByPid.get(pid);
+      if (!pid || !displayName) return null; // 人間のみ・存在する pid のみ（AI/捏造を除外）
+      const role = s(o.role).slice(0, 24);
+      if (!role) return null;
+      const note = s(o.note).slice(0, 120);
+      return { participantId: pid, displayName, role, ...(note ? { note } : {}) };
+    })
+    .filter((x): x is CareerGdRoomRoleEstimate => x !== null)
+    .slice(0, humans.length);
+
+  const overall: CareerGdRoomOverallEvaluation = {
+    version: 1,
+    summary: s(r.summary).slice(0, 800),
+    pointOrganization: s(r.pointOrganization).slice(0, 600),
+    conclusionClarity: s(r.conclusionClarity).slice(0, 600),
+    processComment: s(r.processComment).slice(0, 600),
+    goodPoints: sArr(r.goodPoints),
+    improvements: sArr(r.improvements),
+    nextThemes: sArr(r.nextThemes),
+    roleEstimates,
+    ...(truncated ? { truncated: true } : {}),
+  };
+  const hasContent =
+    overall.summary ||
+    overall.pointOrganization ||
+    overall.conclusionClarity ||
+    overall.processComment ||
+    overall.goodPoints.length > 0 ||
+    overall.improvements.length > 0 ||
+    overall.nextThemes.length > 0 ||
+    overall.roleEstimates.length > 0;
+  return hasContent ? overall : null;
 }
 
 // AI 呼び出し（parse 失敗時のみ temperature 0 で 1 回再試行）。
@@ -213,14 +312,20 @@ export async function generateRoomFeedback(input: {
   humans: PromptParticipant[];
   ais: PromptParticipant[];
   transcript: PromptUtterance[];
-}): Promise<{ participants: Record<string, unknown>[] } | null> {
+}): Promise<{
+  participants: Record<string, unknown>[];
+  overall: Record<string, unknown> | null;
+  truncated: boolean;
+} | null> {
   const system = buildRoomFeedbackSystem();
   const user = buildRoomFeedbackUser(input);
+  // overall（議論全体）ぶんの出力余地を確保するため上限を少し引き上げる（STEP-GD-27）。
+  const { truncated } = buildTranscript([...input.humans, ...input.ais], input.transcript);
   for (let attempt = 1; attempt <= 2; attempt++) {
     const message = await anthropic.messages.create(
       {
         model: CAREER_GD_MODEL,
-        max_tokens: 4096,
+        max_tokens: 5120,
         temperature: attempt === 2 ? 0 : 0.4,
         system,
         messages: [{ role: 'user', content: user }],
@@ -235,7 +340,12 @@ export async function generateRoomFeedback(input: {
     try {
       const parsed = JSON.parse(extractJson(raw)) as Record<string, unknown>;
       if (Array.isArray(parsed.participants)) {
-        return { participants: parsed.participants as Record<string, unknown>[] };
+        // overall はオプション（欠落しても per-person 評価は成立させる＝非破壊）。
+        const overall =
+          parsed.overall && typeof parsed.overall === 'object'
+            ? (parsed.overall as Record<string, unknown>)
+            : null;
+        return { participants: parsed.participants as Record<string, unknown>[], overall, truncated };
       }
     } catch {
       /* retry */

@@ -345,6 +345,67 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - **QA**: Playwright `@random-match` **4/4**（説明/選択/waiting詳細/cancel→再enter・成立→room＋由来バナー＋host/non-host・非公開・queue分離）・
         回帰 Playwright lobby 9/9＋counts+hostPrompt+invite 8/8＋participantApi 4/4＋@ratelimit 2/2・**Live API 回帰 17/17**（random/lobby/invite/hydrate/**cleanup cron 既存挙動**/rate limit）・rate unit 19/19・`tsc`/`lint`/`build`・secret scan clean。cleanup 全 0。
       - **残課題**: 期待待ち時間推定・自動 start・条件別（企業/業界/職種）マッチング（将来）。
-- [ ] STEP-GD-24 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
+- [x] STEP-GD-24: **Realtime Room 基盤（Presence / room・participant 変更購読・自動再接続）**。公開GD・招待GD・ランダムマッチGD 共通で使える
+      Realtime レイヤを追加（**基盤のみ**。発言 Realtime / Broadcast / AI / 評価 / タイマー / 音声 / OpenAI は非対象）。
+      - **lib [`lib/careerGd/realtimeRoom.ts`](../../lib/careerGd/realtimeRoom.ts)**: `CareerGdRealtimeRoom`（非 React）が 1 room = 1 channel で
+        `subscribe / unsubscribe / reconnect` を管理（**重複購読禁止**・通信断は指数バックオフで自動再接続・再接続後は `onSyncSignal` で現在状態を取り直す）。
+        購読対象は `career_gd_rooms`（status/started_at/finished_at/theme/人数）と `career_gd_room_members`（joined/left/role/host）の postgres_changes、
+        および Supabase Presence（online/connecting、offline は presence 不在で表現）。React から Supabase Realtime を直接触らせない唯一の実装点。
+      - **hook [`hooks/useCareerGdRealtime.ts`](../../hooks/useCareerGdRealtime.ts)**: `{ room, participants, connectionState, presenceMap, reconnect(), subscribe(), unsubscribe() }` を返す。
+      - **UI（`/career/gd/room/[roomId]`）**: 既存デザイン維持のまま `MembersCard` に **● オンライン / ○ オフライン**（人間のみ）と控えめな接続バッジを追加（`data-testid=gd-presence-dot`/`gd-connection-badge`）。
+        **既存ポーリングは正本として維持**し、realtime は presence 表示と「変更シグナル→API 再取得」の付加のみ（非破壊）。
+      - **DB 前提（本 STEP では変更しない）**: `career_gd_*` は RLS deny-by-default・realtime publication 未追加のため、現行 DB では postgres_changes は配信されない場合がある
+        （Presence は channel 層で機能）。配信有効化は運用者が publication 追加 + owner-select RLS を適用する必要あり（GD-14.5 / GD-19 と同じ「コード先行」方式）。**SQL・既存 API・既存 UI・既存 E2E は不変**。
+      - QA: `tsc` 0 / `eslint` 0 / `build` 成功。既存 API・SQL・受験版への影響なし。
+- [x] STEP-GD-25: **Realtime 発言同期（optimistic UI + Realtime INSERT + fallback poll）**。GD-24 基盤の上に発言同期を追加（AI評価/音声/OpenAI/タイマーは非対象）。
+      - **送信 API は既存を利用（新規なし）**: `POST /api/career/gd/room/[roomId]/messages` が atomic seq RPC `career_gd_post_message`（app 層 fallback つき）・`client_msg_id` 冪等・
+        権限チェック（member / room 参加 / active のみ / 退室不可 / 600 字上限）を既に備える。クライアントは `career_gd_room_messages` に直接 insert しない（必ず API 経由）。
+      - **lib**: `CareerGdRealtimeRoom` に messages 購読（`career_gd_room_messages` INSERT・`room_id=eq`）と `onMessageInsert(message, clientMsgId)` を追加。`subscriptions` フラグと `channelName` を導入し、
+        既定（presence+room+members・messages 無効）は GD-24 挙動を不変に保つ。
+      - **hook [`hooks/useCareerGdMessages.ts`](../../hooks/useCareerGdMessages.ts)**: `{ messages, pendingMessages, sendMessage, resendMessage, isSending, error, refreshMessages, connectionState, latestSeq }`。
+        初回 full fetch＋3秒 diff poll（fallback）＋ messages 専用 channel `career-gd-messages-<roomId>`（presence とは別 channel）＋ optimistic（sending/failed・`client_msg_id` で確定対応付け）。
+        ソート＝seq 昇順→created_at 昇順、pending は末尾。重複除去＝message id →（realtime のみ）client_msg_id → room_id+seq。
+      - **UI（`ActiveView`）**: 発言リストを hook に委譲（room/members/status poll は据置・messages 二重取得回避のため detail poll は `afterSeq=latestSeq`）。optimistic 表示（`PendingMessageRow`・`data-testid=gd-pending-message`）、
+        失敗時の再送ボタン、Enter 送信 / Shift+Enter 改行（IME 変換中は送信しない）、送信で入力欄即クリア＝多重送信防止。既存デザイン維持。
+      - **DB 前提（本 STEP では変更しない）**: `career_gd_room_messages` も realtime publication 未追加・参加者 SELECT RLS 未整備のため、現行 DB では Realtime INSERT は配信されない可能性がある。
+        その場合も **fallback poll / 手動再取得で破綻しない**（Realtime は「即時反映＋再取得シグナル」に限定・正本は API/DB）。配信有効化は運用者作業（下記）。
+      - QA: `tsc` 0 / `eslint` 0 / `build` 成功。既存 API・SQL・受験版への影響なし。
+      - **運用者向け（任意・Realtime 即時反映を有効化する場合）**: ① `career_gd_room_messages` を `supabase_realtime` publication に追加、② 参加者が自室 message を読める SELECT RLS（+ `GRANT SELECT TO authenticated`）を
+        既存 apply ファイルの契約に沿った冪等 SQL として別途用意。本 STEP では適用しない（コードは未適用でも安全縮退）。
+- [x] STEP-GD-26: **手動開始・終了・タイマー同期（GD 本番進行の中核）**。GD-24/25 の上に進行制御を実装（AI評価/音声/OpenAI/ファシリテーターは非対象）。
+      - **status 契約（確認結果・既存踏襲）**: `waiting → active → finished`（+ `cancelled`）。**active = 進行中**（GD-25 の送信可能状態と一致）。`current_phase`/`duration_minutes`/`ended_at`/`ready` 列は**存在しない**ため使わず、
+        `started_at`/`finished_at`/`time_limit_sec`（秒）を正本にする。`in_progress` 等の別名は追加しない。
+      - **開始 API（既存利用・新規なし）**: `POST /start` は host 限定・waiting 限定（409）・`status='waiting'` 条件付き UPDATE（同時開始レース耐性）で `status='active'` + **server now の `started_at`** + theme 確定 + AI 補完。
+        **人間の最少人数制約は無し**（不足は AI 補完＝既存契約）。クライアントは `career_gd_rooms` を直接 update しない。
+      - **終了 API（既存利用・新規なし）**: `POST /finish` は host 限定・`status='active'` 条件付き UPDATE（レース耐性）で `finished_at`=server now。**二重終了は冪等**（already finished→200）。手動終了と時間切れ自動終了で共用。
+      - **タイマー [`hooks/useCareerGdTimer.ts`](../../hooks/useCareerGdTimer.ts)（新規）**: `started_at + time_limit_sec` を正本に `remaining = started_at + limit − now` を計算。返却 `{ remainingMs, remainingSeconds, formattedTime, isExpired, progressRatio, shouldAutoFinish, hasStarted }`。
+        表示のみ 1 秒更新・**DB 書き込みなし**・全参加者が同一残り時間（started_at は DB 値）。再読込しても started_at から復元。
+      - **UI（`ActiveView`/`WaitingView`）**: ①時間切れ（`isExpired`）で入力欄・発言・AI ボタンを disabled（最終判定は send API の active 検証）。②**時間切れ自動終了**＝host クライアントが 1 回だけ `doFinish()`（`autoFinishedRef` で二重防止・server 冪等）、非 host は 403 のため叩かず status 変化を poll/realtime で受信。
+        ③手動終了＝既存（確認ダイアログ・ローディング・host のみ）。④`RemainingTime` を presentational 化（計算は hook）。⑤**waiting に fallback poll** を追加し、Realtime 無効環境でも非 host が host の手動開始を検知して active へ遷移（`data-testid=gd-remaining-time` 付与）。
+      - **Realtime / fallback**: 開始・終了は GD-24 の room postgres_changes（`onSyncSignal→refresh`）が有効なら即時反映、無効でも waiting poll / active detail poll / 手動更新で破綻しない（**Realtime は正本にしない**）。
+      - QA: `tsc` 0 / `eslint` 0 / `build` 成功。GD-25 発言同期・既存 start/finish/AI発言・presence 非破壊。
+      - **残課題**: host 不在で時間切れ→active のまま滞留する場合は GD-22 cleanup cron の abandoned-active soft-close に委ねる（非 host からの finish 権限付与は既存 host-only 契約変更になるため本 STEP 非対象）。
+- [x] STEP-GD-27: **終了後 AI 評価に「議論全体（room 全体）評価＋役割推定」を追加**。個人別評価・履歴保存・相談AI連携は STEP-GD-15/16/17 で既に完成しているため**全面再利用**し、唯一の未実装だった全体評価のみを非破壊で追加。
+      - **既存の再利用（変更なし）**: `POST /result`（finished 限定・member/参加者・冪等 version=2・人間のみ 6 軸・AI 除外・server 決定論 rank/grade・goodQuotes 検証）、`GdEvaluationDetail`、`careerGdRoomLogs`/`gdRoomLogStorage`/`appendGdRoomLog`、`/career/gd/view`、`consultationSummary`（相談AI連携）。**新 API・新 status・SQL 変更なし**。
+      - **追加（additive）**: `roomFeedback.ts` の AI 出力に `overall`（議論要約/論点整理/結論の明確さ/進め方/良かった点/改善点/次回テーマ/役割推定）を追加し `normalizeRoomOverall` で正規化（役割は**人間 participantId のみ**採用・断定回避・空可）。overall は**オプション**で、欠落しても per-person 評価は成立（非破壊）。型 `CareerGdRoomOverallEvaluation`/`CareerGdRoomRoleEstimate` 追加、`CareerGdRoomResultView`/`CareerGdRoomLog` に任意フィールド追加。
+      - **UI**: finished 画面と `/career/gd/view` 履歴詳細に `GdRoomOverallDetail`（新規・個人評価の前に表示）。既存デザイン踏襲。
+      - **永続化**: overall は **localStorage canonical（careerGdRoomLogs）** に保存（`source:'realtime_room'` も付与）。DB は per-person mirror のまま（SQL 不要）。冪等再取得（version=2）では API が overall を返さないため、FinishedView が **localStorage の前回生成分にフォールバック**して表示・保存を維持。
+      - **コスト対策（⑭）**: AI へ渡す発言ログを 1 発言 600 字・全体 24000 字で上限化（超過は古い側を省略＝最新優先）。省略時は overall に `truncated:true` を持たせ UI に注記。出力 max_tokens 4096→5120。
+      - QA: `tsc` 0 / `eslint` 0 / `build` 成功。GD-24〜26（presence/発言同期/タイマー）・既存 result/history/consultation・受験版いずれも非破壊。
+      - **既知の限界**: 別デバイス（localStorage 非共有）で version=2 済み room を再取得すると overall は表示されない（per-person は DB hydrate 可・overall は localStorage canonical のため）。DB 永続が必要なら運用者作業（下記）。
+- [x] STEP-GD-28: **入口導線→Realtime room 接続の確認・本番導線QA（コード修正は最小1件）**。GD-24〜27 の Realtime room 本体を既存GD入口に安全接続。
+      - **確認結果（コード変更なしで妥当）**: ランダムマッチ成立→`matchRedirectTo`=`/career/gd/room/[roomId]`、合言葉 join→同 room、公開ロビー→同 room。**room 画面は 1 つに統一**（`app/career/gd/room/[roomId]/page.tsx`・旧 session/別result画面なし）。**自動開始なし**（`status='active'` を書くのは start route のみ・match RPC は `status='waiting'` で room 作成／SQL 240 行目で確認）。host=最古の待機者。room detail API が正本・GD-24〜26 の fallback poll 維持・Realtime は補助（onSyncSignal→refresh / presence）。client から `career_gd_*` への直接 insert/update なし（realtime は購読のみ）。
+      - **修正（1件）**: `app/career/gd/room/create/page.tsx` の作成後画面に残っていた **STEP-GD-11 の陳腐化文言**（「ロビー・参加受付は近日公開」「GD進行は次のアップデートで提供」＋**disabled ボタン「ロビーへ進む（近日公開）」**）を、実ルームへの導線に修正（`Link → /career/gd/room/${created.roomId}`「ルームに入る →」＋案内文更新）。これで**合言葉ホストが自分のルーム（waiting）へ入り手動開始できる**（従来は導線が死んでいた）。
+      - **live 本番DB read-only probe（ref `bhhmvupzcxoaonrowikg`・secret非出力）**: 列 contract 一致を確認。`career_gd_rooms` に `planned_participant_count`/`started_at`/`finished_at`/`time_limit_sec`/`room_type`/`join_policy` 存在、**`planned_count` は 42703 で存在しない**（reconciled 契約どおり）。members/messages(`client_msg_id`)/results(`self_feedback`/`ranking`/`matching_hints`/`overall_summary`)/`career_gd_match_queue`(`planned_count`/`status`/`room_id`/`expires_at`) すべて適用済み。書き込みなし。
+      - **E2E 不能理由**: 本番 auth users = 0（member 不在）。実ログインE2Eには email確認済み test member を service_role で作成する必要があり**運用者の明示許可が必要**（本STEPでは作成しない）。ランダムマッチ RPC 等は mutating のため read-only probe では未呼び出し（GD-21.2/GD-22 の live QA で解決済みを踏襲）。
+      - QA: `tsc` 0 / `eslint` 0 / `build` 成功。GD-24〜27・受験版いずれも非破壊。
+      - **運用者向け SQL（未適用・任意／即時Realtime配信のみに必要）**: `career_gd_rooms`/`career_gd_room_members`/`career_gd_room_messages` を `supabase_realtime` publication に追加＋参加者 SELECT RLS。**未適用でも fallback poll で全フロー成立**（room表示/waiting/host開始→poll反映/発言 3秒diff poll/finish/result）。
+- [~] STEP-GD-29: **実ログイン member 付きフル E2E QA — 前提未充足でブロック（コード変更なし）**。本番 ref `bhhmvupzcxoaonrowikg` に対し read-only で前提確認。
+      - **ブロッカー**: 本番 **auth users = 0**（admin API count で再確認）・`.env.local` に test member 資格情報なし・**opt-in フラグ `ALLOW_GD_TEST_USER_CREATE` 等も未設定**。指示のパスB（フラグ無しなら auth user を勝手に作らず報告して停止）に従い **member を作成せず**、招待/ランダム/認証必須 fallback/Realtime の実ログイン E2E は**実行不能**。
+      - **実施できた安全な QA**: ①DB contract は GD-28 の read-only probe 済み（全列一致・`planned_count` は 42703 で不在＝reconciled 契約維持）。②**コードレベル auth gate 監査**: GD の全 13 route が member 認証必須（room/create は `getUser()`+`is_anonymous`→401 `LOGIN_REQUIRED`、他は `authenticateGdMember`→401）。③自動開始なし・遷移先 `/career/gd/room/[roomId]`・fallback poll は GD-28 で確認済み。
+      - **環境制約**: サンドボックスは detached `next start` を即座に reap するため、ローカル実 HTTP gate probe は不安定（アプリのバグではない）。実ブラウザ/実ログイン E2E は運用者環境が必要。
+      - **バグ発見なし・修正なし**。`tsc`/`lint`/`build` clean。GD-24〜28・受験版 非破壊。
+      - **運用者が用意すべきもの（E2E 実行の前提）**: (1) email 確認済み test member を最低 **2 名**（host 用 user A / 参加者 user B）。service_role admin API で作成可。(2) その資格情報を安全に配置（例 `.env.local` の `GD_TEST_EMAIL_A/B`・`GD_TEST_PASSWORD`、または storageState）。(3) 使い捨て作成を許可するなら `ALLOW_GD_TEST_USER_CREATE=true`。(4) 実行後の cleanup 方針（test rooms/members/messages/results/match_queue を cascade 削除・test member 削除・全 career_gd_* を 0 行へ）。secret/PII は非出力。
+- [ ] STEP-GD-29 以降: 運用者が test member（≥2）を用意し次第 実ログイン フル E2E（招待/ランダム/fallback/評価保存/履歴）/ room 情報 hydrate / 全体評価の DB 永続 / Realtime publication+RLS 適用 / AI ファシリテーター・音声（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。
