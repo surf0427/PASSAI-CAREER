@@ -406,6 +406,11 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
       - **環境制約**: サンドボックスは detached `next start` を即座に reap するため、ローカル実 HTTP gate probe は不安定（アプリのバグではない）。実ブラウザ/実ログイン E2E は運用者環境が必要。
       - **バグ発見なし・修正なし**。`tsc`/`lint`/`build` clean。GD-24〜28・受験版 非破壊。
       - **運用者が用意すべきもの（E2E 実行の前提）**: (1) email 確認済み test member を最低 **2 名**（host 用 user A / 参加者 user B）。service_role admin API で作成可。(2) その資格情報を安全に配置（例 `.env.local` の `GD_TEST_EMAIL_A/B`・`GD_TEST_PASSWORD`、または storageState）。(3) 使い捨て作成を許可するなら `ALLOW_GD_TEST_USER_CREATE=true`。(4) 実行後の cleanup 方針（test rooms/members/messages/results/match_queue を cascade 削除・test member 削除・全 career_gd_* を 0 行へ）。secret/PII は非出力。
-- [ ] STEP-GD-29 以降: 運用者が test member（≥2）を用意し次第 実ログイン フル E2E（招待/ランダム/fallback/評価保存/履歴）/ room 情報 hydrate / 全体評価の DB 永続 / Realtime publication+RLS 適用 / AI ファシリテーター・音声（Phase3）。
+- [~] STEP-GD-29.5: **GD-24〜28 の実装を commit ＋ 実ログイン E2E 再試行（前提未充足で再びブロック）**。
+      - **commit**: 未コミットだった GD-24〜28 の realtime 実装一式を `feat(career): add realtime GD room flow (STEP-GD-24〜28)`（commit `2530b11`）で確定。**secret/PII/log/temp 混入なし**を確認（`.env.local` は `.gitignore` の `.env*` で除外・secret scan は「secret を含めない」旨のコメント 1 件のみヒット＝実 secret なし）。tree clean。
+      - **E2E 再判定＝パスC（不能）**: 本番 auth users = **0**（再確認）・`.env.local` に test member 資格情報なし・`ALLOW_GD_TEST_USER_CREATE` **未設定**。指示どおり **auth user を作成せず停止**。招待/ランダム/認証必須 fallback の実ログイン E2E は実行不能のまま。
+      - `tsc`/`lint`/`build` clean。コード変更なし（commit と docs のみ）。受験版・GD 既存機能 非破壊。
+      - **運用者が用意すれば即実行可能**: test member ≥2（user A/B・email_confirm 済み）＋資格情報の安全配置（`GD_TEST_EMAIL_A/B`・`GD_TEST_PASSWORD_A/B` or storageState）、または `ALLOW_GD_TEST_USER_CREATE=true`（使い捨て作成＋cleanup 前提）。
+- [ ] STEP-GD-29.5 以降: 運用者が test member（≥2）or `ALLOW_GD_TEST_USER_CREATE=true` を用意し次第 実ログイン フル E2E（招待/ランダム/fallback/評価保存/履歴）/ room 情報 hydrate / 全体評価の DB 永続 / Realtime publication+RLS 適用 / AI ファシリテーター・音声（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。
