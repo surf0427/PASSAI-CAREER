@@ -31,6 +31,7 @@ import {
   CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
   DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
 } from '@/lib/careerGd/participantCount';
+import { RandomMatchPanel } from './RandomMatchPanel';
 
 const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
 // 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
@@ -219,6 +220,9 @@ export default function CareerGdLobbyPage() {
         title="公開GDロビー"
         description="他の就活生が作ったGDルームに参加したり、自分で公開ルームを作成できます。人数が足りない場合はAIが補助参加します（ログインが必要）。"
       />
+
+      {/* ── A. ランダムマッチ（公開ロビーとは分離した自動マッチ導線） ── */}
+      <RandomMatchPanel />
 
       {/* ── B. 公開ルーム作成フォーム ── */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">

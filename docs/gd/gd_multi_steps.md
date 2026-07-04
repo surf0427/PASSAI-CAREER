@@ -420,3 +420,91 @@ Phase2「合言葉参加型マルチGD」の STEP 履歴。Phase1 ソロGD は�
   - **残課題**: ① 完全ランダムマッチ ② Realtime（Phase3）③ CI 用 Playwright browser setup ④ DB CHECK 4/6/8 の本番/preview 適用状況
      ⑤ Upstash Redis の本番/preview 設定状況 ⑥ room timeout / abandon cleanup ⑦ 将来的な Bot 対策/CAPTCHA/abuse monitoring。
      （**別デバイス hydrate 用 `career_gd_room_results` SELECT/RLS 整理は本 STEP で完了**。）
+
+## STEP-GD-21: 完全ランダムマッチ本体（完了・DB は運用者適用待ち）
+
+ユーザーが人数（4/6/8）を選び「ランダムマッチに参加」を押すと、同人数を希望する他 member と
+自動で room が成立し room 詳細へ遷移する **完全ランダムマッチ本体**。公開ロビー（20-B/C）とは
+分離した導線で、同じ `/career/gd/lobby` ページ上部に `RandomMatchPanel` として追加した。
+
+### 採用したマッチング方式（自動成立を優先）
+
+- **満員成立**: 同人数の waiting 待機者が planned に達したら即成立（4→4人 / 6→6人 / 8→8人）。
+- **AI 補完前提の早期成立（推奨方式）**: `人間 >= 2` かつ `最古の待機者が待機時間しきい値を超過`で成立。
+  しきい値は人数別 **4→30s / 6→45s / 8→60s**（成立後の不足分は既存 host start の AI 補完に委譲）。
+- **ソロ化防止**: 人間 1 人だけでは（待っても）成立させない（`min_humans=2`）。しばらく相手が来ない場合は
+  UI にソロGD導線を出す。
+- **手動開始方式は採らない**（自動成立に一本化。テスト安定性・実装安全性のため）。
+- しきい値はサーバ env `CAREER_GD_MATCH_WAIT_OVERRIDE_SEC`（**test/local 用**・本番未設定）で全人数一律に上書き可能
+  （body からは受け取らない）。E2E はこれを 1s 等にして早期成立を高速検証する想定。
+
+### DB（[`supabase/career_gd_match_queue_apply.sql`](../../supabase/career_gd_match_queue_apply.sql)・idempotent・**運用者適用待ち**）
+
+- **`career_gd_match_queue`**: `id / user_id(FK auth.users) / planned_count(CHECK IN 4,6,8) /
+  status(CHECK waiting|matched|cancelled|expired) / room_id(FK career_gd_rooms ON DELETE SET NULL) /
+  created_at / updated_at / matched_at / expires_at(default now()+10min)`。人数別キューは**1 テーブル＋planned_count 列**で表現。
+- **一意制約**: 部分 UNIQUE `career_gd_match_queue_one_waiting_per_user (user_id) WHERE status='waiting'`
+  ＝**同一 user は waiting を同時に 1 つだけ**（二重参加・二重投入・二重room を根本で防ぐ）。取り出し用の部分 index も追加。
+- **RLS**: 既存 career_gd_* と同じ **deny-by-default**（許可ポリシー無し・anon/authenticated 直アクセス不可）。
+  将来 authenticated 直読みを許すための `GRANT SELECT`＋owner-select policy は**コメントで用意（本 STEP では適用しない）**。
+- **競合制御 RPC（SECURITY DEFINER / `search_path=public,pg_temp` / service_role のみ EXECUTE）**:
+  - `career_gd_match_try(planned, min_wait, min_humans)`: 人数バケットの waiting を先着順に
+    **`FOR UPDATE SKIP LOCKED` で planned 件まで掴み**、成立条件を満たせば room（`room_type='random_match'` /
+    `join_policy='matched_only'` / `join_code_hash='rnd_'+uuid` / planned=選択人数 / status='waiting' /
+    host=最古の待機者）を作り、選ばれた user を members に insert、掴んだ queue 行を matched に更新。
+    SKIP LOCKED により同時 enter でも同じ待機者を二重に掴まない＝**二重 room・定員超過が起きない**。
+  - `career_gd_match_enter(p_user_id, planned, min_wait, min_humans)`: 人数バケットの
+    `pg_advisory_xact_lock`→期限切れ expire→matched 既存なら冪等返却→別人数 waiting は cancel（1 waiting/user 維持）→
+    同人数 waiting は再利用/無ければ insert→`match_try`→本人行を読み直して matched or waiting を返す。**INVALID_COUNT を RAISE**。
+  - `career_gd_match_poll(p_user_id, min_wait, min_humans)`: 本人の最新行を返す。waiting なら
+    バケット lock ＋ `match_try` を回して**polling で成立に収束**（新規 enter が無くても成立）。期限切れは expired 化。
+  - `career_gd_match_cancel(p_user_id)`: 本人の waiting を cancelled に。matched 後は対象外（room 移動済み）。
+  - `p_user_id` は **API が session.user.id を強制**（body の userId は受け取らない）。
+
+### API（member 必須・service_role・rate limit・DB 未適用は 503 縮退）
+
+- `POST /api/career/gd/match/enter`（[route](../../app/api/career/gd/match/enter/route.ts)）: 入力 `{plannedCount:4|6|8}`。
+  4/6/8 以外/未指定は **400 `INVALID_COUNT`**（既存 lobby/create と同じく入力検証を認証前に実施）。matched→`{status:'matched',roomId,redirectTo}` /
+  waiting→`{status:'waiting',queueId,plannedCount,waitingCount}`。
+- `GET /api/career/gd/match/status`（[route](../../app/api/career/gd/match/status/route.ts)）: 自分の状態。matched/waiting/cancelled/expired/none。polling 前提で rate 緩め。
+- `POST /api/career/gd/match/cancel`（[route](../../app/api/career/gd/match/cancel/route.ts)）: `{ok:true,cancelled}`。
+- 共通ヘルパー [`lib/careerGd/matchQueue.ts`](../../lib/careerGd/matchQueue.ts)（server-only・`isDbNotReady` 再利用で 503 縮退・`rnd_` 判定・wait override）／
+  型 [`lib/careerGd/matchQueueTypes.ts`](../../lib/careerGd/matchQueueTypes.ts)（client/server 共用・PII 非含有）。
+- **rate limit**（[`lib/rateLimit/index.ts`](../../lib/rateLimit/index.ts)・user 単位・hash key・既存 util 再利用）:
+  matchEnter **10/60s・30/3600s**、matchStatus **60/60s・600/3600s**（polling 用に緩め）、matchCancel **10/60s・30/3600s**。超過は 429 `RATE_LIMITED`。
+
+### UI（[`RandomMatchPanel`](../../app/career/gd/lobby/RandomMatchPanel.tsx)・lobby 上部）
+
+- 4/6/8 選択＋「ランダムマッチに参加」→ waiting 表示（`waitingCount` 表示）＋「マッチングをキャンセル」。
+- waiting 中 **5 秒 polling**（`GET /status`）：離脱時 interval cleanup・matched で `router.push`・cancel で停止・429 でも画面を壊さない。
+- matched は「マッチングしました。ルームへ移動します。」／waiting が続く（`waitingCount<=1` かつ 20s 経過）ときはソロGD導線。
+- 非機能 test hooks `data-testid="gd-random-match-panel"` / `data-phase` / `data-waiting-count`（挙動不変）。秘匿列は非表示。
+
+### random_match room の分離（公開ロビー / 合言葉 / invite と混在しない）
+
+- `join_code_hash='rnd_'+uuid`（非 hex）は既存合言葉 join の hex 検索に**構造上ヒットしない**＝合言葉/invite join 不可。
+- 公開ロビー一覧は `room_type='public_lobby'` 限定なので random_match は**一覧に出ない**。lobby/join も public_lobby 以外は 404。
+- room 詳細（`/career/gd/room/[roomId]`）は既存どおり member のみ閲覧可・host start / AI 補完 / message / finish / result / history は既存機能を再利用。
+
+### QA 結果
+
+- **SQL/マッチングロジック QA（実 Postgres エンジン=PGlite・42/42 PASS）**: DDL/RPC 適用・4/6/8 **満員成立=1 room・全員同 roomId・members 一致**・
+  **AI補完早期成立（人間2）**・**ソロ 1 人は不成立**・**人数別 queue 分離（4↔6 が別 room・planned 一致・相互不混入）**・冪等 enter（waiting 1 行）・
+  post-match の poll/enter 冪等（同 room）・cancel→再 enter・expired・**random room は public_lobby 一覧に出ない/hex 検索に乗らない**・人数切替で古い waiting を cancel。
+  ※ PGlite は単一接続のため**真の並行競合**は再現不可。競合安全性（advisory lock＋SKIP LOCKED）はロジック正当性＋コードレビューで担保。
+- **Live HTTP/API QA（`next start`・17/17 PASS）**: 未ログイン enter(valid)/status/cancel→**401**・enter(5/3/0/'x'/未指定)→**400 INVALID_COUNT**・
+  認証済み enter/status/cancel→**503 `DB_NOT_APPLIED`（queue 未適用の安全縮退）**・全レスポンスに **email/user_id/token を含まない**。test member は作成→削除（auth users delta 0）。
+- **Playwright E2E**: [`careerGdRandomMatch.spec.ts`](../../tests/e2e/careerGdRandomMatch.spec.ts) を追加（A enter/waiting/cancel・B 2人成立・
+  C 4人満員成立・D queue 分離・E 公開ロビー非表示）。**DB 未適用時は `data-phase` を見て自動 skip** する設計。
+  ⚠ **実ブラウザ matching 実行は DB（`career_gd_match_queue`）適用後**（本 STEP では未適用のため matching 系は未実行）。
+- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・rate limit unit **19/19**・secret scan clean。
+- **cleanup**: PGlite は in-memory（プロセス終了で消滅）・HTTP QA の test member 削除・全 career_gd_* table 0 行・auth users にテスト残留 0・
+  一時 QA スクリプト/依存（gitignore 済み `.e2e-tmp/`）を削除（credentials/storageState/token ファイルは未作成＝tracked 非混入）。
+
+### 残課題（STEP-GD-21 時点）
+
+- **DB 適用（運用者）**: `career_gd_match_queue_apply.sql` を対象 project（`bhhmvupzcxoaonrowikg`）へ適用（本 STEP では PostgREST 経由で DDL 実行不可＝コード先行・
+  20-A/RPC/results-hydrate と同じ「運用者が SQL 適用」方式）。適用後に **実ブラウザ matching E2E** と **実 DB 並行 enter 競合 QA** を実施。
+- Realtime（Phase3）／ CI 用 Playwright browser setup ／ DB CHECK 4/6/8 の本番/preview 適用状況 ／ Upstash Redis の本番/preview 設定 ／
+  room timeout / abandon cleanup（本 STEP は enter/poll 内の期限切れ expire のみの最小 stale cleanup）／ Bot/CAPTCHA/abuse monitoring ／
+  ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。

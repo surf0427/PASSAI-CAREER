@@ -145,4 +145,19 @@ export const CAREER_GD_RATE_LIMITS = {
     namespace: 'career_gd_invite_join',
     windows: [{ limit: 10, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
   },
+  // ランダムマッチ enter: 10/分・30/時（連打・二重投入を防ぐ）。
+  matchEnter: {
+    namespace: 'career_gd_match_enter',
+    windows: [{ limit: 10, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  // ランダムマッチ status: 60/分・600/時（5 秒 polling 前提で create/join より緩め）。
+  matchStatus: {
+    namespace: 'career_gd_match_status',
+    windows: [{ limit: 60, windowSeconds: 60 }, { limit: 600, windowSeconds: 3600 }],
+  },
+  // ランダムマッチ cancel: 10/分・30/時。
+  matchCancel: {
+    namespace: 'career_gd_match_cancel',
+    windows: [{ limit: 10, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
 } as const satisfies Record<string, RateLimitRule>;

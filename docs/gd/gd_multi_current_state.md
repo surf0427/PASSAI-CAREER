@@ -292,9 +292,33 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         loading/「別デバイス保存分も表示中」/失敗時の控えめ警告を表示。**owner-scoped 採用理由**: member-scoped は共有 room の他人 self_feedback が読めてしまい厳守事項に反するため。
         検証: **security/API 18/18**（A/B/C の自分のみ・他人不可視・401・PII非混入・共有room人数）・**Playwright @hydrate 4/4**（別デバイス復元/他人不可視/重複なし/DB失敗fallback）・
         **回帰 21/21＋@ratelimit 2/2＋counts 25/25＋rate unit 19/19**。cleanup で全 table 0・auth users 0。`tsc`/`lint`/`build`・secret scan clean。
-      - **残課題**: ① 完全ランダムマッチ（`career_gd_match_queue_{4,6,8}`）② Realtime（Phase3）③ CI 用 Playwright browser setup ④ DB CHECK 4/6/8 の本番/preview 適用状況
-        ⑤ Upstash Redis の本番/preview 設定状況 ⑥ room timeout / abandon cleanup ⑦ 将来的な Bot 対策/CAPTCHA。
-        （20-G/H/I/J/K に加え **20-L「結果履歴 DB hydrate / SELECT・RLS 整理」も完了**。）
-- [ ] STEP-GD-21 以降: 完全ランダムマッチ（`career_gd_match_queue`）/ room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
+      - **残課題**: ① Realtime（Phase3）② CI 用 Playwright browser setup ③ DB CHECK 4/6/8 の本番/preview 適用状況
+        ④ Upstash Redis の本番/preview 設定状況 ⑤ room timeout / abandon cleanup ⑥ 将来的な Bot 対策/CAPTCHA。
+        （20-G/H/I/J/K/L に加え **STEP-GD-21「完全ランダムマッチ本体」も完了**＝残課題①の完全ランダムマッチは解消。）
+- [x] STEP-GD-21: **完全ランダムマッチ本体（完了・DB は運用者適用待ち）**。ユーザーが人数（4/6/8）を選び「ランダムマッチに参加」で
+      同人数希望の他 member と自動で room 成立→room 詳細へ遷移。公開ロビーとは分離した `RandomMatchPanel`（`/career/gd/lobby` 上部）。
+      - **方式（自動成立を優先）**: 満員成立（planned に達したら即）＋ AI 補完前提の早期成立（人間≥2 かつ 最古待機者が
+        しきい値超過＝4→30s/6→45s/8→60s）。人間1人では成立させない（ソロ化防止・しばらく相手が来なければソロGD導線）。手動開始方式は不採用。
+        しきい値は env `CAREER_GD_MATCH_WAIT_OVERRIDE_SEC`（test/local 用・本番未設定・body 非経由）で一律上書き可。
+      - **DB（[`career_gd_match_queue_apply.sql`](../../supabase/career_gd_match_queue_apply.sql)・idempotent・運用者適用待ち）**:
+        `career_gd_match_queue`（人数別は planned_count 列・status waiting|matched|cancelled|expired・room_id FK・expires_at 10min）＋
+        **部分 UNIQUE `WHERE status='waiting'`（同一 user は waiting 1つ）**。RLS は deny-by-default（authenticated 直読み用 GRANT/policy はコメントで用意・未適用）。
+        競合制御 RPC（SECURITY DEFINER・service_role のみ）`career_gd_match_try/enter/poll/cancel`：バケット `pg_advisory_xact_lock`＋
+        **`FOR UPDATE SKIP LOCKED`** で二重 room・定員超過を原子的に防止。room は `room_type='random_match'`/`join_policy='matched_only'`/
+        `join_code_hash='rnd_'+uuid`（合言葉 join に構造上ヒットせず・公開ロビー一覧＝public_lobby 限定にも出ない）。host=最古の待機者。
+      - **API**（member 必須・service_role・DB 未適用は 503 縮退・`p_user_id`=session 強制）:
+        `POST /match/enter`（`{plannedCount}`・4/6/8 以外は 400 `INVALID_COUNT`）/`GET /match/status`（matched/waiting/cancelled/expired/none・5秒 polling 前提）/`POST /match/cancel`。
+        rate limit: enter 10/60s・30/3600s、status 60/60s・600/3600s、cancel 10/60s・30/3600s（超過 429）。
+      - **UI**: 4/6/8 選択→参加→waiting（`waitingCount` 表示）＋キャンセル・5秒 polling（matched で `router.push`・離脱で cleanup・429 でも壊さない）・
+        ソロGD導線。非機能 test hooks（`data-testid=gd-random-match-panel`/`data-phase`/`data-waiting-count`）。秘匿列は非表示。
+      - **QA**: **SQL/マッチングロジック（実 Postgres=PGlite・42/42）**＝4/6/8 満員成立=1room・全員同 roomId・AI補完早期成立・ソロ不成立・
+        **queue 分離（4↔6 別 room・相互不混入）**・冪等 enter・post-match 冪等・cancel/再enter・expired・**random room 非公開/hex 検索非該当**（真の並行競合は PGlite 単一接続のためロジック＋コードレビューで担保）。
+        **Live HTTP/API（`next start`・17/17）**＝未ログイン 401・不正人数 400 `INVALID_COUNT`・認証済み 503 `DB_NOT_APPLIED`・PII/token 非返却・test member 作成→削除（auth users 0）。
+        **Playwright** [`careerGdRandomMatch.spec.ts`](../../tests/e2e/careerGdRandomMatch.spec.ts)（enter/waiting/cancel・2人成立・4人満員・queue分離・公開ロビー非表示）を追加し
+        **DB 未適用時は自動 skip**（実ブラウザ matching は DB 適用後）。`tsc`/`lint`/`build`・rate unit 19/19・secret scan clean。cleanup で全 career_gd_* 0・auth users 0・一時 QA 資材（`.e2e-tmp/`）削除。
+      - **残課題**: 運用者による `career_gd_match_queue_apply.sql` 適用（適用後に 実ブラウザ matching E2E ＋ 実 DB 並行 enter 競合 QA）/ Realtime（Phase3）/
+        CI 用 Playwright browser setup / DB CHECK 4/6/8 の本番/preview 適用 / Upstash Redis 設定 / room timeout・abandon cleanup（本 STEP は期限切れ expire の最小 cleanup のみ）/
+        Bot/CAPTCHA/abuse monitoring / ランダムマッチ UX 改善（待機時間表示・自動 start・条件別/企業・業界・志望職種別マッチング）。
+- [ ] STEP-GD-22 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。
