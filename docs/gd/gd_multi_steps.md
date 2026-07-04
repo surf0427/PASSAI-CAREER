@@ -592,11 +592,22 @@ random_match / public_lobby / invite は room_type で区別せず、状態・TT
   **recent public_lobby・invite room は誤削除しない**／**old waiting でも result があれば残す**／**放置 active → soft-cancel（message は残す）**／
   **active/finished/result 済みは残す**／**finished は結果無くても消さない**／**old cancelled(no-result) 削除・result 付き cancelled は残す**／
   soft-cancel 直後は再削除されない（二段階）／stale_queue は終端古行のみ削除・**waiting は 30 日でも消さない**・recent terminal 残す／**dry-run は mutate しない**。
-- **route auth QA（live・5/5 PASS）**: 未認証 401・誤 secret 401・正 secret は DB へ到達（RPC 未適用時は 500・**secret/PII 非漏洩の clean error**）・レスポンスに CRON_SECRET/JWT/PII 非混入。
-- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・secret scan clean。
-- **⏳ 実DB cleanup QA（QA 用データ backdate → cleanup → 対象削除・非対象維持を実DBで確認）は `career_gd_cleanup_apply.sql` 運用者適用後に実施予定。**
+
+### STEP-GD-22.1: `career_gd_cleanup_apply.sql` 適用後の 実DB QA（**完了**）
+
+運用者が `career_gd_cleanup_apply.sql` を `bhhmvupzcxoaonrowikg` に適用（`Success. No rows returned`）。実DB に対して以下を完走（作業前後とも全 career_gd_* 0・auth users 0）：
+
+- **契約確認（10/10）**: 両 RPC が service_role で解決（**PGRST202/DB_NOT_APPLIED に落ちない**）・dry-run の jsonb キー camelCase（`abandonedWaiting/staleActive/cancelledRooms`・`terminalQueueRows`）が route 期待と一致。init 全 0。
+- **実DB cleanup QA（QA データ backdate・32/32 PASS）**: expire_stale で waiting queue 期限切れ→expired／**未開始 waiting room（60分超・結果なし）削除＋members cascade＋紐づく matched queue 行削除**／
+  **recent public_lobby・invite room は誤削除しない**／**old waiting でも result 付きは残す**／**放置 active（180分超・結果なし）→ cancelled soft-close・message は残す**／
+  **active/finished/result 付きは残す**／**finished は結果無くても消さない**／**old cancelled(no-result) 削除・result 付き cancelled は残す**／二段階（soft-cancel 直後は再削除なし）／
+  stale_queue は終端古行（7日超）3件のみ削除・**recent terminal 残す・waiting は 30日でも消さない**／**dry-run は mutate しない**。
+- **cron route live QA（12/12 PASS）**: 未認証 401・誤 CRON_SECRET 401・正 CRON_SECRET+dryRun 200（**mutate しない**）・**ttl override（`?waitingTtlMin=0`）が dry/real 両方で有効**・real で削除・**default ttl は recent room を残す**・レスポンスに CRON_SECRET/JWT/PII 非混入。
+- **既存回帰（live・14/14 PASS）**: random match enter→waiting/status/cancel・public lobby create/join/**host start→active**・invite create（joinCode 発行）/join/**host start→active**・GD result hydrate route（200 `{results}`/未ログイン 401）・**lobby create rate limit 429**。rate limit unit **19/19**。
+- **cleanup**: QA データ（auth users / rooms / members / messages / results / queue）を全削除 → **全 career_gd_* 0・auth users 0**・一時 QA 資材（`.e2e-tmp/`）削除。**本番データは触っていない**（QA データのみ mutate）。
+- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・secret scan clean。**コード変更なし**（本 STEP は QA と docs のみ）。
 
 ### 残課題（STEP-GD-22 時点）
 
-- `career_gd_cleanup_apply.sql` の運用者適用（PostgREST 経由で DDL 実行不可＝コード先行方式）。適用後に 実DB cleanup QA。
+- room timeout / abandon cleanup は **実DB QA まで完了**（cron は Vercel daily・手動 dry-run 可）。
 - finished room 自体の長期アーカイブ方針（現状は残す）／ Realtime（Phase3）／ CI 用 Playwright browser setup ／ Bot/CAPTCHA ／ ランダムマッチ UX 改善。
