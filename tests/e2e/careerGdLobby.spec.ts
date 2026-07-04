@@ -18,7 +18,7 @@ test.describe('GD public lobby browser E2E', () => {
     try {
       const top = await page.goto('/career/gd');
       expect(top?.status()).toBe(200);
-      await expect(page.getByText('公開ルームで練習する')).toBeVisible();
+      await expect(page.getByText('他の就活生とGD練習する')).toBeVisible();
 
       const lobby = await page.goto('/career/gd/lobby');
       expect(lobby?.status()).toBe(200);

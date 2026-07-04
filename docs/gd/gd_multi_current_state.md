@@ -336,6 +336,15 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
         active soft-cancel で message 保持／old cancelled 削除／stale_queue 終端のみ・waiting 保護／dry-run 非 mutate）・**契約 10/10**（RPC 解決・camelCase キー）・
         **cron route live 12/12**（401/401/正secret 200・dryRun 非mutate・ttl override 有効・default ttl は recent 残す・PII 非漏洩）・**回帰 live 14/14**（random match・lobby create/join/start・invite create/join/start・hydrate・rate limit 429）・rate unit 19/19・`tsc`/`lint`/`build`・secret scan clean。cleanup で全 career_gd_* 0・auth users 0（本番データ非 mutate）。
       - **残課題**: finished room 長期アーカイブ方針（現状 残す）。
-- [ ] STEP-GD-23 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
+- [x] STEP-GD-23: **ランダムマッチ UX 改善（フロント中心・DB/RPC 変更なし）**。実ユーザーが迷わず使えるよう表示・導線・状態説明を改善。
+      - **RandomMatchPanel 刷新**: 機能説明＋混同防止注記（公開ロビー/合言葉と別機能）・4/6/8 の目安説明・待機詳細（自動マッチング中/希望人数/**waitingCount**/**待機経過時間**/自動期限説明）・
+        polling の再試行通知（429/通信断でも待機維持）・成立時遷移メッセージ・**再読み込み耐性**（mount で status 復元）。**8 状態を明確化**（idle/entering/waiting/cancelling/cancelled/matched/expired/error＝`data-phase`）。
+      - **room 詳細**: random_match 由来バナー（`gd-random-origin`）＋**6桁コード共有案内を invite のみに限定**（従来 random/public でも誤表示していたのを修正）。host/非host 説明は既存踏襲。
+      - **ハブ**: 「他の就活生とGD練習する」でランダムマッチと公開ルームを並記。
+      - **API/DB**: RPC/route/スキーマ**変更なし**。`mapRoomRow` に `roomType`（既存 `room_type` 列の写像）＋型追加のみ。
+      - **QA**: Playwright `@random-match` **4/4**（説明/選択/waiting詳細/cancel→再enter・成立→room＋由来バナー＋host/non-host・非公開・queue分離）・
+        回帰 Playwright lobby 9/9＋counts+hostPrompt+invite 8/8＋participantApi 4/4＋@ratelimit 2/2・**Live API 回帰 17/17**（random/lobby/invite/hydrate/**cleanup cron 既存挙動**/rate limit）・rate unit 19/19・`tsc`/`lint`/`build`・secret scan clean。cleanup 全 0。
+      - **残課題**: 期待待ち時間推定・自動 start・条件別（企業/業界/職種）マッチング（将来）。
+- [ ] STEP-GD-24 以降: room 情報（theme/所要時間）を含む hydrate（rooms owner-select policy 検討）/ 面接・ES 連携 / Realtime（Phase3）。
 
 詳細な履歴は [`gd_multi_steps.md`](./gd_multi_steps.md) を参照。

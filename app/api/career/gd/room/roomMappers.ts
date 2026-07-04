@@ -8,6 +8,7 @@ import type {
   CareerGdRoomMember,
   CareerGdRoomMessage,
   GdRoomStatus,
+  GdRoomType,
   GdFormat,
   GdRole,
   GdTheme,
@@ -27,6 +28,10 @@ function asStatus(v: unknown): GdRoomStatus {
 
 function asFormat(v: unknown): GdFormat {
   return v === 'case' || v === 'abstract' ? v : 'free';
+}
+
+function asRoomType(v: unknown): GdRoomType {
+  return v === 'public_lobby' || v === 'random_match' ? v : 'invite';
 }
 
 function asRole(v: unknown): GdRole {
@@ -55,6 +60,7 @@ export function mapRoomRow(row: Row): CareerGdRoom {
     id: str(row.id),
     hostUserId: str(row.host_user_id),
     status: asStatus(row.status),
+    roomType: asRoomType(row.room_type),
     format: asFormat(row.format),
     theme: asTheme(row.theme),
     timeLimitSec: typeof row.time_limit_sec === 'number' ? row.time_limit_sec : 900,

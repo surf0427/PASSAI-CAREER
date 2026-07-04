@@ -145,11 +145,15 @@ export type CareerGdSession = {
 
 export type GdRoomStatus = 'waiting' | 'active' | 'finished' | 'cancelled';
 
+// room の種別（合言葉 / 公開ロビー / ランダムマッチ）。UI の導線・説明の出し分けに使う。
+export type GdRoomType = 'invite' | 'public_lobby' | 'random_match';
+
 // career_gd_rooms のクライアント表現（join_code_hash / room_salt はクライアントに渡さない）。
 export type CareerGdRoom = {
   id: string;
   hostUserId: string;
   status: GdRoomStatus;
+  roomType: GdRoomType;
   format: GdFormat;
   theme: GdTheme | null; // start 時に確定（waiting 中は未確定）
   timeLimitSec: number;

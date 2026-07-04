@@ -99,18 +99,20 @@ export default function CareerGdEntryPage() {
         />
       </div>
 
-      {/* 公開GDロビー（STEP-GD-20）。募集中の公開ルームに参加、または自分で公開ルームを作成。 */}
+      {/* 公開GDロビー（STEP-GD-20）＋ランダムマッチ（STEP-GD-21〜23）。どちらも /career/gd/lobby にある。 */}
       <div className="mt-4">
         <Card variant="soft" padding="md">
-          <h2 className="text-sm font-bold text-slate-800 mb-1">公開ルームで練習する</h2>
+          <h2 className="text-sm font-bold text-slate-800 mb-1">他の就活生とGD練習する</h2>
           <p className="text-xs text-slate-500 leading-relaxed mb-3">
-            募集中のGDルームを選んで参加できます。人数が足りない場合はAIが補助参加します（ログインが必要）。
+            <span className="font-semibold text-slate-700">ランダムマッチ</span>（人数を選ぶと同じ人数を希望する就活生と自動でマッチング）と、
+            <span className="font-semibold text-slate-700">公開ルーム</span>（募集中のルームを自分で選んで参加）を利用できます。
+            人数が足りない場合はAIが補助参加します（ログインが必要）。
           </p>
           <Link
             href="/career/gd/lobby"
             className="inline-flex items-center justify-center rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-teal-700"
           >
-            公開ロビーを見る →
+            ランダムマッチ・公開ロビーへ →
           </Link>
         </Card>
       </div>

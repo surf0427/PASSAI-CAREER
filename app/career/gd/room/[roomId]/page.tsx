@@ -217,6 +217,7 @@ function WaitingView({
     }
   }, [room.id, onRefresh, onStarted]);
 
+  const isRandom = room.roomType === 'random_match';
   return (
     <>
       <div className="flex items-center justify-end mb-4">
@@ -225,6 +226,20 @@ function WaitingView({
         </Button>
       </div>
 
+      {/* room 由来バナー（ランダムマッチ由来であることを明示・公開ロビー/合言葉との混同防止）。 */}
+      {isRandom && (
+        <div
+          className="mb-4 rounded-xl bg-indigo-50 ring-1 ring-indigo-100 px-4 py-3"
+          data-testid="gd-random-origin"
+        >
+          <p className="text-sm font-bold text-indigo-800">ランダムマッチで成立したルームです</p>
+          <p className="mt-1 text-xs text-indigo-700 leading-relaxed">
+            同じ人数（{planned}人）を希望した就活生と自動でマッチングされました。合言葉や公開ロビーからの参加ではありません。
+            不足している人数はAIメンバーが補完します。
+          </p>
+        </div>
+      )}
+
       <Card variant="soft" padding="md" className="mb-5">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">ルーム情報</p>
         <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm">
@@ -232,7 +247,8 @@ function WaitingView({
           <Info label="予定人数" value={`${room.plannedParticipantCount}人`} />
           <Info label="制限時間" value={`${Math.round(room.timeLimitSec / 60)}分`} />
         </div>
-        {isHost && (
+        {/* 6桁コード共有の案内は合言葉(invite) room のみ（ランダムマッチ・公開ロビーはコード無し）。 */}
+        {isHost && room.roomType === 'invite' && (
           <p className="mt-4 text-xs text-amber-700 leading-relaxed">
             あなたはホストです。参加コードはセキュリティのため再表示できません。作成時に表示された6桁コードを参加者に共有してください。
           </p>

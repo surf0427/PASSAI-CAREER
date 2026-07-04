@@ -610,4 +610,48 @@ random_match / public_lobby / invite は room_type で区別せず、状態・TT
 ### 残課題（STEP-GD-22 時点）
 
 - room timeout / abandon cleanup は **実DB QA まで完了**（cron は Vercel daily・手動 dry-run 可）。
-- finished room 自体の長期アーカイブ方針（現状は残す）／ Realtime（Phase3）／ CI 用 Playwright browser setup ／ Bot/CAPTCHA ／ ランダムマッチ UX 改善。
+- finished room 自体の長期アーカイブ方針（現状は残す）／ Realtime（Phase3）／ CI 用 Playwright browser setup ／ Bot/CAPTCHA ／ ランダムマッチ UX 改善（STEP-GD-23 で対応）。
+
+## STEP-GD-23: ランダムマッチ UX 改善（フロント中心・DB/RPC 変更なし）
+
+完全ランダムマッチを実ユーザーが迷わず使える状態にする UX 改善。**バックエンド（RPC/route）は不変**、
+表示情報が不足していた `room_type` のみ mapper で client に露出（**DB 変更なし＝既存列を写すだけ**）。
+
+### UX 改善内容
+
+- **[`RandomMatchPanel`](../../app/career/gd/lobby/RandomMatchPanel.tsx) を全面刷新**:
+  - 機能説明（「同じ人数を希望する就活生と自動マッチング」）＋**混同防止の注記**（「公開ロビー／合言葉参加とは別機能」）。
+  - **4/6/8 の選択に人数ごとの目安説明**（4=成立しやすい/6=標準/8=本番に近い・成立に時間）。
+  - **待機中の詳細表示**: 自動マッチング中インジケータ（pulse）・希望人数・**同じ条件で待機中の人数（waitingCount）**・**待機経過時間**・
+    自動期限切れの説明・成立時に自動遷移する旨。ソロGD 導線（相手が来ない時）。
+  - **polling の再試行/通知**: 429 や一時的通信断でも待機を壊さず、軽い通知（`role="status"`）を出して次 tick で回復。
+  - **マッチ成立時の遷移メッセージ**（「マッチングしました。ルームへ移動します…」）。
+  - **再読み込み耐性**: マウント時に `GET /status` を 1 回だけ確認し、waiting/matched を復元。
+- **room 詳細（[`/career/gd/room/[roomId]`](../../app/career/gd/room/[roomId]/page.tsx) WaitingView）**:
+  - random_match room に **由来バナー**（`data-testid="gd-random-origin"`「ランダムマッチで成立したルームです」＋同人数マッチ・AI補完の説明）。
+  - **6桁コード共有の案内を invite room のみに限定**（従来は random_match/public_lobby でも「コードを共有」と誤表示していたのを修正）。
+  - host/非host の説明は既存（STEP-20-J）を踏襲（host=「あなたがホストです」＋AI補完人数、非host=「ホストの開始を待っています」）。
+- **GD ハブ（[`/career/gd`](../../app/career/gd/page.tsx)）**: 「他の就活生とGD練習する」カードで **ランダムマッチ**（自動マッチ）と **公開ルーム**（自分で選ぶ）を並記し導線を明確化。
+
+### 状態別 UI の整理（8 状態）
+
+`idle / entering / waiting / cancelling / cancelled / matched / expired / error` を明確に分離（`data-phase` に反映）。
+`idle/entering/cancelled/expired/error` は選択UI（状態バナー付き）／`waiting/cancelling` は待機詳細＋キャンセル／`matched` は遷移メッセージ。
+
+### API / DB 変更
+
+- **RPC / route / DB スキーマは変更なし**。`roomMappers.mapRoomRow` に `roomType`（既存 `room_type` 列を写像）＋型 `CareerGdRoom.roomType` / `GdRoomType` を追加したのみ（room GET は `select('*')` で既に取得済み）。
+
+### QA 結果
+
+- **Playwright `@random-match`（4/4 PASS・server `CAREER_GD_MATCH_WAIT_OVERRIDE_SEC=0`）**: A 説明表示＋4/6/8選択＋waiting詳細（人数/待機時間/waitingCount）＋**cancel→cancelled→再enter**／
+  B 2人成立→room遷移＋**random_match 由来バナー表示・6桁コード案内なし**＋host/non-host 説明分岐→host start→AI補完2→active／C 公開ロビー非表示／D queue 分離。
+- **既存回帰（Playwright）**: careerGdLobby **9/9**（ハブ文言変更に合わせ spec 1 行更新）・careerGdCounts＋HostPrompt＋Invite **8/8**・participantApi **4/4**・`@ratelimit` **2/2**。
+- **Live API 回帰（17/17）**: random match enter/status/cancel・lobby create/join/start・invite create/join/start・hydrate 200/401・**GD cleanup cron 401/dryRun 200/PII非漏洩（既存挙動不変）**・rate limit 429。rate unit **19/19**。
+- **static**: `tsc --noEmit` / `eslint`（full）/ `next build` clean・secret scan clean。cleanup で全 career_gd_* 0・auth users 0。
+
+### 残課題（STEP-GD-23 時点）
+
+- 待機人数の期待待ち時間の推定表示・自動 start・条件別（企業/業界/志望職種別）マッチングは将来課題。
+- expires_at をフロントに出す場合は RPC 戻り値に追加が必要（本 STEP では経過時間表示＋expired 状態で代替）。
+- Realtime（Phase3）／ CI 用 Playwright browser setup ／ Bot/CAPTCHA。
