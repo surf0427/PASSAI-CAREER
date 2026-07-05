@@ -24,6 +24,8 @@ import { loadCompanyResearchLogs } from '@/app/career/company-research/companyRe
 import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
+import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
+import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
 import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
@@ -79,6 +81,9 @@ function buildConsultationContext(gdResultId?: string | null) {
     gd: gdConsultationContext(gdResultId),
     // STEP-GD-17: マルチGD の 6 軸評価を参考シグナルとして追加（最新3件・採点済みのみ）。
     gdRoom: buildLatestGdRoomSignals(loadGdRoomLogs(), 3),
+    // STEP-CONSULT-03: 企業マッチング結果（最新2件・軽量スナップショット）。
+    // 司令塔が「自己理解 × 企業理解」を横断し、就活軸とのズレを指摘できるようにする。
+    matching: buildLatestMatchingConsultationSnapshots(loadMatchingLogs(), 2),
   };
 }
 

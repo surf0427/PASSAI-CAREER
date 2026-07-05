@@ -52,11 +52,6 @@ const FEATURES = [
     href: '/career/es',
   },
   {
-    key: 'essay',
-    title: '小論文練習',
-    description: 'テーマに沿って小論文を書き、AIからフィードバックをもらいます。',
-  },
-  {
     key: 'interview',
     title: '面接練習',
     description: '新卒就活の面接官AIと、質問→回答→深掘りのターン形式で練習できます。',

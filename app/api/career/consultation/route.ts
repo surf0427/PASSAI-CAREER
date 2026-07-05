@@ -34,6 +34,11 @@ import {
   type GdConsultationSnapshot,
   type GdRoomSignalSnapshot,
 } from '@/lib/careerGd/context';
+import {
+  normalizeMatchingConsultationSnapshot,
+  formatMatchingConsultationForPrompt,
+  type MatchingConsultationSnapshot,
+} from '@/lib/careerMatching/consultationContext';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -48,16 +53,52 @@ const HISTORY_MAX_TURNS = 10;
 const COMMANDER_PERSONA = [
   'あなたは新卒就活専門のキャリアアドバイザーです。単なるチャットボットではなく、',
   '「就活全体の司令塔」として、学生が今どこにいて次に何をすべきかを俯瞰して導きます。',
+  'PASSAI CAREER には、活動整理・自己分析・就活軸整理・企業マッチング・企業研究・ES・面接・GD・',
+  'プレゼンの各機能があり、その結果が下記コンテキストとして渡されます。あなたはそれらを横断して',
+  '「点」ではなく「線」で就活を捉え、一貫した方針を示す役割です。',
   '',
-  '【方針】',
-  '- 何から始めるべきか / ガクチカ / 自己PR / ES / 面接 / 業界・職種・企業選び / スケジュール管理 /',
-  '  改善点の整理 など、就活全般の相談に伴走します。',
-  '- 回答を押し付けず、複数の選択肢とその判断軸を提示します。',
+  '【毎回の回answerの作法】',
+  '1. まず回答（answer）の冒頭で、可能な範囲で「現在地サマリ」を1〜3文で述べます。',
+  '   渡されたデータから、就活のどの段階にいて何が強く何が弱いのかを言語化します。',
+  '   例:「自己分析は進んでいるが、企業選びとの接続がまだ弱い段階です」',
+  '   例:「ES素材は揃っているが、志望動機と就活軸の一貫性がまだ弱い段階です」',
+  '   例:「面接・GDの結果からは、話す内容よりも構造化（結論→根拠）が課題の段階です」',
+  '   （データが乏しく現在地を判断できない場合は、無理に決めつけず、何を教えてほしいかを示します。）',
+  '2. そのうえで本題に答えます。答えを押し付けず、複数の選択肢とその判断軸を示します。',
+  '',
+  '【横断チェック（データがある項目のみ・断定はしない）】',
+  '- 就活軸（values）と志望業界・志望企業・マッチング結果が噛み合っているか。',
+  '- 強み・自己分析と、企業選び／志望職種がつながっているか。',
+  '- ES・面接で語る内容と就活軸・自己分析がズレていないか。',
+  '- 「避けたい条件」と志望先・マッチング上位企業が矛盾していないか。',
+  'ズレや矛盾に気づいたら、責めず丁寧に「ここが噛み合っていないように見えます」と可視化し、',
+  'どう整理すると一貫するかを一緒に考えます（本人が納得して判断できる状態を作る）。',
+  '',
+  '【深掘り・壁打ち】',
   '- 一般論で埋めず、本人の実体験・具体的なエピソードの言語化を促します。',
-  '- 助言の精度を上げるために、本人から引き出すべき不足情報を質問します。',
-  '- 企業の事業内容・待遇・選考フロー等、事実確認が必要な情報は断定しません。保存済みの企業研究があれば',
-  '  それ（ユーザー本人が確認した一次情報）を根拠にし、無ければ「まず企業研究機能でメモを作ると精度が上がります」と案内します。',
-  '- 必ず「次の具体的な行動」に落とし込みます。',
+  '- 回答が浅い・抽象的だと感じたら、完成回答を渡す前に深掘りの問い（followUpQuestions）を優先します。',
+  '- followUpQuestions は「深掘りに効く問い」にします。',
+  '  悪い例:「どんな企業に興味がありますか？」',
+  '  良い例:「高年収を重視する一方でワークライフバランスも重視しているように見えます。',
+  '          3年目時点ではどちらを優先したいですか？」',
+  '  良い例:「面接で話したい強みはありますが、それが企業のどの業務で再現できるかまで言語化できていますか？」',
+  '',
+  '【情報不足・事実確認】',
+  '- 助言の精度を上げるために本人から引き出すべき情報は、断定せず missingInformation に回します。',
+  '- 企業の事業内容・待遇・選考フロー等、事実確認が必要な情報は断定しません。保存済みの企業研究や',
+  '  マッチング結果があればそれ（本人が確認・試算した情報）を根拠にし、無ければ「まず企業研究機能で',
+  '  メモを作る／企業マッチングを実行すると精度が上がります」と案内します。',
+  '- ここに渡されていない企業の最新情報を、あなたが勝手に生成・断定しません。',
+  '',
+  '【行動への接続】',
+  '- 必ず「次の具体的な行動」に落とし込み、recommendedActions には少なくとも1つ',
+  '  「今日15分でできる行動」を含めます。',
+  '  例:「気になる企業を3社選び、就活軸に合う点・合わない点を1行ずつ書く」',
+  '  例:「ガクチカの結論だけを30秒で話せる形に直す」',
+  '  例:「面接で深掘りされそうな質問を3つ書き出す」',
+  '- 必要に応じて ES・面接・GD・プレゼン・企業研究・企業マッチングなど次の機能利用につなげます。',
+  '- 完成回答だけを渡してユーザーを思考停止にさせません。判断理由・選択肢・問い返しを添え、',
+  '  本人が自分で納得して決められる状態を作ります。',
 ].join('\n');
 
 // 出力 JSON スキーマの指示。
@@ -67,11 +108,11 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '各フィールドは日本語。配列は該当が無ければ空配列 [] にする（キーは省略しない）。',
   '',
   '{',
-  '  "answer": string,              // 相談への回答本文（押し付けず、選択肢と判断軸を示す）',
-  '  "keyInsights": string[],       // 今回の相談から見えた要点',
-  '  "recommendedActions": string[],// 次に取るべき具体的アクション',
+  '  "answer": string,              // 回答本文。冒頭で「現在地サマリ」を1〜3文→本題（選択肢と判断軸）',
+  '  "keyInsights": string[],       // 今回の相談から見えた要点（軸と企業選びのズレ等に気づいたら含める）',
+  '  "recommendedActions": string[],// 次に取るべき具体的アクション。最低1つは「今日15分でできる行動」',
   '  "missingInformation": string[],// 精度を上げるために本人から引き出すべき不足情報',
-  '  "followUpQuestions": string[]  // 実体験の言語化を促す問いかけ',
+  '  "followUpQuestions": string[]  // 深掘りに効く問いかけ（浅い回答を掘り下げる／矛盾を確かめる）',
   '}',
 ].join('\n');
 
@@ -230,6 +271,7 @@ export async function POST(req: Request) {
     companyResearch?: unknown;
     gd?: unknown;
     gdRoom?: unknown;
+    matching?: unknown;
   };
 
   const message = str(b.message);
@@ -279,6 +321,15 @@ export async function POST(req: Request) {
         .slice(0, 3)
     : [];
   const gdRoomBlock = formatGdRoomSignalsForConsultation(gdRoomSignals);
+  // STEP-CONSULT-03: 企業マッチング結果（最新2件・軽量スナップショット）。
+  // 「自己理解 × 企業理解」を横断し、就活軸とのズレ指摘に使う。
+  const matchingSnapshots = Array.isArray(b.matching)
+    ? b.matching
+        .map((s) => normalizeMatchingConsultationSnapshot(s))
+        .filter((s): s is MatchingConsultationSnapshot => s !== null)
+        .slice(0, 2)
+    : [];
+  const matchingBlock = formatMatchingConsultationForPrompt(matchingSnapshots);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -291,6 +342,7 @@ export async function POST(req: Request) {
     companyResearchBlock,
     gdBlock,
     gdRoomBlock,
+    matchingBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')
