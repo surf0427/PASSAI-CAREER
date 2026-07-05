@@ -20,7 +20,12 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerPresentationFinalResult } from '@/types/careerPresentation';
-import type { CareerConsultationResult } from '@/types/careerConsultation';
+import type {
+  CareerConsultationResult,
+  CareerConsultationRecommendedAction,
+  CareerConsultationActionPriority,
+} from '@/types/careerConsultation';
+import { isCareerConsultationActionFeature } from '@/lib/careerConsultation/actionLinks';
 import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
 import {
   normalizeCompanyResearchSnapshot,
@@ -97,6 +102,8 @@ const COMMANDER_PERSONA = [
   '  例:「ガクチカの結論だけを30秒で話せる形に直す」',
   '  例:「面接で深掘りされそうな質問を3つ書き出す」',
   '- 必要に応じて ES・面接・GD・プレゼン・企業研究・企業マッチングなど次の機能利用につなげます。',
+  '  その行動が PASSAI の機能に対応するなら、recommendedActions の該当要素に feature キーを付け、',
+  '  ユーザーがその機能ページへすぐ進めるようにします（URL は書かず feature キーだけ）。',
   '- 完成回答だけを渡してユーザーを思考停止にさせません。判断理由・選択肢・問い返しを添え、',
   '  本人が自分で納得して決められる状態を作ります。',
 ].join('\n');
@@ -110,10 +117,25 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '{',
   '  "answer": string,              // 回答本文。冒頭で「現在地サマリ」を1〜3文→本題（選択肢と判断軸）',
   '  "keyInsights": string[],       // 今回の相談から見えた要点（軸と企業選びのズレ等に気づいたら含める）',
-  '  "recommendedActions": string[],// 次に取るべき具体的アクション。最低1つは「今日15分でできる行動」',
+  '  "recommendedActions": Action[],// 次に取るべき具体的アクション（下記 Action オブジェクトの配列）',
   '  "missingInformation": string[],// 精度を上げるために本人から引き出すべき不足情報',
   '  "followUpQuestions": string[]  // 深掘りに効く問いかけ（浅い回答を掘り下げる／矛盾を確かめる）',
   '}',
+  '',
+  '# recommendedActions（Action）の形式',
+  '各要素は次のオブジェクト。3〜5件。最低1件は「今日15分でできる行動」を含める。',
+  '{',
+  '  "label": string,      // 具体的な行動（必須）',
+  '  "feature"?: string,   // 対応機能。下の許可リストのキーだけ。無理に付けない（雑談・整理だけなら省略）',
+  '  "reason"?: string,    // なぜやるべきか（短く1文）',
+  '  "priority"?: string   // "high" | "medium" | "low" のいずれか',
+  '}',
+  '',
+  'feature の許可リスト（この文字列以外は使わない。URL は書かない＝アプリ側で導線を決める）:',
+  '  profile（基本情報） / activity（活動整理） / values（就活軸整理） / selfAnalysis（自己分析） /',
+  '  matching（企業マッチング） / es（ES作成） / interview（面接練習） / gd（GD練習） /',
+  '  presentation（プレゼン対策） / companyResearch（企業研究） / consultation（就活相談） / home（ホーム）',
+  '例: {"label":"ガクチカの結論を30秒で話せる形に直す","feature":"es","reason":"ESと面接の両方で使う中心素材のため","priority":"high"}',
 ].join('\n');
 
 function str(value: unknown): string {
@@ -239,12 +261,49 @@ function renderCompanyResearch(snapshots: CompanyResearchSnapshot[]): string {
   ].join('\n');
 }
 
+// priority を high/medium/low のみに正規化（不正なら undefined）。
+function normalizePriority(value: unknown): CareerConsultationActionPriority | undefined {
+  return value === 'high' || value === 'medium' || value === 'low' ? value : undefined;
+}
+
+// recommendedActions を「string（旧互換） / object（機能導線つき）」の配列に安全化する。
+// - AI の JSON 揺れに強く: string[] でも object[] でも受ける。
+// - label が空なら除外。feature は許可リスト外なら落とす。priority が不正なら省略。
+// - AI が返した href は一切採用しない（href は client 側で feature から解決する）。
+function normalizeRecommendedActions(value: unknown): CareerConsultationRecommendedAction[] {
+  if (!Array.isArray(value)) return [];
+  const out: CareerConsultationRecommendedAction[] = [];
+  for (const item of value) {
+    if (typeof item === 'string') {
+      const label = item.trim();
+      if (label) out.push(label);
+      continue;
+    }
+    if (item && typeof item === 'object') {
+      const rec = item as Record<string, unknown>;
+      const label = str(rec.label);
+      if (!label) continue;
+      const feature = isCareerConsultationActionFeature(rec.feature) ? rec.feature : undefined;
+      const reason = str(rec.reason);
+      const priority = normalizePriority(rec.priority);
+      out.push({
+        label,
+        ...(feature ? { feature } : {}),
+        ...(reason ? { reason } : {}),
+        ...(priority ? { priority } : {}),
+      });
+    }
+  }
+  // 暴走防止に上限を設ける（プロンプトは 3〜5 件を要求）。
+  return out.slice(0, 6);
+}
+
 function normalizeResult(raw: unknown): CareerConsultationResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
     answer: str(r.answer),
     keyInsights: strArray(r.keyInsights),
-    recommendedActions: strArray(r.recommendedActions),
+    recommendedActions: normalizeRecommendedActions(r.recommendedActions),
     missingInformation: strArray(r.missingInformation),
     followUpQuestions: strArray(r.followUpQuestions),
   };

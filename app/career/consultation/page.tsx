@@ -12,7 +12,12 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { LinkButton } from '@/components/ui/LinkButton';
 import { Textarea } from '@/components/ui/Textarea';
+import {
+  actionFeatureHref,
+  actionFeatureCta,
+} from '@/lib/careerConsultation/actionLinks';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { loadActivityData } from '@/app/career/activity/activityStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
@@ -43,6 +48,7 @@ import { upsertCareerConsultationThreadsToSupabase } from '@/lib/supabase/career
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
+  CareerConsultationRecommendedAction,
 } from '@/types/careerConsultation';
 
 const subscribeMount = () => () => {};
@@ -136,7 +142,7 @@ function CareerConsultationInner() {
   );
 
   const messages = currentThread?.messages ?? [];
-  const latestActions = useMemo<string[]>(() => {
+  const latestActions = useMemo<CareerConsultationRecommendedAction[]>(() => {
     const msgs = currentThread?.messages ?? [];
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
@@ -317,17 +323,13 @@ function CareerConsultationInner() {
         )}
       </div>
 
-      {/* 次のアクション */}
+      {/* 司令塔からの次アクション（最新回答分を上部に集約表示） */}
       {latestActions.length > 0 && (
         <Card variant="soft" padding="md" className="mb-5 ring-1 ring-blue-100 bg-blue-50/40">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次のアクション</p>
-          <ul className="list-disc pl-5 space-y-1.5">
-            {latestActions.map((a, i) => (
-              <li key={i} className="text-sm text-slate-700 leading-relaxed">
-                {a}
-              </li>
-            ))}
-          </ul>
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+            司令塔からの次アクション
+          </p>
+          <ActionList actions={latestActions} />
         </Card>
       )}
 
@@ -394,7 +396,9 @@ function Bubble({
       {r && (
         <div className="mt-3 flex flex-col gap-3">
           <MiniList title="ポイント" items={r.keyInsights} />
-          <MiniList title="おすすめの次の一手" items={r.recommendedActions} />
+          {r.recommendedActions.length > 0 && (
+            <ActionList title="この相談から進めること" actions={r.recommendedActions} />
+          )}
           <MiniList title="教えてほしいこと（不足情報）" items={r.missingInformation} />
           {r.followUpQuestions.length > 0 && (
             <div>
@@ -429,6 +433,81 @@ function MiniList({ title, items }: { title: string; items: string[] }) {
           <li key={i} className="text-sm text-slate-700 leading-relaxed">
             {item}
           </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// priority の控えめなチップ表示。
+const PRIORITY_META: Record<
+  NonNullable<Exclude<CareerConsultationRecommendedAction, string>['priority']>,
+  { label: string; className: string }
+> = {
+  high: { label: '優先度 高', className: 'bg-amber-50 text-amber-700 ring-amber-200' },
+  medium: { label: '優先度 中', className: 'bg-slate-100 text-slate-600 ring-slate-200' },
+  low: { label: '優先度 低', className: 'bg-slate-50 text-slate-500 ring-slate-200' },
+};
+
+function PriorityChip({
+  priority,
+}: {
+  priority: NonNullable<Exclude<CareerConsultationRecommendedAction, string>['priority']>;
+}) {
+  const meta = PRIORITY_META[priority];
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${meta.className}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+// 次アクション 1 件の表示。string（旧互換）はテキスト、object は理由・優先度・機能導線を出す。
+function ActionItem({ action }: { action: CareerConsultationRecommendedAction }) {
+  if (typeof action === 'string') {
+    return (
+      <li className="ml-5 list-disc text-sm text-slate-700 leading-relaxed">{action}</li>
+    );
+  }
+  const href = actionFeatureHref(action.feature);
+  const cta = actionFeatureCta(action.feature);
+  return (
+    <li className="rounded-lg bg-slate-50 ring-1 ring-slate-100 px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        {action.priority && <PriorityChip priority={action.priority} />}
+        <p className="flex-1 text-sm text-slate-800 leading-relaxed">{action.label}</p>
+      </div>
+      {action.reason && (
+        <p className="mt-1 text-xs text-slate-500 leading-relaxed">{action.reason}</p>
+      )}
+      {href && (
+        <div className="mt-2">
+          <LinkButton href={href} variant="secondary" size="sm">
+            {cta} →
+          </LinkButton>
+        </div>
+      )}
+    </li>
+  );
+}
+
+// 次アクション一覧。string / object を混在で安全に描画する（後方互換）。
+function ActionList({
+  title,
+  actions,
+}: {
+  title?: string;
+  actions: CareerConsultationRecommendedAction[];
+}) {
+  if (!actions || actions.length === 0) return null;
+  return (
+    <div>
+      {title && <p className="text-[11px] font-bold text-slate-500 mb-1.5">{title}</p>}
+      <ul className="flex flex-col gap-2">
+        {actions.map((a, i) => (
+          <ActionItem key={i} action={a} />
         ))}
       </ul>
     </div>
