@@ -39,6 +39,19 @@ export function Header() {
   // ロゴのみ（ナビ非表示）にするページ。
   const isLogoOnly = isAuthPage || isPricingPage;
 
+  // 就活版（/career 配下）では Home / 基本情報 のナビを就活版ページへ向ける。
+  // 受験版（それ以外）の既存挙動は変えない（従来どおり /home・/input/basic）。
+  const isCareer = pathname.startsWith('/career');
+  const navItems = isCareer
+    ? [
+        { label: 'Home', href: '/career/home' },
+        { label: '基本情報', href: '/career/profile' },
+      ]
+    : [
+        { label: 'Home', href: '/home' },
+        { label: '基本情報', href: '/input/basic' },
+      ];
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 shadow-sm">
       <div className="px-4 h-14 flex items-center gap-2 sm:gap-6">
@@ -79,8 +92,11 @@ export function Header() {
           </>
         ) : isLogoOnly ? null : (
           <nav className="flex items-center gap-1">
-            <NavLink href="/home" pathname={pathname}>Home</NavLink>
-            <NavLink href="/input/basic" pathname={pathname}>基本情報</NavLink>
+            {navItems.map((item) => (
+              <NavLink key={item.href} href={item.href} pathname={pathname}>
+                {item.label}
+              </NavLink>
+            ))}
           </nav>
         )}
       </div>
