@@ -435,9 +435,10 @@ export async function POST(req: Request) {
       const message_ = await anthropic.messages.create(
         {
           model: MODEL,
-          // answer は 500〜900字 + keyInsights/actions/missing/followUp の配列を含むため、
-          // 途中切れ（max_tokens truncation → 502）を避けるべく余裕を持たせる。
-          max_tokens: 2200,
+          // answer は 500〜900字 + keyInsights/actions/missing/followUp の配列を含む。
+          // QA で values+matching+企業研究のリッチ文脈時に 2200 では途中切れ（502
+          // AI_CONSULTATION_TRUNCATED）が発生したため、余裕を持たせる（maxDuration 80s 内）。
+          max_tokens: 3200,
           temperature: attempt === 2 ? 0 : 0.4,
           system: systemPrompt,
           messages: [...history, { role: 'user', content: message }],
