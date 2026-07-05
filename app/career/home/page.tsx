@@ -298,21 +298,22 @@ export default function CareerHomePage() {
         })}
       </div>
 
-      {/* マイページ（準備中）。受験版では /mypage へ遷移するが就活版は未コピー。 */}
+      {/* マイページ（就活ダッシュボード）。進捗・練習履歴・次アクションを集約した
+          就活版 /career/mypage へ遷移する（受験版 /mypage には遷移させない）。 */}
       <section className="mt-10">
-        <p className="text-xs text-gray-500 mb-3 px-1">学習の振り返り</p>
+        <p className="text-xs text-gray-500 mb-3 px-1">就活の振り返り</p>
         <Card variant="soft" padding="md">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="flex-1">
               <h2 className="text-base font-bold text-gray-800 mb-1.5">マイページ</h2>
               <p className="text-sm text-gray-600 leading-relaxed">
-                学習の積み重ねとスコア推移を見る
+                就活の進捗・練習履歴・次にやることをまとめて確認できます。
               </p>
             </div>
             <div className="shrink-0 sm:self-end">
-              <Button variant="outline" size="md" disabled>
-                準備中
-              </Button>
+              <LinkButton href="/career/mypage" variant="outline" size="md">
+                マイページを見る →
+              </LinkButton>
             </div>
           </div>
         </Card>
