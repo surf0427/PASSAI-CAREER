@@ -38,6 +38,12 @@ import {
   type ConsultationDataFlags,
 } from '@/lib/careerConsultation/starterSuggestions';
 import {
+  buildSelfAnalysisHistory,
+  buildEsHistory,
+  buildInterviewHistory,
+  buildPresentationHistory,
+} from '@/lib/careerConsultation/historySnapshots';
+import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
   buildLatestGdRoomSignals,
@@ -86,18 +92,16 @@ function computeConsultationDataFlags(): ConsultationDataFlags {
 // 相談AIに渡す横断コンテキストを localStorage から組み立てる。
 // gdResultId があれば、そのGD結果を優先して会話文脈に載せる。
 function buildConsultationContext(gdResultId?: string | null) {
-  const selfLogs = loadSelfAnalysisLogs();
-  const esLogs = loadEsLogs();
-  const interviewResults = loadInterviewResults();
-  const presentationResults = loadPresentationResults();
   return {
     profile: loadBasicInfo(),
+    // activity は全量ではなく相談用ダイジェスト（route 側で圧縮）。生データを渡し、route が truncate する。
     activity: loadActivityData(),
     values: loadCareerValues(),
-    selfAnalysis: selfLogs.length > 0 ? selfLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
-    presentationResult: presentationResults.length > 0 ? presentationResults[0].result : null,
+    // STEP-CONSULT-06: 最新1件ではなく「軽量な複数件＋推移」を渡す（最新3件まで・圧縮済み）。
+    selfAnalysisHistory: buildSelfAnalysisHistory(loadSelfAnalysisLogs(), 3),
+    esHistory: buildEsHistory(loadEsLogs(), 3),
+    interviewHistory: buildInterviewHistory(loadInterviewResults(), 3),
+    presentationHistory: buildPresentationHistory(loadPresentationResults(), 3),
     // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
     companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
     // GD練習結果。gdResultId があればその1件を優先、無い/見つからない場合は最新2件。

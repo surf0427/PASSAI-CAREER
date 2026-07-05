@@ -44,6 +44,17 @@ import {
   formatMatchingConsultationForPrompt,
   type MatchingConsultationSnapshot,
 } from '@/lib/careerMatching/consultationContext';
+import {
+  normalizeSelfAnalysisHistory,
+  normalizeEsHistory,
+  normalizeInterviewHistory,
+  normalizePresentationHistory,
+  formatSelfAnalysisHistoryForPrompt,
+  formatEsHistoryForPrompt,
+  formatInterviewHistoryForPrompt,
+  formatPresentationHistoryForPrompt,
+  compressCareerActivityForConsultation,
+} from '@/lib/careerConsultation/historySnapshots';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 
@@ -72,6 +83,15 @@ const COMMANDER_PERSONA = [
   '- ES内容 → 面接での深掘り質問への備え',
   '- GD/プレゼン結果 → 面接で語れる強み・改善点',
   '- 企業研究 → 志望動機 → 逆質問 → 面接対策',
+  '',
+  '【推移・繰り返しを見る（複数ログがある場合）】',
+  '自己分析・ES・面接・プレゼンは「最新1件」ではなく推移（最新→過去）が渡されることがあります。',
+  '- 最新結果だけで判断せず、推移メモも踏まえて全体の傾向を見ます。',
+  '- 同じ弱点・改善点が複数回繰り返されている場合は、最優先で取り組む課題として扱います。',
+  '- 強みが複数ログで一貫している場合は、ES・面接で使える「軸となる強み」として提案します。',
+  '- 評価（スコア等）が改善している場合は、次に伸ばすポイントを示します。',
+  '- 評価が下がっている場合は、原因を断定せず仮説として整理します。',
+  '- ログ間で内容が矛盾している場合（強み・志望業界・志望動機のブレ等）は、責めずに可視化します。',
   '',
   '【就活軸のズレ・矛盾を見抜く（データがある項目のみ・断定しない）】',
   '- 就活軸（values）と志望業界・志望企業・マッチング結果が噛み合っているか。',
@@ -345,10 +365,16 @@ export async function POST(req: Request) {
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
+    // 旧クライアント互換（最新1件）。新クライアントは *History 配列を送る。
     selfAnalysis?: CareerSelfAnalysisResult | null;
     es?: CareerEsResult | null;
     interviewResult?: CareerInterviewFinalResult | null;
     presentationResult?: CareerPresentationFinalResult | null;
+    // STEP-CONSULT-06: 軽量な複数件＋推移（最新3件まで・圧縮済みスナップショット）。
+    selfAnalysisHistory?: unknown;
+    esHistory?: unknown;
+    interviewHistory?: unknown;
+    presentationHistory?: unknown;
     companyResearch?: unknown;
     gd?: unknown;
     gdRoom?: unknown;
@@ -366,18 +392,38 @@ export async function POST(req: Request) {
   const history = sanitizeHistory(b.history);
 
   // 就活版共通基盤でプロフィール+活動の土台を組み、司令塔役割と横断コンテキストを重ねる。
+  // activity は 18 セクション全量だとトークンが重いため、相談用に圧縮（各配列3件・各文字列160字）してから渡す。
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
     profile: b.profile ?? null,
-    activity: b.activity ?? null,
+    activity: compressCareerActivityForConsultation(
+      b.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
+    ) as CareerActivityInput | null,
     values: b.values ?? null,
     userInput: '',
   });
 
-  const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
-  const esBlock = renderEs(b.es);
-  const interviewBlock = renderInterview(b.interviewResult);
-  const presentationBlock = renderPresentation(b.presentationResult);
+  // STEP-CONSULT-06: 最新3件の推移スナップショット（新クライアント）。
+  // 無ければ旧クライアント互換で「最新1件」ブロックにフォールバックする。
+  const selfAnalysisHistory = normalizeSelfAnalysisHistory(b.selfAnalysisHistory);
+  const esHistory = normalizeEsHistory(b.esHistory);
+  const interviewHistory = normalizeInterviewHistory(b.interviewHistory);
+  const presentationHistory = normalizePresentationHistory(b.presentationHistory);
+
+  // history があれば推移ブロック（見出し込み）、無ければ旧「最新1件」ブロック（見出しを付ける）。
+  const withHeader = (header: string, body: string) => (body ? `${header}\n${body}` : '');
+  const selfAnalysisBlock = selfAnalysisHistory.length
+    ? formatSelfAnalysisHistoryForPrompt(selfAnalysisHistory)
+    : withHeader('# 直近の自己分析結果', renderSelfAnalysis(b.selfAnalysis));
+  const esBlock = esHistory.length
+    ? formatEsHistoryForPrompt(esHistory)
+    : withHeader('# 直近の ES ドラフト', renderEs(b.es));
+  const interviewBlock = interviewHistory.length
+    ? formatInterviewHistoryForPrompt(interviewHistory)
+    : withHeader('# 直近の面接練習の結果', renderInterview(b.interviewResult));
+  const presentationBlock = presentationHistory.length
+    ? formatPresentationHistoryForPrompt(presentationHistory)
+    : withHeader('# 直近のプレゼン練習の結果', renderPresentation(b.presentationResult));
   // 保存済み企業研究（最大5件・軽量スナップショット）。
   const companyResearch: CompanyResearchSnapshot[] = Array.isArray(b.companyResearch)
     ? b.companyResearch
@@ -416,10 +462,10 @@ export async function POST(req: Request) {
     COMMANDER_PERSONA,
     buildCareerSystemPrompt(context),
     buildCareerFeatureInstruction(FEATURE_KEY),
-    selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
-    esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
-    interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
-    presentationBlock ? `# 直近のプレゼン練習の結果\n${presentationBlock}` : '',
+    selfAnalysisBlock,
+    esBlock,
+    interviewBlock,
+    presentationBlock,
     companyResearchBlock,
     gdBlock,
     gdRoomBlock,
