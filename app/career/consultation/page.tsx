@@ -425,6 +425,13 @@ function Bubble({
   const r = message.result;
   return (
     <div className="self-start w-full max-w-[95%] rounded-2xl bg-white ring-1 ring-slate-200 px-4 py-3">
+      {/* STEP-CONSULT-07: 現在地サマリ（あるときだけ）を回答本文の上に独立表示。旧履歴には無いので非表示。 */}
+      {r?.currentStatusSummary && (
+        <div className="mb-3 rounded-xl bg-blue-50/70 ring-1 ring-blue-100 px-3 py-2.5">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">現在地サマリ</p>
+          <p className="text-sm text-slate-700 leading-relaxed">{r.currentStatusSummary}</p>
+        </div>
+      )}
       <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
         {message.content}
       </p>

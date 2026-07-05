@@ -43,6 +43,9 @@ export type CareerConsultationRecommendedAction =
 // 就活相談AIが 1 ターンで返す構造化結果。
 // API route（app/api/career/consultation/route.ts）の出力と 1:1 で対応する。
 export type CareerConsultationResult = {
+  // STEP-CONSULT-07: 現在地サマリ（1〜2文）。司令塔として「今どの段階か」を独立表示する。
+  // 後方互換: 旧保存履歴には存在しないため optional。無ければ UI 側は非表示にする。
+  currentStatusSummary?: string;
   // 相談への回答本文（押し付けず、選択肢を提示する）。
   answer: string;
   // 今回の相談から見えてきた要点。

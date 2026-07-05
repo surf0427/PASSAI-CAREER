@@ -73,6 +73,8 @@ const COMMANDER_PERSONA = [
   'PASSAI CAREER には、活動整理・自己分析・就活軸整理・企業マッチング・企業研究・ES・面接・GD・',
   'プレゼンの各機能があり、その結果が下記コンテキストとして渡されます。それらを横断し、',
   '「点」ではなく「線」で就活を捉え、一貫した方針を示してください。',
+  '毎回、ユーザーの「現在地」を currentStatusSummary（独立フィールド）に1〜2文で出し、',
+  'answer 本文はそれを踏まえた論点整理・ズレ/リスク・次の方向性に充てます（現在地の完全な繰り返しは避ける）。',
   '',
   '【自己理解 × 企業理解 × 選考対策を必ずつなげる】',
   '自己分析・活動整理・就活軸・マッチング・企業研究・ES・面接・GD・プレゼンをバラバラに扱わず、',
@@ -135,6 +137,7 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '各フィールドは日本語。配列は該当が無ければ空配列 [] にする（キーは省略しない）。',
   '',
   '{',
+  '  "currentStatusSummary": string, // 現在地サマリ（1〜2文・80〜160字）。下記ルールに従う',
   '  "answer": string,              // 回答本文（下記「answer の構成」に従う）',
   '  "keyInsights": string[],       // 持ち帰るべき「気づき」（単なる要約・TODO ではない）',
   '  "recommendedActions": Action[],// 次に取るべき具体的アクション（下記 Action オブジェクトの配列）',
@@ -142,11 +145,18 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '  "followUpQuestions": string[]  // 思考を深める問いかけ（浅い回答を掘り下げる／矛盾を確かめる）',
   '}',
   '',
-  '# answer の構成（この順序に寄せる。目安 500〜900字。一般論で字数を埋めない）',
-  '1. 現在地サマリ: 1〜3文で「今は〇〇の段階です」。データが乏しければ「まだ判断材料が少ないため」と明記し断定しない。',
-  '2. 論点整理: 相談を就活上の論点に分解する（自己分析の問題か／企業選びの問題か／ES・面接への変換の問題か 等）。',
-  '3. ズレ・リスク・伸ばすべき点: values/matching/ES/interview/GD 等から見える点を「現時点では〜に見えます」と断定せず示す。',
-  '4. 次にやるべき方向性: 何を優先すべきか、なぜそれが先か。押し付けず判断軸と選択肢を添える。',
+  '# currentStatusSummary（現在地サマリ）のルール',
+  '- 1〜2文・80〜160字程度。「今は〇〇の段階です」のように現在地が一目で分かる文にする。',
+  '- 渡されたデータ（自己分析/活動/就活軸/マッチング/ES/面接/GD/プレゼンの有無と推移）から、',
+  '  就活のどの段階にいて何が強く何が弱いかを言語化する。',
+  '- データが乏しければ「まだ判断材料が少ないため」と明記し、断定しない。企業情報は根拠なく断定しない。',
+  '',
+  '# answer の構成（この順序に寄せる。目安 500〜800字。一般論で字数を埋めない）',
+  '  currentStatusSummary で現在地は別途出すので、answer では現在地サマリを繰り返さない',
+  '  （1文目で軽く受けるのは可。完全な重複は避ける）。',
+  '1. 論点整理: 相談を就活上の論点に分解する（自己分析の問題か／企業選びの問題か／ES・面接への変換の問題か 等）。',
+  '2. ズレ・リスク・伸ばすべき点: values/matching/ES/interview/GD 等から見える点を「現時点では〜に見えます」と断定せず示す。',
+  '3. 次にやるべき方向性: 何を優先すべきか、なぜそれが先か。押し付けず判断軸と選択肢を添える。',
   '',
   '# 各フィールドの品質基準',
   '- keyInsights: ユーザーが持ち帰る「気づき」にする。',
@@ -340,9 +350,18 @@ function normalizeRecommendedActions(value: unknown): CareerConsultationRecommen
   return out.slice(0, 6);
 }
 
+// 現在地サマリを安全化: string を trim、長すぎれば ~200字で truncate、空/非string は undefined。
+function normalizeCurrentStatusSummary(value: unknown): string | undefined {
+  const s = str(value);
+  if (!s) return undefined;
+  return s.length > 200 ? `${s.slice(0, 200).trim()}…` : s;
+}
+
 function normalizeResult(raw: unknown): CareerConsultationResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const currentStatusSummary = normalizeCurrentStatusSummary(r.currentStatusSummary);
   return {
+    ...(currentStatusSummary ? { currentStatusSummary } : {}),
     answer: str(r.answer),
     keyInsights: strArray(r.keyInsights),
     recommendedActions: normalizeRecommendedActions(r.recommendedActions),
