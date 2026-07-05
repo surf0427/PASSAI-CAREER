@@ -131,6 +131,46 @@ export default function CareerHomePage() {
         </Link>
       </div>
 
+      {/* 就活の司令塔AI（最上位導線）。入力済みデータを横断し、現在地と次アクションを提案する。
+          STEP-CONSULT-05: 相談AIをホーム上部へ昇格。深リンク（?starter=）で相談テーマも渡す。 */}
+      <Card
+        variant="default"
+        padding="md"
+        className="mb-8 ring-1 ring-blue-100 bg-blue-50/40"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex-1">
+            <p className="text-xs font-semibold text-brand-600 mb-1">就活の司令塔AI</p>
+            <h2 className="text-lg font-bold text-gray-800 mb-1.5">迷ったら、まずここで相談</h2>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              自己分析・ES・面接・GD・企業研究・マッチングを横断して、今の現在地と次にやることを整理します。
+              入力済みのデータをもとに、あなたに合った相談テーマも提案します。
+            </p>
+          </div>
+          <div className="shrink-0 sm:self-center">
+            <LinkButton href="/career/consultation" variant="primary" size="md">
+              相談する →
+            </LinkButton>
+          </div>
+        </div>
+        {/* データ状態に沿った入口（深リンク）。押すと相談テーマがプリフィルされる。 */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            { label: '何から始めるか整理', starter: 'priority' },
+            { label: '就活軸と企業のズレ確認', starter: 'axis' },
+            { label: '受ける企業の優先順位', starter: 'matching' },
+          ].map((chip) => (
+            <Link
+              key={chip.starter}
+              href={`/career/consultation?starter=${chip.starter}`}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-50 transition-colors"
+            >
+              {chip.label}
+            </Link>
+          ))}
+        </div>
+      </Card>
+
       {/* 内定獲得までの進捗 — 就活フロー全体の道筋を示すステップカード（固定表示）。
           既存の Card / 配色トークンに合わせ、横並び（wrap）のステッパーで表示する。 */}
       <Card variant="soft" padding="md" className="mb-8">
@@ -273,26 +313,6 @@ export default function CareerHomePage() {
               <Button variant="outline" size="md" disabled>
                 準備中
               </Button>
-            </div>
-          </div>
-        </Card>
-      </section>
-
-      {/* 就活相談AI（司令塔）。/career/consultation へ遷移する。 */}
-      <section className="mt-10">
-        <p className="text-xs text-gray-500 mb-3 px-1">詰まった時の整理</p>
-        <Card variant="soft" padding="md">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <div className="flex-1">
-              <h2 className="text-base font-bold text-gray-800 mb-1.5">就活相談AI</h2>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                志望動機・面接・不安など、今引っかかっていることを整理し、就活全体の司令塔として次に進めることを一緒に見ます。
-              </p>
-            </div>
-            <div className="shrink-0 sm:self-end">
-              <LinkButton href="/career/consultation" variant="primary" size="md">
-                相談する
-              </LinkButton>
             </div>
           </div>
         </Card>

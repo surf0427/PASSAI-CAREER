@@ -31,6 +31,12 @@ import { loadGdResults } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
 import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
+import { hasAnyActivity } from '@/app/career/activity/activityStorage';
+import {
+  buildConsultationStarters,
+  CONSULTATION_STARTER_QUERY,
+  type ConsultationDataFlags,
+} from '@/lib/careerConsultation/starterSuggestions';
 import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
@@ -55,16 +61,27 @@ const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
-// よくある相談例（クリックで入力欄へ）。
-const SUGGESTED_STARTERS = [
-  '就活、何から始めればいいですか？',
-  'ガクチカに自信がありません。相談したいです。',
-  '自己PRの方向性を一緒に整理してください。',
-  'ESの志望動機がうまく書けません。',
-  '面接が不安です。何を準備すべきですか？',
-  '業界・職種の選び方がわかりません。',
-  '就活スケジュールを整理したいです。',
-] as const;
+// localStorage から、各機能データの有無フラグを算出する（初回相談テーマの出し分け用）。
+// 追加 API・DB には触れず、既存 load 関数の結果の有無だけを見る（トークンにも影響しない）。
+function computeConsultationDataFlags(): ConsultationDataFlags {
+  const profile = loadBasicInfo();
+  const values = loadCareerValues();
+  const hasValues =
+    !!values &&
+    Object.values(values.selections ?? {}).some((arr) => Array.isArray(arr) && arr.length > 0);
+  return {
+    hasProfile: !!profile && (profile.name ?? '').trim() !== '',
+    hasActivity: hasAnyActivity(loadActivityData()),
+    hasValues,
+    hasSelfAnalysis: loadSelfAnalysisLogs().length > 0,
+    hasMatching: loadMatchingLogs().length > 0,
+    hasEs: loadEsLogs().length > 0,
+    hasInterview: loadInterviewResults().length > 0,
+    hasGd: loadGdResults().length > 0,
+    hasPresentation: loadPresentationResults().length > 0,
+    hasCompanyResearch: loadCompanyResearchLogs().length > 0,
+  };
+}
 
 // 相談AIに渡す横断コンテキストを localStorage から組み立てる。
 // gdResultId があれば、そのGD結果を優先して会話文脈に載せる。
@@ -121,7 +138,11 @@ function CareerConsultationInner() {
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(
     () => loadConsultationThreads()[0]?.id ?? null,
   );
-  const [input, setInput] = useState('');
+  // 入力欄。ホームからの深リンク（?starter=priority|axis|matching）があれば初期値にプリフィル。
+  // 初期化時に 1 回だけ解決するので、既存チャットや以降の入力を邪魔しない。
+  const [input, setInput] = useState<string>(
+    () => CONSULTATION_STARTER_QUERY[searchParams.get('starter') ?? ''] ?? '',
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -138,6 +159,12 @@ function CareerConsultationInner() {
   // STEP-GD-17: マルチGD の参考シグナルが手元にあるか（UI の控えめな注記用）。
   const hasGdRoomSignals = useMemo(
     () => (isMounted ? buildLatestGdRoomSignals(loadGdRoomLogs(), 1).length > 0 : false),
+    [isMounted],
+  );
+
+  // STEP-CONSULT-05: 入力済みデータに応じた初回相談テーマ（fallback つき）。
+  const starters = useMemo<string[]>(
+    () => (isMounted ? buildConsultationStarters(computeConsultationDataFlags()) : []),
     [isMounted],
   );
 
@@ -299,9 +326,13 @@ function CareerConsultationInner() {
       <div className="mb-5 flex flex-col gap-3">
         {messages.length === 0 ? (
           <Card variant="soft" padding="md">
-            <p className="text-sm font-bold text-slate-800 mb-3">よくある相談例</p>
+            <p className="text-sm font-bold text-slate-800 mb-1">今の状況から相談できます</p>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+              入力済みの自己分析・ES・面接・GD・マッチングなどをもとに、相談テーマを出しています。
+              データがまだ少ない場合は、就活準備の優先順位から整理できます。
+            </p>
             <div className="flex flex-wrap gap-2">
-              {SUGGESTED_STARTERS.map((s) => (
+              {starters.map((s) => (
                 <button
                   key={s}
                   type="button"
