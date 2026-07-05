@@ -358,23 +358,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .catch(() => {});
       }
 
-      // ── STEP-CAREER-SUPABASE-01: 就活版（career）各機能の初回 backfill（上りのみ）──
+      // ── STEP-CAREER-SUPABASE-01/02: 就活版（career）各機能の初回 backfill（上り）+ restore（下り）──
       //
       // 先行 backfill と同形・同じ場所で起動する独立した fire-and-forget。
-      // career 機能は localStorage canonical で、ログイン（member）確定後に LS に貯まった
-      // career データ（profile / activity / 自己分析 / 自己PR / マッチング / ES / 面接 /
-      // プレゼン / 相談）を career_* table（durable mirror）へ一括 upsert する。
-      // 各 feature は backfillFlag（supabaseBackfill）で冪等・1 回限り。restore（下り）は
-      // 実装しない（delete resurrection 回避。careerValues と同方針）。受験版データには触れない。
+      // career 機能は localStorage canonical で、ログイン（member）確定後に:
+      //   1. 上り backfill: LS に貯まった career データ（profile / activity / values / 自己分析 /
+      //      自己PR / マッチング / ES / 面接 / プレゼン / 相談 / 企業研究）を career_* table
+      //      （durable mirror）へ一括 upsert する。
+      //   2. 下り restore: durable mirror 由来のログを LS へマージ復元する（別端末ログイン時に
+      //      マイページ /career/mypage が空にならないようにする）。単一レコードは LS 空のときだけ、
+      //      履歴系は id マージ（local 優先）で local を壊さない。
+      // 各 feature は backfillFlag（supabaseBackfill）で冪等・1 端末 1 回限り。受験版データには触れない。
       //
       // 契約（先行 backfill と同一）:
       //   - await しない。認証 / profile フローをブロックしない。例外は握りつぶす。
       //   - dynamic import で browser-only な repository を server bundle に引き込まない。
       //   - cancelled guard: アンマウント後は起動しない。userId 空 / env 未設定なら no-op。
+      //   - backfill（上り）→ restore（下り）の順で走らせ、手元データ push 後に他端末由来行を merge する。
       if (!cancelled) {
         const careerUserId = session.userId;
         void import('@/lib/repository/careerBackfill')
           .then((mod) => mod.backfillCareerOnce({ userId: careerUserId }))
+          .then(() => import('@/lib/repository/careerRestore'))
+          .then((mod) => mod.restoreCareerOnce({ userId: careerUserId }))
           .catch(() => {});
       }
     })();

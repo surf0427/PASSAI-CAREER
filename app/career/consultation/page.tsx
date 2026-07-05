@@ -56,7 +56,10 @@ import {
   deleteThread,
 } from './consultationStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
-import { upsertCareerConsultationThreadsToSupabase } from '@/lib/supabase/careerConsultation';
+import {
+  upsertCareerConsultationThreadsToSupabase,
+  deleteCareerConsultationThreadFromSupabase,
+} from '@/lib/supabase/careerConsultation';
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
@@ -263,6 +266,9 @@ function CareerConsultationInner() {
       }
       return next;
     });
+    // localStorage（canonical）から消したスレッドを durable mirror からも削除して整合を保つ。
+    // best-effort・never throw。未ログイン / env 未設定なら no-op。
+    if (userId) void deleteCareerConsultationThreadFromSupabase(userId, id);
   }
 
   if (!isMounted) return null;

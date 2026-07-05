@@ -19,6 +19,10 @@ import { backfillDone, markBackfillDone, type BackfillFeature } from "./backfill
 import { loadBasicInfo } from "@/app/career/profile/profileStorage";
 import { loadActivityData } from "@/app/career/activity/activityStorage";
 import {
+  loadCareerValues,
+  isCareerValuesEmpty,
+} from "@/app/career/values/careerValuesStorage";
+import {
   loadSelfAnalysisLogs,
   loadSelfPRs,
 } from "@/app/career/self-analysis/selfAnalysisStorage";
@@ -33,9 +37,11 @@ import {
   loadPresentationResults,
 } from "@/app/career/presentation/presentationStorage";
 import { loadConsultationThreads } from "@/app/career/consultation/consultationStorage";
+import { loadCompanyResearchLogs } from "@/app/career/company-research/companyResearchStorage";
 
 import { saveCareerProfileToSupabase } from "@/lib/supabase/careerProfile";
 import { saveCareerActivityToSupabase } from "@/lib/supabase/careerActivity";
+import { saveCareerValuesToSupabase } from "@/lib/supabase/careerValues";
 import {
   upsertCareerSelfAnalysisResultsToSupabase,
   upsertCareerSelfPRsToSupabase,
@@ -51,6 +57,7 @@ import {
   upsertCareerPresentationResultsToSupabase,
 } from "@/lib/supabase/careerPresentation";
 import { upsertCareerConsultationThreadsToSupabase } from "@/lib/supabase/careerConsultation";
+import { upsertCareerCompanyResearchLogsToSupabase } from "@/lib/supabase/careerCompanyResearch";
 
 // 1 feature の backfill を flag gate 付きで実行する。run() は never throw（best-effort）。
 async function once(
@@ -83,6 +90,12 @@ export async function backfillCareerOnce({ userId }: { userId: string }): Promis
       const activity = loadActivityData();
       if (activity) await saveCareerActivityToSupabase(userId, activity);
     }),
+    once(userId, "careerValues", async () => {
+      const values = loadCareerValues();
+      if (values && !isCareerValuesEmpty(values)) {
+        await saveCareerValuesToSupabase(userId, values);
+      }
+    }),
     once(userId, "careerSelfAnalysis", async () => {
       await upsertCareerSelfAnalysisResultsToSupabase(userId, loadSelfAnalysisLogs());
     }),
@@ -109,6 +122,9 @@ export async function backfillCareerOnce({ userId }: { userId: string }): Promis
     }),
     once(userId, "careerConsultation", async () => {
       await upsertCareerConsultationThreadsToSupabase(userId, loadConsultationThreads());
+    }),
+    once(userId, "careerCompanyResearch", async () => {
+      await upsertCareerCompanyResearchLogsToSupabase(userId, loadCompanyResearchLogs());
     }),
   ]);
 }

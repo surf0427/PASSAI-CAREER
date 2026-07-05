@@ -55,6 +55,31 @@ export async function upsertCareerConsultationThreadsToSupabase(
   }
 }
 
+/**
+ * 相談スレッドを 1 件 delete（best-effort / never throw）。
+ * - localStorage 側で deleteThread した際に durable mirror からも消し、整合を保つ。
+ * - RLS（auth.uid() = user_id）で他人の行は消せない。env 未設定 / 未ログインなら no-op。
+ */
+export async function deleteCareerConsultationThreadFromSupabase(
+  userId: string,
+  clientId: string,
+): Promise<void> {
+  if (!userId || !clientId) return;
+  const supabase = getBrowserSupabaseClient();
+  if (!supabase) return;
+
+  try {
+    const { error } = await supabase
+      .from(TABLE)
+      .delete()
+      .eq("user_id", userId)
+      .eq("client_id", clientId);
+    if (error) devWarn("[careerConsultation] delete error", error);
+  } catch (err) {
+    devWarn("[careerConsultation] delete threw", err);
+  }
+}
+
 /** 自分の相談スレッドを updated_at 降順で返す（never throw / 失敗時は []）。 */
 export async function listCareerConsultationThreadsFromSupabase(
   userId: string,

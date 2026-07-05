@@ -58,7 +58,7 @@ export type BackfillFeature =
   // （delete resurrection 回避。STEP-INTERVIEW-AI-PR1/PR2）。
   | 'interviewPracticeRecords'
   // STEP-CAREER-SUPABASE-01: 就活版（career）各機能の上り backfill（LS→Supabase 初回一括同期）。
-  // いずれも localStorage canonical の durable mirror。restore（下り）は実装しない。
+  // いずれも localStorage canonical の durable mirror。
   | 'careerProfile'
   | 'careerActivity'
   | 'careerSelfAnalysis'
@@ -69,7 +69,25 @@ export type BackfillFeature =
   | 'careerInterviewResults'
   | 'careerPresentationSessions'
   | 'careerPresentationResults'
-  | 'careerConsultation';
+  | 'careerConsultation'
+  // STEP-CAREER-SUPABASE-02: 上り backfill に後から加えた 2 機能（既存 mirror は wired 済みだが
+  // 一括 backfill orchestration から漏れていた）。values は 1 ユーザー 1 行、company-research は履歴系。
+  | 'careerValues'
+  | 'careerCompanyResearch'
+  // STEP-CAREER-SUPABASE-02: 下り restore（Supabase→LS の 1 回限りマージ）。マイページが
+  // 別端末ログイン時にも durable mirror 由来のログを復元できるようにするための feature key。
+  // 上り backfill（'careerX'）とは別 key で「方向」を分けて独立に 1 回実行する
+  // （selfAnalysisLogs / selfAnalysisLogsRestore と同方式）。merge-only（local 優先）・never throw。
+  | 'careerProfileRestore'
+  | 'careerActivityRestore'
+  | 'careerValuesRestore'
+  | 'careerSelfAnalysisRestore'
+  | 'careerMatchingRestore'
+  | 'careerEsRestore'
+  | 'careerInterviewResultsRestore'
+  | 'careerPresentationResultsRestore'
+  | 'careerCompanyResearchRestore'
+  | 'careerConsultationRestore';
 
 // backfill ロジックの世代。ロジックを変えて再 backfill させたいときに +1 する。
 export const BACKFILL_VERSION = 1;
