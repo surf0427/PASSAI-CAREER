@@ -301,8 +301,12 @@ export default function CareerEsRunPage() {
         </p>
 
         <label className="block text-sm font-bold text-slate-800 mb-2">
-          ES設問
+          ES設問（任意）
         </label>
+        <p className="text-xs text-slate-500 leading-relaxed mb-2">
+          企業のESで実際に聞かれている質問文を入力する欄です（例:「当社を志望する理由を教えてください」）。
+          空欄のままでも、ガクチカ・自己PR・志望動機などの下書きをまとめて生成できます。
+        </p>
         <Textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
