@@ -169,7 +169,7 @@ export default function CareerPresentationTargetPage() {
         <Input
           value={jobType}
           onChange={(e) => setJobType(e.target.value)}
-          placeholder="例: 総合職、エンジニア、企画 など"
+          placeholder="例: 総合職、営業、企画、マーケ、エンジニア、コンサル など"
           className="mb-4"
         />
 

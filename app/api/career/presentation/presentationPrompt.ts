@@ -32,6 +32,9 @@ import {
   evalFocusLabels,
   resolveDifficulty,
   CAREER_PRESENTATION_DIFFICULTIES,
+  buildJobTypeEmphasisLine,
+  buildJobTypeThemeLine,
+  buildJobTypeQaLine,
 } from '@/app/career/presentation/presentationModes';
 
 const FEATURE_KEY = 'career-presentation' as const;
@@ -80,6 +83,10 @@ function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   if (conds.length > 0) {
     lines.push('', '【発表条件】' + conds.join(' / '));
   }
+
+  // 職種（自由入力）から推定した「求められる力」の重心を足す（未入力なら何も足さない）。
+  const jobLine = buildJobTypeEmphasisLine(cfg?.jobType);
+  if (jobLine) lines.push(jobLine);
 
   if (cfg?.companyMemo?.trim()) {
     lines.push(
@@ -293,6 +300,7 @@ export function buildThemeUserPrompt(params: {
     `発表時間: ${fmtTime}（この時間で発表しきれる粒度にする）`,
     `難易度: ${diffCfg?.label ?? '標準'}（${diffCfg?.hint ?? ''}）`,
     conds.length > 0 ? `考慮する条件: ${conds.join(' / ')}` : '',
+    buildJobTypeThemeLine(cfg?.jobType),
     `切り口の例（この中から選ぶ／別の切り口でもよい）: ${scenarioCfg.angles.join('、')}`,
     exclude.length > 0
       ? [
@@ -345,10 +353,14 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
   const axisList = CAREER_PRESENTATION_AXES.map(
     (a) => `    { "key": "${a.key}", "label": "${a.label}", "score": 0〜100の整数, "comment": "${a.hint}に関する具体的な所見" }`,
   ).join(',\n');
+  const jobEmphasis = buildJobTypeEmphasisLine(ctx.config?.jobType);
   return [
     '# 最終レポート（出力形式・厳守）',
     'このお題に対する発表を、新卒就活・選考プレゼンの観点で評価し、最終レポートを作成してください。',
     `今回の想定シーンで特に重視する観点: ${scenarioEmphasis(ctx)}`,
+    jobEmphasis
+      ? `${jobEmphasis} この職種観点は companyFit・expectedQuestions・interviewerConcerns にも反映する。`
+      : '',
     '評価軸（axes）は以下の8軸すべてを、それぞれ 0〜100 の整数で採点し、key/label は指定どおりにしてください。',
     'totalScore は8軸を踏まえた総合点（0〜100の整数）。rank は totalScore に応じて S(90+)/A(80-89)/B(65-79)/C(50-64)/D(0-49) とする。',
     'structureFeedback は構成（話す順番・骨子）への、persuasionFeedback は説得力への、deliveryFeedback は話し方・伝え方への、それぞれ2〜3文の個別フィードバック。',
@@ -415,12 +427,15 @@ export function buildQaUserPrompt(params: {
   if (!isKickoff) {
     lines.push('', 'これまでの質疑応答:', buildQaTranscript(turns));
   }
+  const jobQaLine = buildJobTypeQaLine(config?.jobType);
+  lines.push('', `このシーンで本番聞かれやすい深掘りの方向: ${scenarioCfg.qaFocus}`);
+  if (jobQaLine) lines.push(jobQaLine);
   lines.push(
-    '',
     isKickoff
       ? '発表内容に対して、採用担当が実際に聞きそうな鋭い質問を1つだけ作ってください。最初の reaction は空文字で構いません。'
       : '学生の直前の回答に対して、まず一言リアクション（最大1文・甘すぎない）をし、それを踏まえて次の質問を1つだけ作ってください。',
     '抽象的な回答には具体例・数字・根拠を求める質問にし、発表の弱点や一貫性を確認する。Yes/Noで終わる質問・人格否定は避ける。',
+    '想定シーン・職種の方向は本番で聞かれそうな深掘りの手掛かりに留め、発表内容に無い前提を作り込みすぎない。',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '{ "reaction": string, "question": string }',
   );

@@ -177,6 +177,8 @@ export type CareerPresentationScenarioConfig = {
   guidance: string;
   // このシーンで特に重視する観点。
   evaluationEmphasis: string;
+  // 発表後Q&Aで、このシーンだと本番で聞かれやすい深掘りの方向。
+  qaFocus: string;
   // AIお題生成の「切り口」候補（多様性のため。連続生成で切り口を変える手掛かり）。
   angles: string[];
 };
@@ -191,6 +193,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '本選考のプレゼンとして、入社後にどう貢献するか・志望度の高さ・企業理解・自分の具体的な経験との接続が伝わるかを見る。採用担当として「採用したい理由」が伝わるかを重視する。',
     evaluationEmphasis: '入社後の貢献、志望度、企業理解、具体的な経験との接続、採用する理由が伝わるか。',
+    qaFocus: 'なぜこの会社か、入社後に何をしたいか、他社比較、強みの再現性、キャリア観。',
     angles: ['入社後に挑戦したいこと', '自分の強みをどう活かすか', '企業課題への仮説提案', 'キャリア観', '志望度や企業理解'],
   },
   internship: {
@@ -202,6 +205,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'インターン選考のプレゼンとして、参加目的・学習意欲・業界/企業への関心・主体性・成長ポテンシャルが伝わるかを見る。完成度より伸びしろと熱量を重視する。',
     evaluationEmphasis: '参加目的、学習意欲、業界・企業への関心、主体性、成長ポテンシャル。',
+    qaFocus: 'なぜこのインターンか、何を学びたいか、検証したい仮説、どの経験を活かせるか。',
     angles: ['参加目的', '学びたいこと', '活かしたい強み', '現場で検証したい仮説', '業界理解'],
   },
   gd_followup: {
@@ -213,6 +217,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'グループディスカッション後の代表発表として、チームの議論を整理できているか・結論ファーストか・論点と根拠が簡潔か・代表発表として分かりやすいかを見る。',
     evaluationEmphasis: 'チーム議論の整理、結論ファースト、論点と根拠の簡潔さ、代表発表としての分かりやすさ。',
+    qaFocus: 'なぜその結論か、他の案とどう比較したか、反対意見をどう扱ったか、実行上のリスク。',
     angles: ['議論の結論整理', '提案内容の代表発表', '論点比較', '合意形成プロセス', '実行案の説明'],
   },
   case: {
@@ -224,6 +229,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'ケース面接のプレゼンとして、課題設定→仮説→分析→解決策→実行可能性→施策の優先順位が論理的に組み立てられているかを見る。きれいなフレームより筋の通った結論と根拠を評価する。',
     evaluationEmphasis: '課題設定、仮説、分析、解決策、実行可能性、施策の優先順位。',
+    qaFocus: '前提の置き方、なぜその課題を選んだか、代替案、どう実行するか、失敗リスク。',
     angles: ['新規事業', '課題解決', '既存サービス改善', '市場拡大', '顧客体験改善', '施策の優先順位'],
   },
   self_pr: {
@@ -235,6 +241,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '自己PRプレゼンとして、強みの明確さ・エピソードの具体性・再現性（企業でどう活きるか）が伝わるかを見る。抽象的な強みの羅列ではなく具体に裏づけられているかを重視する。',
     evaluationEmphasis: '強みの明確さ、エピソードの具体性、再現性、企業でどう活きるか。',
+    qaFocus: 'その強みを発揮した具体例、他の場面での再現性、弱みとの関係、企業でどう活かすか。',
     angles: ['一番の強み', '困難を乗り越えた経験', '主体的に動いた経験', 'チームでの役割', '価値観・大切にしていること'],
   },
   company_proposal: {
@@ -247,6 +254,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '企業課題提案のプレゼンとして、課題の捉え方・解決策の説得力・企業理解・実現可能性・リスク認識が伝わるかを見る。企業名だけを根拠に事業課題を捏造せず、情報が不足する場合は一般的な業界課題・仮説として扱えているかも見る。',
     evaluationEmphasis: '課題の捉え方、解決策の説得力、企業理解、実現可能性、リスク認識。',
+    qaFocus: 'なぜその課題か、根拠は何か、実行コスト、競合や既存施策との違い、リスク。',
     angles: ['売上・成長の課題', '採用・組織の課題', '顧客獲得・定着の課題', '新規領域への展開', 'デジタル活用・業務効率'],
   },
   unspecified: {
@@ -258,6 +266,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '就活・選考プレゼンとして、結論ファースト・論理構成・根拠の具体性・説得力・聞き手への伝わりやすさ・時間配分を総合的に見る。',
     evaluationEmphasis: '構成の分かりやすさ、主張の明確さ、根拠の具体性、説得力、聞き手意識、時間配分。',
+    qaFocus: '発表の弱い部分・主張の一貫性・根拠の具体性への、汎用的な深掘り。',
     angles: ['自分の強み', '学生時代の経験', '関心のあるテーマ', '課題提案', '将来のビジョン'],
   },
 };
@@ -288,6 +297,197 @@ export function resolveScenario(v: unknown): CareerPresentationScenario {
 
 export function getScenarioConfig(v: unknown): CareerPresentationScenarioConfig {
   return SCENARIOS[resolveScenario(v)];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 職種（jobType）別の出力分岐
+//
+// jobType は自由入力（target 画面のテキスト欄）。完全な enum 化はせず、
+// 入力文字列からキーワードで職種カテゴリを「推定」し、求められる力・評価観点・
+// 想定質問の重心をプロンプトへ足す。推定が外れても断定しすぎない前提で使う。
+// 型・UI は一切変えない（純粋関数のみ追加）。
+// ════════════════════════════════════════════════════════════════════
+
+export type CareerPresentationJobCategory =
+  | 'general' // 総合職
+  | 'sales' // 営業
+  | 'planning' // 企画 / 事業企画
+  | 'marketing' // マーケティング
+  | 'engineer' // エンジニア
+  | 'consultant' // コンサル / 戦略
+  | 'data' // データ分析 / データサイエンス
+  | 'hr' // 人事
+  | 'admin' // 事務 / 管理
+  | 'design' // デザイナー / クリエイティブ
+  | 'finance' // 金融 / 専門職
+  | 'other'; // 判別不能 / 自由入力
+
+type CareerPresentationJobCategoryConfig = {
+  category: CareerPresentationJobCategory;
+  label: string;
+  // 評価・お題・Q&Aで反映する「求められる力」の重心。
+  emphasis: string;
+  // AIお題生成で寄せたい観点。
+  themeFocus: string;
+  // 発表後Q&Aで深掘りしたい観点。
+  qaFocus: string;
+};
+
+const JOB_CATEGORIES: Record<CareerPresentationJobCategory, CareerPresentationJobCategoryConfig> = {
+  general: {
+    category: 'general',
+    label: '総合職',
+    emphasis: '汎用的な課題解決力、周囲を巻き込む力、配属が変わっても活きる再現性、事業理解、将来の成長可能性。',
+    themeFocus: '幅広い業務でどう活躍できるか・どの強みが再現性を持つか・将来どんな役割を担いたいかに触れられるお題。',
+    qaFocus: 'どの部署でも活きる強みの再現性、周囲の巻き込み方、将来担いたい役割。',
+  },
+  sales: {
+    category: 'sales',
+    label: '営業',
+    emphasis: '顧客理解、課題ヒアリング力、提案力、信頼構築、数字への意識、粘り強さ。',
+    themeFocus: '顧客の課題をどう捉え・どう提案し・成果につなげるかを語れるお題。',
+    qaFocus: '顧客課題の捉え方、提案の進め方、成果につなげる行動特性、数字へのこだわり。',
+  },
+  planning: {
+    category: 'planning',
+    label: '企画・事業企画',
+    emphasis: '課題設定、仮説構築、市場理解、施策設計、実行可能性、優先順位づけ。',
+    themeFocus: 'なぜその企画か・誰のどんな課題を解くか・どう実行するかを語れるお題。',
+    qaFocus: '課題設定の妥当性、施策の実行手順、優先順位と効果の見立て。',
+  },
+  marketing: {
+    category: 'marketing',
+    label: 'マーケティング',
+    emphasis: '顧客理解、市場分析、訴求設計、データ活用、施策改善、ブランド理解。',
+    themeFocus: '誰に何をどう届けるか・効果をどう測り改善するか・顧客インサイトに触れるお題。',
+    qaFocus: 'ターゲットと訴求の設計、施策効果の測り方、顧客インサイトの根拠。',
+  },
+  engineer: {
+    category: 'engineer',
+    label: 'エンジニア',
+    emphasis: '技術理解、課題解決、実装可能性、ユーザー視点、チーム開発、学習姿勢、非エンジニアにも伝わる説明力。',
+    themeFocus: '技術でどう価値を出すか・実現可能性・プロダクト改善・分かりやすい説明に触れるお題。',
+    qaFocus: '技術的な実現可能性、ユーザー価値、チーム開発での動き方、学習姿勢。',
+  },
+  consultant: {
+    category: 'consultant',
+    label: 'コンサル・戦略',
+    emphasis: '論点設計、構造化、仮説思考、分析力、提案の実行可能性、クライアント視点。',
+    themeFocus: '課題をどう分解し・何を優先し・筋の良い提案に落とすかを語れるお題。',
+    qaFocus: '論点の分解、優先順位の根拠、提案の実行可能性とクライアント目線。',
+  },
+  data: {
+    category: 'data',
+    label: 'データ分析・データサイエンス',
+    emphasis: '仮説、指標設計、データ活用、意思決定への接続、分析結果の説明力。',
+    themeFocus: 'どんなデータを見て何を指標にし・分析を施策や意思決定にどうつなげるかを語れるお題。',
+    qaFocus: '見るべきデータと指標の設計、分析から施策への接続、結果の説明の分かりやすさ。',
+  },
+  hr: {
+    category: 'hr',
+    label: '人事',
+    emphasis: '人・組織への関心、採用/育成/組織課題の理解、コミュニケーション、公平性、信頼関係。',
+    themeFocus: '組織課題をどう捉えるか・人に関わる仕事への適性・相手理解に触れるお題。',
+    qaFocus: '組織や人の課題の捉え方、相手理解、公平性や信頼構築の考え方。',
+  },
+  admin: {
+    category: 'admin',
+    label: '事務・管理',
+    emphasis: '正確性、継続力、業務改善、周囲を支える力、調整力、責任感。',
+    themeFocus: '業務を安定して進める力・改善意識・周囲を支える価値に触れるお題。',
+    qaFocus: '正確かつ安定して進める工夫、業務改善の実例、周囲との調整の仕方。',
+  },
+  design: {
+    category: 'design',
+    label: 'デザイナー・クリエイティブ',
+    emphasis: 'ユーザー理解、表現意図、課題解決としてのデザイン、独自性、伝える力、改善プロセス。',
+    themeFocus: 'なぜその表現か・誰の課題を解くか・どう検証し改善するかを語れるお題。',
+    qaFocus: '表現の意図と根拠、解決したいユーザー課題、検証・改善のプロセス。',
+  },
+  finance: {
+    category: 'finance',
+    label: '金融・専門職',
+    emphasis: '数字への強さ、専門性、信頼性、リスク感覚、顧客理解、正確な説明力。',
+    themeFocus: 'リスクとリターン・信頼構築・専門知識を分かりやすく伝える力に触れるお題。',
+    qaFocus: 'リスクとリターンの捉え方、専門知識の正確な説明、信頼構築の考え方。',
+  },
+  other: {
+    category: 'other',
+    label: 'その他',
+    emphasis: '入力された職種で求められそうな力、業界・企業文脈との接続、再現性、聞き手に伝わる説明力。',
+    themeFocus: '入力された職種で求められそうな力に触れられるお題。',
+    qaFocus: 'その職種で求められそうな力の再現性、業界・企業文脈との接続。',
+  },
+};
+
+// キーワード判定の優先順（先勝ち）。より限定的な語を先に置き、誤判定を減らす。
+// 判定は入力を小文字化した部分一致（日本語はそのまま比較）。
+const JOB_CATEGORY_MATCH_ORDER: Array<{
+  category: CareerPresentationJobCategory;
+  keywords: string[];
+}> = [
+  { category: 'data', keywords: ['データ', 'アナリ', 'サイエン', 'data', 'analyst', 'analytics', 'bi'] },
+  { category: 'consultant', keywords: ['コンサル', 'consult', '戦略', 'ストラテ', 'strategy'] },
+  { category: 'marketing', keywords: ['マーケ', 'marketing', '広報', 'ブランド', 'プロモ', '宣伝', 'pr'] },
+  { category: 'engineer', keywords: ['エンジニア', 'engineer', 'developer', 'プログラ', 'ソフトウェア', 'インフラ', 'システム', '技術職', 'se', 'it技術'] },
+  { category: 'design', keywords: ['デザイ', 'design', 'クリエイ', 'creative', 'ui', 'ux'] },
+  { category: 'finance', keywords: ['金融', 'ファイナンス', 'finance', '証券', '銀行', '投資', 'アクチュアリ', '会計', '税理', '財務', 'ファンド', 'アセット', '専門職', '法務', '弁護士'] },
+  { category: 'hr', keywords: ['人事', '採用', '労務', 'hr', '人材開発', 'タレント', '組織開発'] },
+  { category: 'sales', keywords: ['営業', 'セールス', 'sales', 'アカウント', '販売', '渉外'] },
+  { category: 'planning', keywords: ['企画', 'planning', 'プランナー', 'planner'] },
+  { category: 'admin', keywords: ['事務', '総務', '経理', '庶務', 'バックオフィス', 'アシスタント', '管理部', '一般職'] },
+  { category: 'general', keywords: ['総合職', '総合', 'ゼネラル', 'general'] },
+];
+
+// 自由入力の職種文字列から職種カテゴリを推定する。空・未マッチは 'other'。
+export function inferJobTypeCategory(jobType: string | null | undefined): CareerPresentationJobCategory {
+  const s = (jobType ?? '').trim().toLowerCase();
+  if (!s) return 'other';
+  for (const entry of JOB_CATEGORY_MATCH_ORDER) {
+    if (entry.keywords.some((k) => s.includes(k))) return entry.category;
+  }
+  return 'other';
+}
+
+// 推定した職種カテゴリの設定を返す。jobType 未入力なら null（＝職種の分岐なし）。
+// recognized=false は「入力はあるがカテゴリ推定できなかった（other）」を表す。
+export function getJobCategoryConfig(
+  jobType: string | null | undefined,
+): (CareerPresentationJobCategoryConfig & { recognized: boolean; raw: string }) | null {
+  const raw = (jobType ?? '').trim();
+  if (!raw) return null;
+  const category = inferJobTypeCategory(raw);
+  return { ...JOB_CATEGORIES[category], recognized: category !== 'other', raw };
+}
+
+// 評価・system 向け: 職種で特に見たい力の instruction 行（jobType 未入力なら ''）。
+export function buildJobTypeEmphasisLine(jobType: string | null | undefined): string {
+  const c = getJobCategoryConfig(jobType);
+  if (!c) return '';
+  if (!c.recognized) {
+    return `【職種の観点】職種「${c.raw}」で一般に求められそうな力（再現性・業界/企業文脈との接続・聞き手に伝わる説明力）を意識する。カテゴリは推定できないため断定しすぎない。`;
+  }
+  return `【職種の観点】職種「${c.raw}」（${c.label}系と推定）で特に見る力: ${c.emphasis} ※職種カテゴリは入力からの推定。断定しすぎず、設定より発表内容を優先して評価する。`;
+}
+
+// お題生成 向け: 職種の観点を反映する行（jobType 未入力なら ''）。
+export function buildJobTypeThemeLine(jobType: string | null | undefined): string {
+  const c = getJobCategoryConfig(jobType);
+  if (!c) return '';
+  if (!c.recognized) {
+    return `職種「${c.raw}」で求められそうな力にも触れられるお題にする（推定に頼りすぎない）。`;
+  }
+  return `職種「${c.raw}」（${c.label}系）の観点も反映する: ${c.themeFocus}`;
+}
+
+// 発表後Q&A 向け: 職種で本番聞かれそうな深掘りの方向（jobType 未入力なら ''）。
+export function buildJobTypeQaLine(jobType: string | null | undefined): string {
+  const c = getJobCategoryConfig(jobType);
+  if (!c) return '';
+  if (!c.recognized) {
+    return `職種「${c.raw}」で求められそうな力を確かめる質問も混ぜる（推定に頼りすぎない）。`;
+  }
+  return `職種「${c.raw}」（${c.label}系）で本番聞かれそうな深掘り: ${c.qaFocus}`;
 }
 
 // 発表形式の選択肢。
