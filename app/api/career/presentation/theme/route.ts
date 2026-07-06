@@ -56,10 +56,15 @@ export async function POST(req: Request) {
     config?: CareerPresentationConfig | null;
     timeLimitSec?: unknown;
     difficulty?: unknown;
+    excludeThemes?: unknown;
   };
 
   const config = b.config ?? null;
   const timeLimitSec = typeof b.timeLimitSec === 'number' ? b.timeLimitSec : 0;
+  // 直近生成お題（連続生成で似すぎないようにする）。文字列配列のみ・最大5件。
+  const excludeThemes = Array.isArray(b.excludeThemes)
+    ? b.excludeThemes.filter((t): t is string => typeof t === 'string').slice(0, 5)
+    : [];
   const system = buildPresentationBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
@@ -82,7 +87,7 @@ export async function POST(req: Request) {
         messages: [
           {
             role: 'user',
-            content: buildThemeUserPrompt({ config, timeLimitSec, difficulty: b.difficulty }),
+            content: buildThemeUserPrompt({ config, timeLimitSec, difficulty: b.difficulty, excludeThemes }),
           },
         ],
       },

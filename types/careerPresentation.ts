@@ -84,6 +84,9 @@ export type CareerPresentationConfig = {
   evaluationFocus?: string[];
   // 補足メモ。
   note?: string;
+  // 登録済みの自己分析・ES等（他PASSAI機能データ）を補助的に参考にするか。
+  // 未指定・false ならお題生成・評価・Q&A に他機能データを注入しない（既定 off）。
+  useCareerContext?: boolean;
 };
 
 // 総合ランク。

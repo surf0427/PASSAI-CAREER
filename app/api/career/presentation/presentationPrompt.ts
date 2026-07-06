@@ -215,11 +215,15 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     userInput: input.userInput ?? '',
   });
 
-  const selfAnalysisBlock = renderSelfAnalysis(input.selfAnalysis);
-  const esBlock = renderEs(input.es);
-  const interviewBlock = renderInterview(input.interview);
-  const matchingBlock = renderMatching(input.matching);
-  const consultationBlock = renderConsultationInsights(input.consultationInsights);
+  // 他PASSAI機能データ（自己分析/ES/面接/マッチング/相談AI）は useCareerContext が
+  // true のときだけ「参考程度」に注入する。既定（undefined/false）は注入しない。
+  // 主役は常に target 文脈・お題・発表内容。
+  const useCtx = input.config?.useCareerContext === true;
+  const selfAnalysisBlock = useCtx ? renderSelfAnalysis(input.selfAnalysis) : '';
+  const esBlock = useCtx ? renderEs(input.es) : '';
+  const interviewBlock = useCtx ? renderInterview(input.interview) : '';
+  const matchingBlock = useCtx ? renderMatching(input.matching) : '';
+  const consultationBlock = useCtx ? renderConsultationInsights(input.consultationInsights) : '';
 
   const ctx: CareerPresentationPromptContext = {
     theme: input.theme,
@@ -227,11 +231,21 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     presentationType: input.presentationType,
   };
 
+  // 参考データを注入する場合の注意書き（お題への回答度を優先し、発表に無い情報で加減点しない）。
+  const refGuard =
+    useCtx && (selfAnalysisBlock || esBlock || interviewBlock || matchingBlock || consultationBlock)
+      ? [
+          '# 参考情報の扱い（重要）',
+          '以下の登録済み情報は補助的な参考に留める。発表対象は「お題への回答（発表内容）」であり、登録情報そのものを発表対象として扱わない。',
+          '登録情報との整合性より「お題への回答度」を優先し、発表内容に出ていない情報をもとに過度な加点・減点をしない。',
+        ].join('\n')
+      : '';
+
   return [
     buildEvaluatorPersona(ctx),
     buildCareerSystemPrompt(context),
     buildCareerFeatureInstruction(FEATURE_KEY),
-    // 他機能のデータは「参考程度」に留める（主役はお題への発表）。
+    refGuard,
     selfAnalysisBlock ? `# 参考: 直近の自己分析結果（発表の主役ではない）\n${selfAnalysisBlock}` : '',
     esBlock ? `# 参考: 直近の ES ドラフト（発表の主役ではない）\n${esBlock}` : '',
     interviewBlock ? `# 参考: 直近のAI面接フィードバック\n${interviewBlock}` : '',
@@ -242,11 +256,13 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     .join('\n\n');
 }
 
-// AIお題生成の user プロンプト（想定シーン・企業/業界/職種・発表時間・難易度・補足メモを考慮）。
+// AIお題生成の user プロンプト（想定シーン・企業/業界/職種・発表時間・難易度・補足メモ・
+// 直近お題(excludeThemes)を考慮。連続生成で似すぎないよう切り口を変える）。
 export function buildThemeUserPrompt(params: {
   config?: CareerPresentationConfig | null;
   timeLimitSec?: number;
   difficulty?: unknown;
+  excludeThemes?: string[];
 }): string {
   const cfg = params.config ?? undefined;
   const scenarioCfg = getScenarioConfig(cfg?.scenario);
@@ -264,12 +280,27 @@ export function buildThemeUserPrompt(params: {
   if (selectionLabel) conds.push(`選考種別: ${selectionLabel}`);
   if (cfg?.focusPoint?.trim()) conds.push(`特に練習したいこと: ${cfg.focusPoint.trim()}`);
 
+  // 直近生成お題（重複・空を除き最大5件）。
+  const exclude = (params.excludeThemes ?? [])
+    .map((t) => (typeof t === 'string' ? t.trim() : ''))
+    .filter((t) => t !== '')
+    .filter((t, i, arr) => arr.indexOf(t) === i)
+    .slice(0, 5);
+
   return [
     '新卒就活の選考プレゼン練習用に、本番でありそうな「お題（プレゼンテーマ）」を1つだけ提案してください。',
     `想定シーン: ${scenarioCfg.label} — ${scenarioCfg.themeFocus}`,
     `発表時間: ${fmtTime}（この時間で発表しきれる粒度にする）`,
     `難易度: ${diffCfg?.label ?? '標準'}（${diffCfg?.hint ?? ''}）`,
     conds.length > 0 ? `考慮する条件: ${conds.join(' / ')}` : '',
+    `切り口の例（この中から選ぶ／別の切り口でもよい）: ${scenarioCfg.angles.join('、')}`,
+    exclude.length > 0
+      ? [
+          '次のお題は既に出したものです。これらと似すぎる内容・論点は避けてください:',
+          ...exclude.map((t) => `- ${t}`),
+          '同じ想定シーンでも切り口を変え、前回とは異なる論点のお題にしてください。',
+        ].join('\n')
+      : '',
     cfg?.companyName?.trim()
       ? 'この企業を受ける想定のお題にする。ただし企業の事業内容・制度・課題を断定・捏造しない。'
       : '',

@@ -71,6 +71,10 @@ export default function CareerPresentationSetupPage() {
   const [theme, setTheme] = useState('');
   const [timeLimitSec, setTimeLimitSec] = useState<number>(180);
   const [evaluationFocus, setEvaluationFocus] = useState<string[]>([]);
+  // 直近に生成したお題（多様性のため theme API へ excludeThemes として渡す。永続化しない）。
+  const [recentThemes, setRecentThemes] = useState<string[]>([]);
+  // 登録済みの自己分析・ES等（他PASSAI機能データ）を補助的に参考にするか（既定 off）。
+  const [useCareerContext, setUseCareerContext] = useState(false);
 
   const [mode, setMode] = useState<CareerPresentationMode>('voice');
   const [generating, setGenerating] = useState(false);
@@ -91,6 +95,7 @@ export default function CareerPresentationSetupPage() {
     const cfg = presentationConfigFromTarget(target);
     if (!cfg.scenario) cfg.scenario = 'unspecified';
     if (evaluationFocus.length > 0) cfg.evaluationFocus = evaluationFocus;
+    if (useCareerContext) cfg.useCareerContext = true;
     return cfg;
   }
 
@@ -108,7 +113,13 @@ export default function CareerPresentationSetupPage() {
       const res = await fetch('/api/career/presentation/theme', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...ctx, config: buildConfig(), timeLimitSec, difficulty }),
+        body: JSON.stringify({
+          ...ctx,
+          config: buildConfig(),
+          timeLimitSec,
+          difficulty,
+          excludeThemes: recentThemes,
+        }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -116,6 +127,11 @@ export default function CareerPresentationSetupPage() {
       }
       const data = (await res.json()) as { theme: string };
       setTheme(data.theme);
+      // 直近お題として保持（重複除外・最大5件）。次回生成で似すぎないようにする。
+      const t = data.theme.trim();
+      if (t) {
+        setRecentThemes((prev) => [t, ...prev.filter((p) => p !== t)].slice(0, 5));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'お題の生成に失敗しました。');
     } finally {
@@ -221,6 +237,24 @@ export default function CareerPresentationSetupPage() {
             />
           ))}
         </div>
+
+        {/* 他PASSAI機能データを補助的に参考にするか（既定 off） */}
+        <label className="mt-4 flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={useCareerContext}
+            onChange={(e) => setUseCareerContext(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-800">
+              登録済みの自己分析・ESなどを参考にする
+            </span>
+            <span className="block text-[11px] text-slate-500 leading-relaxed">
+              オンにすると、あなたの登録済み情報を補助的に参考にします。お題への回答内容が評価の中心です。
+            </span>
+          </span>
+        </label>
       </Card>
 
       {/* 入力モード */}

@@ -177,6 +177,8 @@ export type CareerPresentationScenarioConfig = {
   guidance: string;
   // このシーンで特に重視する観点。
   evaluationEmphasis: string;
+  // AIお題生成の「切り口」候補（多様性のため。連続生成で切り口を変える手掛かり）。
+  angles: string[];
 };
 
 const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioConfig> = {
@@ -189,6 +191,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '本選考のプレゼンとして、入社後にどう貢献するか・志望度の高さ・企業理解・自分の具体的な経験との接続が伝わるかを見る。採用担当として「採用したい理由」が伝わるかを重視する。',
     evaluationEmphasis: '入社後の貢献、志望度、企業理解、具体的な経験との接続、採用する理由が伝わるか。',
+    angles: ['入社後に挑戦したいこと', '自分の強みをどう活かすか', '企業課題への仮説提案', 'キャリア観', '志望度や企業理解'],
   },
   internship: {
     scenario: 'internship',
@@ -199,6 +202,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'インターン選考のプレゼンとして、参加目的・学習意欲・業界/企業への関心・主体性・成長ポテンシャルが伝わるかを見る。完成度より伸びしろと熱量を重視する。',
     evaluationEmphasis: '参加目的、学習意欲、業界・企業への関心、主体性、成長ポテンシャル。',
+    angles: ['参加目的', '学びたいこと', '活かしたい強み', '現場で検証したい仮説', '業界理解'],
   },
   gd_followup: {
     scenario: 'gd_followup',
@@ -209,6 +213,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'グループディスカッション後の代表発表として、チームの議論を整理できているか・結論ファーストか・論点と根拠が簡潔か・代表発表として分かりやすいかを見る。',
     evaluationEmphasis: 'チーム議論の整理、結論ファースト、論点と根拠の簡潔さ、代表発表としての分かりやすさ。',
+    angles: ['議論の結論整理', '提案内容の代表発表', '論点比較', '合意形成プロセス', '実行案の説明'],
   },
   case: {
     scenario: 'case',
@@ -219,6 +224,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       'ケース面接のプレゼンとして、課題設定→仮説→分析→解決策→実行可能性→施策の優先順位が論理的に組み立てられているかを見る。きれいなフレームより筋の通った結論と根拠を評価する。',
     evaluationEmphasis: '課題設定、仮説、分析、解決策、実行可能性、施策の優先順位。',
+    angles: ['新規事業', '課題解決', '既存サービス改善', '市場拡大', '顧客体験改善', '施策の優先順位'],
   },
   self_pr: {
     scenario: 'self_pr',
@@ -229,6 +235,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '自己PRプレゼンとして、強みの明確さ・エピソードの具体性・再現性（企業でどう活きるか）が伝わるかを見る。抽象的な強みの羅列ではなく具体に裏づけられているかを重視する。',
     evaluationEmphasis: '強みの明確さ、エピソードの具体性、再現性、企業でどう活きるか。',
+    angles: ['一番の強み', '困難を乗り越えた経験', '主体的に動いた経験', 'チームでの役割', '価値観・大切にしていること'],
   },
   company_proposal: {
     scenario: 'company_proposal',
@@ -240,6 +247,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '企業課題提案のプレゼンとして、課題の捉え方・解決策の説得力・企業理解・実現可能性・リスク認識が伝わるかを見る。企業名だけを根拠に事業課題を捏造せず、情報が不足する場合は一般的な業界課題・仮説として扱えているかも見る。',
     evaluationEmphasis: '課題の捉え方、解決策の説得力、企業理解、実現可能性、リスク認識。',
+    angles: ['売上・成長の課題', '採用・組織の課題', '顧客獲得・定着の課題', '新規領域への展開', 'デジタル活用・業務効率'],
   },
   unspecified: {
     scenario: 'unspecified',
@@ -250,6 +258,7 @@ const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioCo
     guidance:
       '就活・選考プレゼンとして、結論ファースト・論理構成・根拠の具体性・説得力・聞き手への伝わりやすさ・時間配分を総合的に見る。',
     evaluationEmphasis: '構成の分かりやすさ、主張の明確さ、根拠の具体性、説得力、聞き手意識、時間配分。',
+    angles: ['自分の強み', '学生時代の経験', '関心のあるテーマ', '課題提案', '将来のビジョン'],
   },
 };
 
