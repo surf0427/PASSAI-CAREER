@@ -292,6 +292,13 @@ export default function CareerEsRunPage() {
             disabled={loading}
           />
         </div>
+        <p className="text-xs text-slate-500 leading-relaxed mb-4">
+          {selectionType === 'main'
+            ? '本選考：入社後の貢献・志望度・企業適合性を重視して生成します。'
+            : selectionType === 'internship'
+              ? 'インターン：参加目的・学習意欲・業務理解を重視して生成します。'
+              : '指定なし：本選考にもインターンにも使える中立的な表現で生成します。'}
+        </p>
 
         <label className="block text-sm font-bold text-slate-800 mb-2">
           ES設問

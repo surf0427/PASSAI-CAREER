@@ -73,6 +73,38 @@ function deriveRank(score: number): CareerEsRank {
   return 'D';
 }
 
+// 選考種別に応じた「重点的に見る評価観点」の追加指示ブロックを作る。
+// 6 軸スコア（固定）は変えず、コメント・改善点・優先改善の着眼点を選考種別に寄せる。
+// 未指定（none）は基本観点のみで汎用ES として評価するため空文字を返す。
+function buildSelectionReviewInstruction(
+  selectionType: 'main' | 'internship' | null,
+): string {
+  if (selectionType === 'main') {
+    return [
+      '# 選考種別: 本選考（重点評価観点）',
+      'この ES は入社を前提とした本選考向けです。基本観点に加え、特に次を重視して添削してください:',
+      '- 入社後の貢献度（経験から入社後の活躍・再現性が見えるか）。',
+      '- 企業適合性（本人の強み・価値観と企業の方向性が結びついているか）。',
+      '- 志望度の具体性（「なぜこの会社か」「なぜこの職種か」が伝わるか）。',
+      '- 他社にも通用する汎用文になっていないか（差別化・具体性）。',
+      '- 「学びたい」「成長したい」だけの受け身表現に寄りすぎていないか。',
+      '- 採用担当が「採用する理由」を感じられるか。',
+    ].join('\n');
+  }
+  if (selectionType === 'internship') {
+    return [
+      '# 選考種別: インターン応募（重点評価観点）',
+      'この ES はインターンシップ応募向けです。基本観点に加え、特に次を重視して添削してください:',
+      '- 参加目的の明確さ（インターンで何を得たいか・検証したい仮説があるか）。',
+      '- 業界・企業への関心、業務理解への意欲。',
+      '- 学習意欲・成長ポテンシャル・主体性（受け身でないか）。',
+      '- 本選考につながる自然さがあるか。',
+      '- 内定欲・入社意思が強すぎる断定表現になっていないか（応募段階はインターン参加）。',
+    ].join('\n');
+  }
+  return '';
+}
+
 // AI 出力（パース済み unknown）を CareerEsReview 形状に正規化する。
 // overallScore / rank は AI の値を使わず、breakdown から決定論で再計算する。
 function normalizeReview(raw: unknown): CareerEsReview {
@@ -193,12 +225,12 @@ export async function POST(req: Request) {
       ? Math.floor(b.charLimit)
       : null;
   // 応募メタ（添削時の企業適合性・整合性評価の文脈に使う）。未指定は許容する。
-  const selectionLabel =
-    b.selectionType === 'main'
-      ? '本選考'
-      : b.selectionType === 'internship'
-        ? 'インターン応募'
-        : '';
+  const selectionType: 'main' | 'internship' | null =
+    b.selectionType === 'main' || b.selectionType === 'internship'
+      ? b.selectionType
+      : null;
+  // 選考種別に応じた追加の評価観点。未指定（none）は基本観点のみで汎用ESとして評価する。
+  const selectionInstruction = buildSelectionReviewInstruction(selectionType);
   const industry = str(b.industry);
   const jobType = str(b.jobType);
   // 保存済み企業研究（任意・1 件）。あれば回答との整合性評価に使う。
@@ -233,7 +265,7 @@ export async function POST(req: Request) {
   // user メッセージ: 設問・企業名・文字数（あれば）+ 企業研究（あれば）+ 添削対象本文。
   const userMessage = [
     question ? `# ES設問\n${question}` : '',
-    selectionLabel ? `# 選考種別\n${selectionLabel}` : '',
+    selectionInstruction,
     companyName ? `# 志望企業\n${companyName}` : '',
     industry ? `# 志望業界\n${industry}` : '',
     jobType ? `# 志望職種\n${jobType}` : '',
