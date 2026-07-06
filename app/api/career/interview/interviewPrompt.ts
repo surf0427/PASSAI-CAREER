@@ -330,13 +330,101 @@ export function buildFollowupUserPrompt(
   ].join('\n');
 }
 
+// target（受験先・選考の想定）に応じた最終フィードバックの評価観点を組み立てる。
+// companyName が無ければ空文字（従来どおりの汎用フィードバック）。
+// 企業の事実は断定させず、companyMemo を最優先根拠にする方針を明示する。
+function buildTargetFeedbackGuidance(
+  target: CareerInterviewTarget | null | undefined,
+): string {
+  if (!target || !target.companyName) return '';
+  const lines: string[] = [
+    '# 受験先・選考の想定に向けた追加評価（targetFeedback）',
+    `この面接は「${target.companyName}」を受ける想定です。上記の総合評価に加え、この企業・選考に向けた実戦的なフィードバックを targetFeedback にまとめてください。`,
+    `- companyFitComment: 「${target.companyName}」を受ける面接として、回答の説得力を評価し、志望動機・企業理解・職種理解の不足を具体的に指摘する。`,
+  ];
+  if (target.companyMemo) {
+    lines.push(
+      `  企業理解の根拠は、学生の企業メモ（${target.companyMemo}）を最優先にする。メモにない事実は断定せず「入力情報上は」「企業メモを踏まえると」のように表現する。`,
+    );
+  } else {
+    lines.push(
+      '  企業メモは未入力です。企業固有の事実は断定せず、一般的な面接観点として説得力・志望動機の接続を評価する。',
+    );
+  }
+  if (target.jobType) {
+    lines.push(
+      `- jobFitComment: 「${target.jobType}」で求められそうな再現性・行動特性・強みが回答から伝わるかを評価し、職種理解が浅ければ指摘し、回答内の経験がその職種でどう活きるかを補強する。`,
+    );
+  }
+
+  if (target.selectionType === 'main') {
+    lines.push(
+      '- selectionTypeComment: 本選考として、入社後の貢献可能性・志望度の強さ・企業適合性・過去経験の再現性・「他社ではなくこの企業である理由」・採用する理由が伝わるかを評価する。',
+      '  「学びたい」「成長したい」だけの受け身表現は厳しめに見て、貢献・主体性に転換するよう促す。',
+    );
+  } else if (target.selectionType === 'internship') {
+    lines.push(
+      '- selectionTypeComment: インターンとして、参加目的の明確さ・業界/企業への関心・現場理解への意欲・学びたいことの具体性・検証したい仮説・本選考への自然な接続を評価する。',
+      '  「入社したい」という長期の入社意思に寄せすぎず、参加目的・学習意欲・仮説検証を重視する。',
+    );
+  }
+
+  switch (target.interviewPhase) {
+    case 'first':
+      lines.push(
+        '- phaseSpecificComment: 一次面接として、人柄が伝わるか・基本的なガクチカ/自己PRが自然か・コミュニケーションが分かりやすいか・志望動機の土台があるかを評価する。',
+      );
+      break;
+    case 'second':
+      lines.push(
+        '- phaseSpecificComment: 二次面接として、経験の深掘りに耐えられるか・企業/職種理解があるか・価値観と企業の接続があるか・入社後の再現性が見えるかを評価する。',
+      );
+      break;
+    case 'final':
+      lines.push(
+        '- phaseSpecificComment: 最終面接として、志望度が十分か・覚悟が伝わるか・入社後の展望があるか・他社比較に耐えられるか・長期的なキャリア観が自然かを評価する。',
+      );
+      break;
+    case 'internship':
+      lines.push(
+        '- phaseSpecificComment: インターン面接として、参加目的が明確か・学習意欲が伝わるか・業界理解があるか・主体性があるか・インターンで得たいことが具体的かを評価する。',
+      );
+      break;
+    case 'casual':
+      lines.push(
+        '- phaseSpecificComment: カジュアル面談として、自然な会話として成立しているか・一方的なアピールになりすぎていないか・企業理解を深める姿勢があるか・逆質問につながる観点があるか・相互理解の場として適切かを評価する。',
+      );
+      break;
+    default:
+      lines.push(
+        '- phaseSpecificComment: 選考フェーズの指定はありません。一般的な面接として、この企業・選考に向けた評価を述べる。',
+      );
+      break;
+  }
+
+  lines.push(
+    '- weakPointsForThisTarget: この企業・選考で特に落ちやすい弱点を具体的に挙げる。',
+    '- nextPracticeQuestions: この企業・選考・フェーズで次に練習すべき想定質問を挙げる。',
+    '- suggestedReverseQuestions: 学生から企業への逆質問案を挙げる（企業メモ・職種に紐づけ、特にカジュアル面談・最終面接・インターンで有効なもの）。',
+  );
+  if (target.focusPoint) {
+    lines.push(
+      `# 学生が特に対策したいこと（必ず触れる）\n「${target.focusPoint}」について、targetFeedback と改善点（improvements）・次にやるべきこと（nextActions）の中で必ず具体的に言及する。`,
+    );
+  }
+  return lines.join('\n');
+}
+
 // 最終評価 system prompt（JSON 出力スキーマを明示）。面接の種類に応じて重視点を足す。
 // hasCompanyResearch=true（企業研究ログを使った面接）のときは、企業研究との接続評価
 // （companyResearchFit）も出力させる。未使用なら従来どおり companyFit までで完結する。
+// target（受験先・選考の想定）があるときは targetFeedback も出力させる。
 export function buildFinalFeedbackInstruction(
   interviewType?: CareerInterviewType,
   hasCompanyResearch = false,
+  target?: CareerInterviewTarget | null,
 ): string {
+  const hasTarget = !!(target && target.companyName);
   const config = getInterviewModeConfig(interviewType);
   const lines = [
     '# 最終フィードバック（出力形式・厳守）',
@@ -359,6 +447,10 @@ export function buildFinalFeedbackInstruction(
       '「自己分析と企業研究がうまく結びついています」のように、保存済み企業研究を根拠にする。企業情報は断定しない。',
     );
   }
+  // target（受験先・選考の想定）があるときは、追加評価の観点を先に述べる。
+  const targetGuidance = buildTargetFeedbackGuidance(target);
+  if (targetGuidance) lines.push(targetGuidance);
+
   lines.push(
     '',
     '{',
@@ -368,11 +460,24 @@ export function buildFinalFeedbackInstruction(
     '  "sampleAnswers": string[],     // より良い回答の例（具体的に）',
     '  "deepDiveTopics": string[],    // さらに深掘りされそうな論点',
     '  "nextActions": string[],       // 本番までに次にやるべきこと',
-    `  "companyFit": string${hasCompanyResearch ? ',' : ''}           // 志望業界・職種・就活軸との相性・接続についての所見`,
+    `  "companyFit": string${hasCompanyResearch || hasTarget ? ',' : ''}           // 志望業界・職種・就活軸との相性・接続についての所見`,
   );
   if (hasCompanyResearch) {
     lines.push(
-      '  "companyResearchFit": string   // 保存済み企業研究との接続評価（企業理解の活用度・志望理由/自己分析との接続・入社後ビジョンの具体性）',
+      `  "companyResearchFit": string${hasTarget ? ',' : ''}   // 保存済み企業研究との接続評価（企業理解の活用度・志望理由/自己分析との接続・入社後ビジョンの具体性）`,
+    );
+  }
+  if (hasTarget) {
+    lines.push(
+      '  "targetFeedback": {              // 受験先・選考の想定に向けた追加フィードバック',
+      '    "companyFitComment": string,       // この企業向けの説得力・不足点（企業事実は断定しない）',
+      '    "phaseSpecificComment": string,    // 選考フェーズ別の評価',
+      '    "jobFitComment": string,           // 職種適性・職種理解の評価（職種指定がなければ空文字）',
+      '    "selectionTypeComment": string,    // 本選考/インターン別の評価（種別指定がなければ空文字）',
+      '    "weakPointsForThisTarget": string[],   // この企業・選考で落ちやすい弱点',
+      '    "nextPracticeQuestions": string[],     // 次に練習すべき想定質問',
+      '    "suggestedReverseQuestions": string[]  // 逆質問案（企業メモ・職種に紐づける）',
+      '  }',
     );
   }
   lines.push('}');

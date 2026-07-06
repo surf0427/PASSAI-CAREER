@@ -13,7 +13,10 @@ import {
   interviewSelectionLabel,
   interviewPhaseLabel,
 } from '../interviewModes';
-import type { CareerInterviewResult } from '@/types/careerInterview';
+import type {
+  CareerInterviewResult,
+  CareerInterviewTargetFeedback,
+} from '@/types/careerInterview';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -162,6 +165,13 @@ export default function CareerInterviewResultPage() {
                 </Section>
               )}
 
+              {selected.result.targetFeedback && (
+                <TargetFeedbackCard
+                  feedback={selected.result.targetFeedback}
+                  companyName={selected.target?.companyName}
+                />
+              )}
+
               <Section title="面接のやり取り">
                 <ul className="flex flex-col gap-2">
                   {selected.turns.map((t, i) => (
@@ -207,6 +217,64 @@ function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString('ja-JP');
+}
+
+// 受験先・選考の想定に向けた追加フィードバック（target あり結果のみ）。
+// 補足カード 1 枚に、存在するフィールドだけを詰めて表示する（画面を重くしない）。
+function TargetFeedbackCard({
+  feedback,
+  companyName,
+}: {
+  feedback: CareerInterviewTargetFeedback;
+  companyName?: string;
+}) {
+  const comments: Array<[label: string, value?: string]> = [
+    ['企業向けの評価', feedback.companyFitComment],
+    ['職種向けの評価', feedback.jobFitComment],
+    ['選考種別の評価', feedback.selectionTypeComment],
+    ['選考フェーズ別の評価', feedback.phaseSpecificComment],
+  ];
+  const lists: Array<[label: string, items?: string[]]> = [
+    ['この選考で特に弱い点', feedback.weakPointsForThisTarget],
+    ['次に練習すべき想定質問', feedback.nextPracticeQuestions],
+    ['逆質問案', feedback.suggestedReverseQuestions],
+  ];
+  const shownComments = comments.filter(([, v]) => v && v.trim() !== '');
+  const shownLists = lists.filter(([, items]) => items && items.length > 0);
+  if (shownComments.length === 0 && shownLists.length === 0) return null;
+
+  return (
+    <Card variant="soft" padding="md" className="mb-4">
+      <h2 className="text-sm font-bold text-slate-900 mb-1">
+        この企業・選考に向けた改善ポイント
+      </h2>
+      {companyName && (
+        <p className="text-xs text-slate-400 mb-3 break-words">{companyName} 向け</p>
+      )}
+      <div className="flex flex-col gap-3">
+        {shownComments.map(([label, value]) => (
+          <div key={label}>
+            <p className="text-xs font-bold text-slate-500 mb-1">{label}</p>
+            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+              {value}
+            </p>
+          </div>
+        ))}
+        {shownLists.map(([label, items]) => (
+          <div key={label}>
+            <p className="text-xs font-bold text-slate-500 mb-1">{label}</p>
+            <ul className="list-disc pl-5 space-y-1">
+              {items!.map((item, i) => (
+                <li key={i} className="text-sm text-slate-700 leading-relaxed">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

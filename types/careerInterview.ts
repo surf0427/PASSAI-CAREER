@@ -78,6 +78,25 @@ export type CareerInterviewTarget = {
   focusPoint?: string;
 };
 
+// 受験先・選考の想定（target）に紐づく最終評価の追加フィードバック。
+// すべて optional。target 入力があった面接でのみ AI が返す（旧ログ・target無しでは未設定）。
+export type CareerInterviewTargetFeedback = {
+  // この企業向けに見たときの説得力・不足点（志望動機/企業理解/職種理解）。企業事実は断定しない。
+  companyFitComment?: string;
+  // 選考フェーズ（一次/二次/最終/インターン/カジュアル）別の評価。
+  phaseSpecificComment?: string;
+  // 職種適性・職種理解に関する評価（その職種で活きる再現性・行動特性が伝わるか）。
+  jobFitComment?: string;
+  // 選考種別（本選考/インターン）別の評価。
+  selectionTypeComment?: string;
+  // この企業・選考で落ちやすい弱点。
+  weakPointsForThisTarget?: string[];
+  // 次に練習すべき想定質問（この企業・選考・フェーズ向け）。
+  nextPracticeQuestions?: string[];
+  // 逆質問案（特にカジュアル面談・最終面接・インターンで有効。企業メモ/職種に紐づける）。
+  suggestedReverseQuestions?: string[];
+};
+
 // 面接全体の最終評価。
 // companyFit は STEP（就活版面接強化）で追加。旧ログには無いため読み取り側は欠損許容する。
 export type CareerInterviewFinalResult = {
@@ -93,6 +112,9 @@ export type CareerInterviewFinalResult = {
   //   企業理解の活用度 / 志望理由との接続 / 自己分析との接続 / 入社後ビジョンの具体性 を所見にする。
   //   企業研究ログ未選択の面接では未設定（空文字）。
   companyResearchFit?: string;
+  // 受験先・選考の想定（target）に紐づく追加フィードバック（任意・後方互換）。
+  //   target 入力があった面接でのみ設定。旧ログ・target無しでは未設定。
+  targetFeedback?: CareerInterviewTargetFeedback;
 };
 
 // 進行中 / 完了済みの面接セッション（localStorage: careerInterviewSessions）。

@@ -14,6 +14,7 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type {
   CareerInterviewTurn,
   CareerInterviewFinalResult,
+  CareerInterviewTargetFeedback,
   CareerInterviewType,
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
@@ -56,6 +57,31 @@ function normalizeTurns(value: unknown): CareerInterviewTurn[] {
   return out;
 }
 
+// targetFeedback を防御的に正規化する。全フィールドが空なら undefined（付けない）。
+// これにより target 無し面接や AI が返さなかった場合でも result は従来形状のまま。
+function normalizeTargetFeedback(
+  raw: unknown,
+): CareerInterviewTargetFeedback | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const fb: CareerInterviewTargetFeedback = {};
+  const companyFitComment = str(r.companyFitComment);
+  if (companyFitComment) fb.companyFitComment = companyFitComment;
+  const phaseSpecificComment = str(r.phaseSpecificComment);
+  if (phaseSpecificComment) fb.phaseSpecificComment = phaseSpecificComment;
+  const jobFitComment = str(r.jobFitComment);
+  if (jobFitComment) fb.jobFitComment = jobFitComment;
+  const selectionTypeComment = str(r.selectionTypeComment);
+  if (selectionTypeComment) fb.selectionTypeComment = selectionTypeComment;
+  const weak = strArray(r.weakPointsForThisTarget);
+  if (weak.length) fb.weakPointsForThisTarget = weak;
+  const nextQ = strArray(r.nextPracticeQuestions);
+  if (nextQ.length) fb.nextPracticeQuestions = nextQ;
+  const reverseQ = strArray(r.suggestedReverseQuestions);
+  if (reverseQ.length) fb.suggestedReverseQuestions = reverseQ;
+  return Object.keys(fb).length > 0 ? fb : undefined;
+}
+
 function normalizeResult(raw: unknown): CareerInterviewFinalResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const result: CareerInterviewFinalResult = {
@@ -70,6 +96,9 @@ function normalizeResult(raw: unknown): CareerInterviewFinalResult {
   // 企業研究ログを使った面接でのみ AI が返す（未使用なら空文字は付けない）。
   const companyResearchFit = str(r.companyResearchFit);
   if (companyResearchFit) result.companyResearchFit = companyResearchFit;
+  // target 入力があった面接でのみ AI が返す（空なら付けない＝後方互換）。
+  const targetFeedback = normalizeTargetFeedback(r.targetFeedback);
+  if (targetFeedback) result.targetFeedback = targetFeedback;
   return result;
 }
 
@@ -104,6 +133,7 @@ export async function POST(req: Request) {
 
   const interviewType = resolveInterviewType(b.interviewType);
   const companyResearch = normalizeInterviewCompanyResearchContext(b.companyResearch);
+  const target = normalizeInterviewTarget(b.target);
   const system = [
     buildInterviewBaseSystem({
       profile: b.profile ?? null,
@@ -114,11 +144,11 @@ export async function POST(req: Request) {
       matching: b.matching ?? null,
       consultationInsights: b.consultationInsights ?? null,
       companyResearch,
-      target: normalizeInterviewTarget(b.target),
+      target,
       interviewType,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',
     }),
-    buildFinalFeedbackInstruction(interviewType, !!companyResearch),
+    buildFinalFeedbackInstruction(interviewType, !!companyResearch, target),
   ].join('\n\n');
 
   try {
