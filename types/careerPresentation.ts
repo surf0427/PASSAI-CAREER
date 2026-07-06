@@ -23,6 +23,42 @@ export type CareerPresentationType =
 // 入力モード（音声＝Web Speech API でライブ文字起こし / テキスト＝原稿を貼り付け）。
 export type CareerPresentationMode = 'voice' | 'text';
 
+// ── お題ベース（プロンプト型）プレゼンの設定 ───────────────────────────
+// 就活・選考で出される「お題」に対して発表する形式へ寄せるための追加設定。
+// すべて任意（後方互換）。最重要は「お題（theme）」と「発表時間（timeLimitSec）」で、
+// 以下はお題を補強する任意コンテキスト。既存履歴には無いので UI/プロンプトは欠損に耐える。
+
+// 想定シーン（選考の場面）。評価の重心を出し分ける。
+export type CareerPresentationScenario =
+  | 'main_selection' // 本選考
+  | 'internship' // インターン選考
+  | 'gd_followup' // グループディスカッション後の発表
+  | 'case' // ケース面接
+  | 'self_pr' // 自己PRプレゼン
+  | 'company_proposal' // 企業課題提案
+  | 'unspecified'; // 指定なし
+
+// 発表形式。
+export type CareerPresentationFormat =
+  | 'individual' // 個人発表
+  | 'group_rep' // グループ代表発表
+  | 'with_materials' // 資料あり
+  | 'without_materials' // 資料なし
+  | 'unspecified'; // 指定なし
+
+// お題ベースプレゼンの任意設定（session / result に optional で持つ）。
+export type CareerPresentationConfig = {
+  scenario?: CareerPresentationScenario;
+  companyName?: string;
+  industry?: string;
+  jobType?: string;
+  format?: CareerPresentationFormat;
+  // 評価してほしい観点（CAREER_PRESENTATION_EVAL_FOCUS の key 群）。
+  evaluationFocus?: string[];
+  // 補足メモ。
+  note?: string;
+};
+
 // 総合ランク。
 export type CareerPresentationRank = 'S' | 'A' | 'B' | 'C' | 'D';
 
@@ -56,6 +92,11 @@ export type CareerPresentationFinalResult = {
   expectedQuestions: string[];
   // 改善版の構成例（アウトライン。完成原稿の代筆はしない）。
   improvedStructure: string[];
+  // 観点別フィードバック（任意・後方互換のため optional。古い履歴には無い）。
+  //   - 構成 / 説得力 / 話し方・伝え方 についての個別コメント。
+  structureFeedback?: string;
+  persuasionFeedback?: string;
+  deliveryFeedback?: string;
   // 選考通過可能性についての所見（断定しない）。
   passLikelihood: string;
   // 志望業界・職種・就活軸との相性についての所見。
@@ -78,7 +119,9 @@ export type CareerPresentationSession = {
   status: 'in_progress' | 'completed';
   presentationType: CareerPresentationType;
   mode: CareerPresentationMode;
-  // 発表テーマ。
+  // お題ベースプレゼンの任意設定（想定シーン・企業名・観点など）。古い履歴には無い。
+  config?: CareerPresentationConfig;
+  // 発表テーマ（＝お題）。
   theme: string;
   // 制限時間（秒）。0 = 未設定。
   timeLimitSec: number;
@@ -94,6 +137,8 @@ export type CareerPresentationResult = {
   createdAt: string;
   presentationType: CareerPresentationType;
   mode: CareerPresentationMode;
+  // お題ベースプレゼンの任意設定。古い履歴には無い。
+  config?: CareerPresentationConfig;
   theme: string;
   timeLimitSec: number;
   durationSec: number;

@@ -6,7 +6,11 @@
 // ブラウザ API を使わない純粋データ／純粋関数のみ。サーバ（route / presentationPrompt）と
 // クライアント（setup / session / result UI）の双方から import する。
 
-import type { CareerPresentationType } from '@/types/careerPresentation';
+import type {
+  CareerPresentationType,
+  CareerPresentationScenario,
+  CareerPresentationFormat,
+} from '@/types/careerPresentation';
 
 export type CareerPresentationModeConfig = {
   type: CareerPresentationType;
@@ -127,12 +131,13 @@ export const CAREER_PRESENTATION_MODES: CareerPresentationModeConfig[] =
 
 export const DEFAULT_CAREER_PRESENTATION_TYPE: CareerPresentationType = 'self_pr';
 
-// 制限時間の選択肢（秒）。1/3/5/10 分。
+// 制限時間の選択肢（秒）。1/3/5/10 分＋指定なし（0）。
 export const CAREER_PRESENTATION_TIME_LIMITS: Array<{ label: string; sec: number }> = [
   { label: '1分', sec: 60 },
   { label: '3分', sec: 180 },
   { label: '5分', sec: 300 },
   { label: '10分', sec: 600 },
+  { label: '指定なし', sec: 0 },
 ];
 
 export function isCareerPresentationType(v: unknown): v is CareerPresentationType {
@@ -146,4 +151,178 @@ export function resolvePresentationType(v: unknown): CareerPresentationType {
 
 export function getPresentationModeConfig(v: unknown): CareerPresentationModeConfig {
   return MODES[resolvePresentationType(v)];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// お題ベース（プロンプト型）プレゼン — 想定シーン / 発表形式 / 評価観点 / 難易度
+//
+// 受験版プレゼン機能と同じ「お題に対して発表する」形式へ寄せるための定義。
+// 旧「PASSAI 機能別プレゼン種別（MODES）」は履歴表示の後方互換のために残す。
+// 新規セッションは scenario（想定シーン）を主軸にし、presentationType は
+// legacyType でマッピングして埋める（Supabase mirror 列・旧ラベル表示のため）。
+// ════════════════════════════════════════════════════════════════════
+
+export type CareerPresentationScenarioConfig = {
+  scenario: CareerPresentationScenario;
+  label: string;
+  emoji: string;
+  // 旧 presentationType へのマッピング（後方互換のためセッションに埋める）。
+  legacyType: CareerPresentationType;
+  // AIお題生成の狙い。
+  themeFocus: string;
+  // 評価者（採用担当）としての姿勢・見どころ。
+  guidance: string;
+  // このシーンで特に重視する観点。
+  evaluationEmphasis: string;
+};
+
+const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioConfig> = {
+  main_selection: {
+    scenario: 'main_selection',
+    label: '本選考',
+    emoji: '🎯',
+    legacyType: 'real',
+    themeFocus: '本選考のプレゼン選考を想定した、入社後の貢献・志望度・自分の経験との接続を語れるお題。',
+    guidance:
+      '本選考のプレゼンとして、入社後にどう貢献するか・志望度の高さ・企業理解・自分の具体的な経験との接続が伝わるかを見る。採用担当として「採用したい理由」が伝わるかを重視する。',
+    evaluationEmphasis: '入社後の貢献、志望度、企業理解、具体的な経験との接続、採用する理由が伝わるか。',
+  },
+  internship: {
+    scenario: 'internship',
+    label: 'インターン選考',
+    emoji: '🌱',
+    legacyType: 'real',
+    themeFocus: 'インターン選考を想定した、参加目的・学びたいこと・活かしたい強みを語れるお題。',
+    guidance:
+      'インターン選考のプレゼンとして、参加目的・学習意欲・業界/企業への関心・主体性・成長ポテンシャルが伝わるかを見る。完成度より伸びしろと熱量を重視する。',
+    evaluationEmphasis: '参加目的、学習意欲、業界・企業への関心、主体性、成長ポテンシャル。',
+  },
+  gd_followup: {
+    scenario: 'gd_followup',
+    label: 'GD後の発表',
+    emoji: '🤝',
+    legacyType: 'real',
+    themeFocus: 'グループディスカッション後の代表発表を想定した、チームの結論を簡潔に伝えるお題。',
+    guidance:
+      'グループディスカッション後の代表発表として、チームの議論を整理できているか・結論ファーストか・論点と根拠が簡潔か・代表発表として分かりやすいかを見る。',
+    evaluationEmphasis: 'チーム議論の整理、結論ファースト、論点と根拠の簡潔さ、代表発表としての分かりやすさ。',
+  },
+  case: {
+    scenario: 'case',
+    label: 'ケース面接',
+    emoji: '🧩',
+    legacyType: 'case',
+    themeFocus: 'ケース面接・ケース課題を想定した、課題設定→分析→解決策を筋道立てて提案するお題。',
+    guidance:
+      'ケース面接のプレゼンとして、課題設定→仮説→分析→解決策→実行可能性→施策の優先順位が論理的に組み立てられているかを見る。きれいなフレームより筋の通った結論と根拠を評価する。',
+    evaluationEmphasis: '課題設定、仮説、分析、解決策、実行可能性、施策の優先順位。',
+  },
+  self_pr: {
+    scenario: 'self_pr',
+    label: '自己PRプレゼン',
+    emoji: '💪',
+    legacyType: 'self_pr',
+    themeFocus: '自己PRプレゼンを想定した、自分の強みと裏づけとなる経験を語れるお題。',
+    guidance:
+      '自己PRプレゼンとして、強みの明確さ・エピソードの具体性・再現性（企業でどう活きるか）が伝わるかを見る。抽象的な強みの羅列ではなく具体に裏づけられているかを重視する。',
+    evaluationEmphasis: '強みの明確さ、エピソードの具体性、再現性、企業でどう活きるか。',
+  },
+  company_proposal: {
+    scenario: 'company_proposal',
+    label: '企業課題提案',
+    emoji: '🏢',
+    legacyType: 'case',
+    themeFocus:
+      '企業課題提案を想定した、企業/業界が抱えそうな課題を1つ挙げ解決策を提案するお題（企業の事実は断定しない）。',
+    guidance:
+      '企業課題提案のプレゼンとして、課題の捉え方・解決策の説得力・企業理解・実現可能性・リスク認識が伝わるかを見る。企業名だけを根拠に事業課題を捏造せず、情報が不足する場合は一般的な業界課題・仮説として扱えているかも見る。',
+    evaluationEmphasis: '課題の捉え方、解決策の説得力、企業理解、実現可能性、リスク認識。',
+  },
+  unspecified: {
+    scenario: 'unspecified',
+    label: '指定なし',
+    emoji: '🎤',
+    legacyType: 'real',
+    themeFocus: '就活・選考で出されそうな、汎用的なプレゼンのお題。',
+    guidance:
+      '就活・選考プレゼンとして、結論ファースト・論理構成・根拠の具体性・説得力・聞き手への伝わりやすさ・時間配分を総合的に見る。',
+    evaluationEmphasis: '構成の分かりやすさ、主張の明確さ、根拠の具体性、説得力、聞き手意識、時間配分。',
+  },
+};
+
+// setup 画面のシーン選択の並び順。
+export const CAREER_PRESENTATION_SCENARIO_ORDER: CareerPresentationScenario[] = [
+  'main_selection',
+  'internship',
+  'gd_followup',
+  'case',
+  'self_pr',
+  'company_proposal',
+  'unspecified',
+];
+
+export const CAREER_PRESENTATION_SCENARIOS: CareerPresentationScenarioConfig[] =
+  CAREER_PRESENTATION_SCENARIO_ORDER.map((s) => SCENARIOS[s]);
+
+export const DEFAULT_CAREER_PRESENTATION_SCENARIO: CareerPresentationScenario = 'unspecified';
+
+export function isCareerPresentationScenario(v: unknown): v is CareerPresentationScenario {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SCENARIOS, v);
+}
+
+export function resolveScenario(v: unknown): CareerPresentationScenario {
+  return isCareerPresentationScenario(v) ? v : DEFAULT_CAREER_PRESENTATION_SCENARIO;
+}
+
+export function getScenarioConfig(v: unknown): CareerPresentationScenarioConfig {
+  return SCENARIOS[resolveScenario(v)];
+}
+
+// 発表形式の選択肢。
+export const CAREER_PRESENTATION_FORMATS: Array<{ key: CareerPresentationFormat; label: string }> = [
+  { key: 'individual', label: '個人発表' },
+  { key: 'group_rep', label: 'グループ代表発表' },
+  { key: 'with_materials', label: '資料あり' },
+  { key: 'without_materials', label: '資料なし' },
+  { key: 'unspecified', label: '指定なし' },
+];
+
+export function getFormatLabel(v: unknown): string | null {
+  const found = CAREER_PRESENTATION_FORMATS.find((f) => f.key === v);
+  return found && found.key !== 'unspecified' ? found.label : null;
+}
+
+// 「評価してほしい観点」の選択肢（任意・複数選択）。
+export const CAREER_PRESENTATION_EVAL_FOCUS: Array<{ key: string; label: string }> = [
+  { key: 'structure', label: '構成' },
+  { key: 'persuasion', label: '説得力' },
+  { key: 'logic', label: '論理性' },
+  { key: 'delivery', label: '話し方' },
+  { key: 'companyUnderstanding', label: '企業理解' },
+  { key: 'originality', label: '独自性' },
+  { key: 'qaStrength', label: '質疑応答への強さ' },
+];
+
+export function evalFocusLabels(keys: string[] | undefined): string[] {
+  if (!keys || keys.length === 0) return [];
+  return keys
+    .map((k) => CAREER_PRESENTATION_EVAL_FOCUS.find((f) => f.key === k)?.label)
+    .filter((l): l is string => !!l);
+}
+
+// AIお題生成の難易度。
+export type CareerPresentationDifficulty = 'easy' | 'standard' | 'hard';
+
+export const CAREER_PRESENTATION_DIFFICULTIES: Array<{
+  key: CareerPresentationDifficulty;
+  label: string;
+  hint: string;
+}> = [
+  { key: 'easy', label: 'やさしめ', hint: '基本的なお題（自己PR・志望動機など）で、答えやすいもの' },
+  { key: 'standard', label: '標準', hint: '本番の選考でありそうな標準的な難度のお題' },
+  { key: 'hard', label: '難しめ', hint: 'ケース課題・企業課題提案など、思考力を問う歯ごたえのあるお題' },
+];
+
+export function resolveDifficulty(v: unknown): CareerPresentationDifficulty {
+  return v === 'easy' || v === 'standard' || v === 'hard' ? v : 'standard';
 }

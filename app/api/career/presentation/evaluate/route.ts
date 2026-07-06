@@ -15,14 +15,13 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
-  CareerPresentationType,
+  CareerPresentationConfig,
   CareerPresentationFinalResult,
   CareerPresentationRank,
   CareerPresentationAxisScore,
 } from '@/types/careerPresentation';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
-import { resolvePresentationType } from '@/app/career/presentation/presentationModes';
 import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_AXES,
@@ -106,6 +105,9 @@ function normalizeResult(raw: unknown): CareerPresentationFinalResult {
     nextPractice: strArray(r.nextPractice),
     expectedQuestions: strArray(r.expectedQuestions),
     improvedStructure: strArray(r.improvedStructure),
+    structureFeedback: str(r.structureFeedback) || undefined,
+    persuasionFeedback: str(r.persuasionFeedback) || undefined,
+    deliveryFeedback: str(r.deliveryFeedback) || undefined,
     passLikelihood: str(r.passLikelihood),
     companyFit: str(r.companyFit),
     interviewerConcerns: strArray(r.interviewerConcerns),
@@ -129,7 +131,7 @@ export async function POST(req: Request) {
     interview?: CareerInterviewFinalResult | null;
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
-    presentationType?: CareerPresentationType;
+    config?: CareerPresentationConfig | null;
     theme?: unknown;
     timeLimitSec?: unknown;
     durationSec?: unknown;
@@ -144,7 +146,7 @@ export async function POST(req: Request) {
     return Response.json({ error: '発表内容が長すぎます。' }, { status: 413 });
   }
 
-  const presentationType = resolvePresentationType(b.presentationType);
+  const config = b.config ?? null;
   const theme = str(b.theme);
   const timeLimitSec = clampSecond(b.timeLimitSec);
   const durationSec = clampSecond(b.durationSec);
@@ -159,12 +161,13 @@ export async function POST(req: Request) {
       interview: b.interview ?? null,
       matching: b.matching ?? null,
       consultationInsights: b.consultationInsights ?? null,
-      presentationType,
+      config,
+      theme,
     }),
-    buildEvaluateInstruction(presentationType),
+    buildEvaluateInstruction({ theme, config }),
   ].join('\n\n');
 
-  const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript });
+  const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript, config });
 
   try {
     let result: CareerPresentationFinalResult | null = null;

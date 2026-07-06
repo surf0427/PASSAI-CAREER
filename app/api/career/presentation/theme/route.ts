@@ -13,10 +13,9 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import type { CareerPresentationType } from '@/types/careerPresentation';
+import type { CareerPresentationConfig } from '@/types/careerPresentation';
 import { anthropic } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
-import { resolvePresentationType } from '@/app/career/presentation/presentationModes';
 import {
   CAREER_PRESENTATION_MODEL,
   buildPresentationBaseSystem,
@@ -54,10 +53,13 @@ export async function POST(req: Request) {
     interview?: CareerInterviewFinalResult | null;
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
-    presentationType?: CareerPresentationType;
+    config?: CareerPresentationConfig | null;
+    timeLimitSec?: unknown;
+    difficulty?: unknown;
   };
 
-  const presentationType = resolvePresentationType(b.presentationType);
+  const config = b.config ?? null;
+  const timeLimitSec = typeof b.timeLimitSec === 'number' ? b.timeLimitSec : 0;
   const system = buildPresentationBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
@@ -67,7 +69,7 @@ export async function POST(req: Request) {
     interview: b.interview ?? null,
     matching: b.matching ?? null,
     consultationInsights: b.consultationInsights ?? null,
-    presentationType,
+    config,
   });
 
   try {
@@ -77,7 +79,12 @@ export async function POST(req: Request) {
         max_tokens: 300,
         temperature: 1,
         system,
-        messages: [{ role: 'user', content: buildThemeUserPrompt(presentationType) }],
+        messages: [
+          {
+            role: 'user',
+            content: buildThemeUserPrompt({ config, timeLimitSec, difficulty: b.difficulty }),
+          },
+        ],
       },
       { signal: createTimeoutSignal() },
     );

@@ -14,12 +14,11 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
-  CareerPresentationType,
+  CareerPresentationConfig,
   CareerPresentationQaTurn,
 } from '@/types/careerPresentation';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
-import { resolvePresentationType } from '@/app/career/presentation/presentationModes';
 import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_QA_MAX_TURNS,
@@ -67,7 +66,7 @@ export async function POST(req: Request) {
     interview?: CareerInterviewFinalResult | null;
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
-    presentationType?: CareerPresentationType;
+    config?: CareerPresentationConfig | null;
     theme?: unknown;
     transcript?: unknown;
     turns?: unknown;
@@ -90,7 +89,7 @@ export async function POST(req: Request) {
     return Response.json({ done: true, reaction: '', question: null });
   }
 
-  const presentationType = resolvePresentationType(b.presentationType);
+  const config = b.config ?? null;
   const theme = str(b.theme);
 
   const system = buildPresentationBaseSystem({
@@ -102,10 +101,11 @@ export async function POST(req: Request) {
     interview: b.interview ?? null,
     matching: b.matching ?? null,
     consultationInsights: b.consultationInsights ?? null,
-    presentationType,
+    config,
+    theme,
   });
 
-  const userPrompt = buildQaUserPrompt({ theme, transcript, turns, presentationType });
+  const userPrompt = buildQaUserPrompt({ theme, transcript, turns, config });
 
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {

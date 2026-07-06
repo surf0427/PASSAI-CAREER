@@ -23,7 +23,12 @@ import {
   loadPresentationResults,
   updatePresentationResult,
 } from '../presentationStorage';
-import { getPresentationModeConfig } from '../presentationModes';
+import {
+  getPresentationModeConfig,
+  getScenarioConfig,
+  getFormatLabel,
+  evalFocusLabels,
+} from '../presentationModes';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerPresentationResultsToSupabase } from '@/lib/supabase/careerPresentation';
 import type {
@@ -102,7 +107,7 @@ export default function CareerPresentationResultPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...ctx,
-          presentationType: selected.presentationType,
+          config: selected.config ?? null,
           theme: selected.theme,
           transcript: selected.transcript,
           turns,
@@ -216,7 +221,7 @@ export default function CareerPresentationResultPage() {
                       <span className="font-semibold">{formatDate(r.createdAt)}</span>
                       <span className={active ? 'text-blue-100' : 'text-slate-400'}>
                         {' — '}
-                        {getPresentationModeConfig(r.presentationType).label}・
+                        {resultLabel(r)}・
                         {r.result.rank}ランク（{r.result.totalScore}点）
                       </span>
                     </button>
@@ -244,12 +249,14 @@ export default function CareerPresentationResultPage() {
                       <span className="text-sm font-bold text-slate-400"> / 100</span>
                     </p>
                     <p className="text-xs text-slate-500">
-                      {getPresentationModeConfig(selected.presentationType).label}・
-                      {formatDate(selected.createdAt)}
+                      {resultLabel(selected)}・{formatDate(selected.createdAt)}
                     </p>
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-slate-400">テーマ: {selected.theme || '—'}</p>
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  お題: {selected.theme || '—'}
+                </p>
+                <ConditionRow result={selected} />
               </Card>
 
               <Section title="総評">
@@ -284,9 +291,18 @@ export default function CareerPresentationResultPage() {
               <ListSection title="良かった点" items={selected.result.goodPoints} />
               <ListSection title="改善点" items={selected.result.improvements} />
               <ListSection title="優先的に直すべきポイント" items={selected.result.priorityImprovements} />
-              <ListSection title="次回の練習メニュー" items={selected.result.nextPractice} />
+
+              {/* 観点別フィードバック（任意・ある場合のみ） */}
+              <TextSection title="構成へのフィードバック" text={selected.result.structureFeedback} />
+              <TextSection title="説得力へのフィードバック" text={selected.result.persuasionFeedback} />
+              <TextSection
+                title="話し方・伝え方へのフィードバック"
+                text={selected.result.deliveryFeedback}
+              />
+
+              <ListSection title="次回の練習ポイント" items={selected.result.nextPractice} />
               <ListSection title="改善版の構成例" items={selected.result.improvedStructure} />
-              <ListSection title="想定質問" items={selected.result.expectedQuestions} />
+              <ListSection title="想定される追加質問・深掘り質問" items={selected.result.expectedQuestions} />
               <ListSection
                 title="面接官に突っ込まれそうな点"
                 items={selected.result.interviewerConcerns}
@@ -405,12 +421,64 @@ function formatDate(iso: string): string {
   return d.toLocaleString('ja-JP');
 }
 
+// 想定シーンのラベル。新履歴は config.scenario から、旧履歴は presentationType から解決する。
+function resultLabel(r: CareerPresentationResult): string {
+  if (r.config?.scenario) return getScenarioConfig(r.config.scenario).label;
+  return getPresentationModeConfig(r.presentationType).label;
+}
+
+function formatSeconds(sec: number): string {
+  if (!sec || sec <= 0) return '指定なし';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}分${s}秒` : `${m}分`;
+}
+
+// お題以外の発表条件（想定シーン・企業/業界/職種・発表時間・観点）を1行にまとめて表示。
+function ConditionRow({ result }: { result: CareerPresentationResult }) {
+  const cfg = result.config;
+  const parts: string[] = [];
+  parts.push(`想定シーン: ${resultLabel(result)}`);
+  if (cfg?.companyName) parts.push(`企業: ${cfg.companyName}`);
+  if (cfg?.industry) parts.push(`業界: ${cfg.industry}`);
+  if (cfg?.jobType) parts.push(`職種: ${cfg.jobType}`);
+  const fmt = getFormatLabel(cfg?.format);
+  if (fmt) parts.push(`形式: ${fmt}`);
+  parts.push(
+    `発表時間: ${formatSeconds(result.timeLimitSec)}${
+      result.durationSec > 0 ? `（実測 ${formatSeconds(result.durationSec)}）` : ''
+    }`,
+  );
+  const focus = evalFocusLabels(cfg?.evaluationFocus);
+  if (focus.length > 0) parts.push(`評価観点: ${focus.join('・')}`);
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+      {parts.map((p, i) => (
+        <span key={i} className="text-[11px] text-slate-400">
+          {p}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Card variant="soft" padding="md" className="mb-4">
       <h2 className="text-sm font-bold text-slate-900 mb-2">{title}</h2>
       {children}
     </Card>
+  );
+}
+
+// 任意テキストのフィードバック。値が無ければ何も描画しない（旧履歴互換）。
+function TextSection({ title, text }: { title: string; text?: string }) {
+  if (!text || !text.trim()) return null;
+  return (
+    <Section title={title}>
+      <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{text}</p>
+    </Section>
   );
 }
 
