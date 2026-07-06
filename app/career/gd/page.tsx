@@ -1,11 +1,13 @@
 'use client';
 
 // PASSAI 就活版 — GD（グループディスカッション）ハブ画面。
-// 現在地（進行中セッション・完了件数）を表示し、以下 4 つの導線を出す（STEP-GD-18 で整理）:
-//   1) 1人練習（ソロGD）を始める → /career/gd/run
-//   2) ルームGD（マルチ）を作成   → /career/gd/room/create
-//   3) 合言葉で参加             → /career/gd/room/join
-//   4) 結果・履歴を見る          → /career/gd/view
+// 就活生視点の 5 メニュー導線（STEP-GD-30 UX 改善）:
+//   ① ソロプレイ         → /career/gd/run（AIメンバーとGD練習）
+//   ② GD部屋を作る（マルチ）→ /career/gd/rooms/create（公開GD部屋を作成して募集）
+//   ③ GD部屋に入る（マルチ）→ /career/gd/rooms（募集中の公開GD部屋へ参加）
+//   ④ 友達とプレイ        → /career/gd/friends（合言葉で友達とGD）
+//   ⑤ 結果を見る          → /career/gd/view（過去のGD結果・評価）
+// ランダムマッチ（/career/gd/lobby）は温存するが前面には出さない（UX 方針）。
 // solo は careerGdResults、multi は careerGdRoomLogs で分離管理（混ぜない）。
 
 import { useMemo, useSyncExternalStore } from 'react';
@@ -24,6 +26,45 @@ type Status = {
   resultCount: number;
   hasInProgress: boolean;
 };
+
+// 就活生視点の 5 メニュー（表示順は仕様どおり固定）。
+const MENUS: { emoji: string; title: string; description: string; href: string; accent: string }[] = [
+  {
+    emoji: '🧑‍💻',
+    title: 'ソロプレイ',
+    description: 'AIメンバーとGD練習を行います。ログインなしで今すぐ始められます。',
+    href: '/career/gd/run',
+    accent: 'text-blue-700',
+  },
+  {
+    emoji: '📣',
+    title: 'GD部屋を作る',
+    description: '公開GD部屋を作成して参加者を募集します（ログインが必要）。',
+    href: '/career/gd/rooms/create',
+    accent: 'text-teal-700',
+  },
+  {
+    emoji: '🚪',
+    title: 'GD部屋に入る',
+    description: '現在募集中の公開GD部屋へ参加します（ログインが必要）。',
+    href: '/career/gd/rooms',
+    accent: 'text-indigo-700',
+  },
+  {
+    emoji: '🤝',
+    title: '友達とプレイ',
+    description: '合言葉を使って友達とGDを行います（ログインが必要）。',
+    href: '/career/gd/friends',
+    accent: 'text-violet-700',
+  },
+  {
+    emoji: '📊',
+    title: '結果を見る',
+    description: '過去のGD結果や評価を確認します。',
+    href: '/career/gd/view',
+    accent: 'text-slate-700',
+  },
+];
 
 export default function CareerGdEntryPage() {
   const isMounted = useSyncExternalStore(
@@ -45,7 +86,7 @@ export default function CareerGdEntryPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
         title="GD練習（グループディスカッション）"
-        description="AI参加者とグループディスカッションを実施し、企業選考目線の個別フィードバックを受け取れます。"
+        description="やりたいことを選んでください。AIメンバーとの1人練習も、他の就活生や友達との本番形式も選べます。"
       />
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
@@ -72,73 +113,11 @@ export default function CareerGdEntryPage() {
         </Card>
       )}
 
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
-        <p className="text-sm font-bold text-slate-800 mb-1">1人練習（ソロGD）を始める</p>
-        <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          あなた1人 + AI参加者で、テーマ・役割を決めてグループディスカッションを練習します。
-        </p>
-        <Link
-          href="/career/gd/run"
-          className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
-        >
-          1人練習を始める →
-        </Link>
-      </Card>
-
+      {/* ── 5 メニュー ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        <ModeCard
-          title="1人練習（ソロGD）"
-          description="AI参加者とテキストベースで練習し、企業評価つきのフィードバックを受け取ります。"
-          href="/career/gd/run"
-        />
-        <ModeCard
-          title="結果・履歴を見る"
-          description="1人練習の結果と、友達と行ったルームGDの履歴・フィードバックをまとめて確認できます。"
-          href="/career/gd/view"
-        />
-      </div>
-
-      {/* 公開GDロビー（STEP-GD-20）＋ランダムマッチ（STEP-GD-21〜23）。どちらも /career/gd/lobby にある。 */}
-      <div className="mt-4">
-        <Card variant="soft" padding="md">
-          <h2 className="text-sm font-bold text-slate-800 mb-1">他の就活生とGD練習する</h2>
-          <p className="text-xs text-slate-500 leading-relaxed mb-3">
-            <span className="font-semibold text-slate-700">ランダムマッチ</span>（人数を選ぶと同じ人数を希望する就活生と自動でマッチング）と、
-            <span className="font-semibold text-slate-700">公開ルーム</span>（募集中のルームを自分で選んで参加）を利用できます。
-            人数が足りない場合はAIが補助参加します（ログインが必要）。
-          </p>
-          <Link
-            href="/career/gd/lobby"
-            className="inline-flex items-center justify-center rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-teal-700"
-          >
-            ランダムマッチ・公開ロビーへ →
-          </Link>
-        </Card>
-      </div>
-
-      {/* マルチGD（Phase2 合言葉参加型）。ルーム作成は利用可。参加(join)は STEP-GD-12 で公開。 */}
-      <div className="mt-4">
-        <Card variant="soft" padding="md">
-          <h2 className="text-sm font-bold text-slate-800 mb-1">合言葉で友達とGD練習（マルチGD）</h2>
-          <p className="text-xs text-slate-500 leading-relaxed mb-3">
-            ルームを作って6桁の合言葉を発行し、友達に共有して複数人でGDを練習します。不足人数はAIが補完します（ログインが必要）。
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Link
-              href="/career/gd/room/create"
-              className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700"
-            >
-              ルームを作成 →
-            </Link>
-            <Link
-              href="/career/gd/room/join"
-              className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-indigo-700 ring-1 ring-indigo-200 shadow-sm transition-colors hover:bg-indigo-50"
-            >
-              合言葉で参加 →
-            </Link>
-          </div>
-        </Card>
+        {MENUS.map((m) => (
+          <MenuCard key={m.href} {...m} />
+        ))}
       </div>
 
       <div className="mt-8">
@@ -175,12 +154,29 @@ function StatusItem({ label, value }: { label: string; value: string }) {
 }
 
 const CARD_BASE =
-  'block w-full text-left rounded-2xl bg-white ring-1 ring-slate-200 shadow-card transition-all p-4 sm:p-5 min-h-[110px] hover:shadow-md active:bg-slate-50';
+  'block w-full text-left rounded-2xl bg-white ring-1 ring-slate-200 shadow-card transition-all p-4 sm:p-5 min-h-[128px] hover:shadow-md active:bg-slate-50';
 
-function ModeCard({ title, description, href }: { title: string; description: string; href: string }) {
+function MenuCard({
+  emoji,
+  title,
+  description,
+  href,
+  accent,
+}: {
+  emoji: string;
+  title: string;
+  description: string;
+  href: string;
+  accent: string;
+}) {
   return (
     <Link href={href} className={CARD_BASE}>
-      <h2 className="text-sm sm:text-base font-bold mb-1.5 leading-snug text-slate-900">{title}</h2>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-xl leading-none" aria-hidden>
+          {emoji}
+        </span>
+        <h2 className={`text-sm sm:text-base font-bold leading-snug ${accent}`}>{title}</h2>
+      </div>
       <p className="text-xs leading-relaxed text-slate-500">{description}</p>
     </Link>
   );
