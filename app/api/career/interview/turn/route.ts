@@ -17,7 +17,10 @@ import type {
   CareerInterviewType,
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import { resolveInterviewType } from '@/app/career/interview/interviewModes';
+import {
+  resolveInterviewType,
+  normalizeInterviewTarget,
+} from '@/app/career/interview/interviewModes';
 import { normalizeInterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
@@ -69,6 +72,7 @@ export async function POST(req: Request) {
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
     companyResearch?: unknown;
+    target?: unknown;
     interviewType?: CareerInterviewType;
     userInput?: string;
     turns?: unknown;
@@ -111,6 +115,7 @@ export async function POST(req: Request) {
     matching: b.matching ?? null,
     consultationInsights: b.consultationInsights ?? null,
     companyResearch: normalizeInterviewCompanyResearchContext(b.companyResearch),
+    target: normalizeInterviewTarget(b.target),
     interviewType,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });

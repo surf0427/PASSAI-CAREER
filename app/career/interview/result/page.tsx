@@ -8,7 +8,11 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { loadInterviewResults } from '../interviewStorage';
-import { getInterviewModeConfig } from '../interviewModes';
+import {
+  getInterviewModeConfig,
+  interviewSelectionLabel,
+  interviewPhaseLabel,
+} from '../interviewModes';
 import type { CareerInterviewResult } from '@/types/careerInterview';
 
 const subscribeMount = () => () => {};
@@ -93,6 +97,30 @@ export default function CareerInterviewResultPage() {
                 実施日時: {formatDate(selected.createdAt)}・面接の種類:{' '}
                 {getInterviewModeConfig(selected.interviewType).label}
               </p>
+
+              {selected.target && (
+                <Card variant="soft" padding="md" className="mb-4">
+                  <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+                    受けた企業・選考
+                  </p>
+                  <p className="text-sm font-bold text-slate-900 break-words">
+                    {selected.target.companyName}
+                  </p>
+                  {(() => {
+                    const meta = [
+                      selected.target.industry,
+                      selected.target.jobType,
+                      interviewSelectionLabel(selected.target.selectionType),
+                      interviewPhaseLabel(selected.target.interviewPhase),
+                    ].filter((s) => s);
+                    return meta.length > 0 ? (
+                      <p className="mt-1 text-xs text-slate-500 leading-relaxed break-words">
+                        {meta.join('・')}
+                      </p>
+                    ) : null;
+                  })()}
+                </Card>
+              )}
 
               {selected.companyResearchLogId && (
                 <Card variant="soft" padding="md" className="mb-4">

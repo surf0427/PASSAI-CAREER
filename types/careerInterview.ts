@@ -38,6 +38,46 @@ export type CareerInterviewTurnResult = {
   question: string;
 };
 
+// ── 受験先・選考の想定（面接の前段で入力する任意の応募コンテキスト） ─────────
+// 面接AIが「どの企業・選考を受けるか」を前提に、志望動機・企業理解・職種理解の
+// 深掘りやフィードバックを最適化するために使う。すべて localStorage 保持で、
+// Supabase / DB には接続しない（欠損しても面接は成立する後方互換設計）。
+
+// 選考種別。ES 側（CareerEsSelectionType）と同じ語彙に揃える（'main' | 'internship'）。
+// 未指定（undefined）は「指定なし」を表す。
+export type CareerInterviewSelectionType = 'main' | 'internship';
+
+// 選考フェーズ。未指定（undefined）は「指定なし」を表す。
+//   - 'first'      : 一次面接
+//   - 'second'     : 二次面接
+//   - 'final'      : 最終面接
+//   - 'internship' : インターン面接
+//   - 'casual'     : カジュアル面談
+export type CareerInterviewPhase =
+  | 'first'
+  | 'second'
+  | 'final'
+  | 'internship'
+  | 'casual';
+
+// 面接の前段で入力する受験先・選考情報。companyName のみ必須、他は任意。
+export type CareerInterviewTarget = {
+  // 志望企業名（必須）。
+  companyName: string;
+  // 志望業界（任意）。
+  industry?: string;
+  // 志望職種（任意）。
+  jobType?: string;
+  // 選考種別（任意）。未指定は「指定なし」。
+  selectionType?: CareerInterviewSelectionType;
+  // 選考フェーズ（任意）。未指定は「指定なし」。
+  interviewPhase?: CareerInterviewPhase;
+  // 企業について分かっていること・メモ（任意。AIの企業情報は本メモを最優先根拠にする）。
+  companyMemo?: string;
+  // 特に対策したいこと（任意）。
+  focusPoint?: string;
+};
+
 // 面接全体の最終評価。
 // companyFit は STEP（就活版面接強化）で追加。旧ログには無いため読み取り側は欠損許容する。
 export type CareerInterviewFinalResult = {
@@ -71,6 +111,9 @@ export type CareerInterviewSession = {
   // 回答ターン上限（これに達したら面接終了）。
   maxTurns: number;
 
+  // 受験先・選考の想定（前段で入力・任意）。旧セッションには無いため欠損許容。
+  target?: CareerInterviewTarget;
+
   // ── 企業研究ログ連携（すべて optional・後方互換） ──────────────────────
   // 面接開始時に選んだ「ユーザー本人の企業研究ログ」。turn / complete でも文脈として使う。
   companyResearchLogId?: string;
@@ -89,6 +132,9 @@ export type CareerInterviewResult = {
   // 評価対象になった会話のスナップショット。
   turns: CareerInterviewTurn[];
   result: CareerInterviewFinalResult;
+
+  // 受験先・選考の想定（前段で入力・任意）。旧結果には無いため欠損許容。
+  target?: CareerInterviewTarget;
 
   // 企業研究ログ連携（optional・後方互換）。結果一覧から参照元へリンクするのに使う。
   companyResearchLogId?: string;

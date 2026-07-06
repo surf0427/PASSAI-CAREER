@@ -6,7 +6,12 @@
 // このモジュールはブラウザ API を一切使わない純粋データ／純粋関数のみ。
 // サーバ（route / interviewPrompt）とクライアント（setup / session UI）の双方から import する。
 
-import type { CareerInterviewType } from '@/types/careerInterview';
+import type {
+  CareerInterviewType,
+  CareerInterviewTarget,
+  CareerInterviewSelectionType,
+  CareerInterviewPhase,
+} from '@/types/careerInterview';
 
 export type CareerInterviewModeConfig = {
   type: CareerInterviewType;
@@ -195,4 +200,81 @@ export function getInterviewModeConfig(
   v: unknown,
 ): CareerInterviewModeConfig {
   return MODES[resolveInterviewType(v)];
+}
+
+// ── 受験先・選考の想定（target）の純粋ユーティリティ ─────────────────────
+// client（target 入力 / setup / result 表示）と server（start/turn/complete route）の
+// 双方から使う。ブラウザ API は使わない。
+
+// 選考種別の表示ラベル。指定なし（undefined / 不正値）は空文字。
+export const CAREER_INTERVIEW_SELECTION_LABELS: Record<
+  CareerInterviewSelectionType,
+  string
+> = {
+  main: '本選考',
+  internship: 'インターン',
+};
+
+// 選考フェーズの表示ラベル。指定なし（undefined / 不正値）は空文字。
+export const CAREER_INTERVIEW_PHASE_LABELS: Record<
+  CareerInterviewPhase,
+  string
+> = {
+  first: '一次面接',
+  second: '二次面接',
+  final: '最終面接',
+  internship: 'インターン面接',
+  casual: 'カジュアル面談',
+};
+
+export function interviewSelectionLabel(v: unknown): string {
+  return typeof v === 'string' &&
+    Object.prototype.hasOwnProperty.call(CAREER_INTERVIEW_SELECTION_LABELS, v)
+    ? CAREER_INTERVIEW_SELECTION_LABELS[v as CareerInterviewSelectionType]
+    : '';
+}
+
+export function interviewPhaseLabel(v: unknown): string {
+  return typeof v === 'string' &&
+    Object.prototype.hasOwnProperty.call(CAREER_INTERVIEW_PHASE_LABELS, v)
+    ? CAREER_INTERVIEW_PHASE_LABELS[v as CareerInterviewPhase]
+    : '';
+}
+
+function trimStr(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+// 任意入力（unknown / 旧ログ / API body）を CareerInterviewTarget に防御的に正規化する。
+// companyName が空なら「有効な target 無し」とみなし null を返す（= 指定なし扱い）。
+export function normalizeInterviewTarget(
+  raw: unknown,
+): CareerInterviewTarget | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const companyName = trimStr(r.companyName);
+  if (!companyName) return null;
+
+  const target: CareerInterviewTarget = { companyName };
+  const industry = trimStr(r.industry);
+  if (industry) target.industry = industry;
+  const jobType = trimStr(r.jobType);
+  if (jobType) target.jobType = jobType;
+  if (r.selectionType === 'main' || r.selectionType === 'internship') {
+    target.selectionType = r.selectionType;
+  }
+  if (
+    typeof r.interviewPhase === 'string' &&
+    Object.prototype.hasOwnProperty.call(
+      CAREER_INTERVIEW_PHASE_LABELS,
+      r.interviewPhase,
+    )
+  ) {
+    target.interviewPhase = r.interviewPhase as CareerInterviewPhase;
+  }
+  const companyMemo = trimStr(r.companyMemo);
+  if (companyMemo) target.companyMemo = companyMemo;
+  const focusPoint = trimStr(r.focusPoint);
+  if (focusPoint) target.focusPoint = focusPoint;
+  return target;
 }

@@ -21,6 +21,7 @@ import type { CareerEsResult } from '@/types/careerEs';
 import type {
   CareerInterviewTurn,
   CareerInterviewType,
+  CareerInterviewTarget,
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import {
@@ -69,6 +70,75 @@ const CAREER_DEEP_DIVE_AXES = [
   '力を発揮できる環境／避けたい環境',
   '興味のある業界・職種や就活軸との接続（この経験はどんな仕事で活きそうか）',
 ];
+
+// 受験先・選考の想定（target）を面接官 system prompt 用のブロックに整形する。
+// companyName が無ければ空文字（従来どおり企業を特定しない面接）。
+// 企業の事実は断定させず、学生メモ（companyMemo）を最優先根拠にする方針を明示する。
+function buildTargetBlock(target: CareerInterviewTarget | null | undefined): string {
+  if (!target || !target.companyName) return '';
+  const lines: string[] = [
+    '# 今回の受験先・選考の想定',
+    `この面接は「${target.companyName}」を受ける想定で行ってください。志望動機・企業理解・職種理解に関する深掘りを自然に増やしてください。`,
+    `ただし「${target.companyName}」の事業内容・待遇・選考フロー・社風などの事実は断定・捏造せず、学生自身の理解と理由を問う形にしてください。`,
+  ];
+  if (target.industry) lines.push(`- 志望業界: ${target.industry}`);
+  if (target.jobType) lines.push(`- 志望職種: ${target.jobType}`);
+
+  if (target.selectionType === 'main') {
+    lines.push(
+      '- 選考種別: 本選考。入社後の貢献可能性・志望度の強さ・企業適合性・過去経験の再現性・「なぜこの会社か」を重視して深掘りしてください。',
+    );
+  } else if (target.selectionType === 'internship') {
+    lines.push(
+      '- 選考種別: インターン。参加目的・業界や企業への関心・現場理解・学びたいこと・検証したい仮説を重視して深掘りしてください。',
+      '  長期の入社を前提とした断定的な志望確認に寄せすぎないでください。',
+    );
+  }
+
+  switch (target.interviewPhase) {
+    case 'first':
+      lines.push(
+        '- 選考フェーズ: 一次面接。人柄・基本的なガクチカ・自己PR・志望動機の土台・コミュニケーションの自然さを中心に確認してください。',
+      );
+      break;
+    case 'second':
+      lines.push(
+        '- 選考フェーズ: 二次面接。経験の深掘り・企業や職種への理解・価値観との一致・強みの再現性を中心に確認してください。',
+      );
+      break;
+    case 'final':
+      lines.push(
+        '- 選考フェーズ: 最終面接。志望度・覚悟・入社後の展望・他社比較・長期的なキャリア観を中心に確認してください。',
+      );
+      break;
+    case 'internship':
+      lines.push(
+        '- 選考フェーズ: インターン面接。参加目的・学習意欲・業界理解・主体性・インターンで得たいことを中心に確認してください。',
+      );
+      break;
+    case 'casual':
+      lines.push(
+        '- 選考フェーズ: カジュアル面談。形式ばりすぎず自然な会話を意識し、企業理解の確認・相互理解・学生からの逆質問も歓迎する姿勢で進めてください。',
+      );
+      break;
+    default:
+      break;
+  }
+
+  if (target.companyMemo) {
+    lines.push(
+      `# 学生が把握している企業情報（最優先で尊重する）\n${target.companyMemo}`,
+      'この企業メモは学生本人が調べた内容です。企業に関する前提はこのメモを最優先の根拠にし、メモを超える事実は断定しないでください。',
+    );
+  }
+  if (target.focusPoint) {
+    lines.push(
+      `# 学生が特に対策したいこと\n${target.focusPoint}`,
+      'この点を意識して、質問・深掘り・最終フィードバックに自然に反映してください。',
+    );
+  }
+  return lines.join('\n');
+}
 
 // 面接官の人格・話し方を、面接の種類（interviewType）に応じて組み立てる。
 // 「新卒就活の面接官」という土台 + モード固有の人格 + 全モード共通ルールをまとめる。
@@ -162,6 +232,8 @@ export type CareerInterviewContextInput = {
   consultationInsights?: string[] | null;
   // 保存済み企業研究（選択時のみ）。ユーザー本人の企業研究を根拠に深掘りする。
   companyResearch?: InterviewCompanyResearchContext | null;
+  // 前段で入力した受験先・選考の想定（任意）。企業・選考フェーズに合わせて深掘りする。
+  target?: CareerInterviewTarget | null;
   interviewType?: CareerInterviewType;
   userInput?: string;
 };
@@ -184,11 +256,14 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
   const consultationBlock = renderConsultationInsights(input.consultationInsights);
   // 企業研究ログが選択されているときのみブロックを出す（未選択なら従来どおり）。
   const companyResearchBlock = formatInterviewCompanyResearchForPrompt(input.companyResearch);
+  // 前段で入力した受験先・選考の想定（任意）。企業名があるときのみ出す。
+  const targetBlock = buildTargetBlock(input.target);
 
   return [
     buildPersonaBlock(input.interviewType),
     buildCareerSystemPrompt(context),
     buildCareerFeatureInstruction(FEATURE_KEY),
+    targetBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     matchingBlock ? `# 就活マッチング結果（参考・断定しない）\n${matchingBlock}` : '',

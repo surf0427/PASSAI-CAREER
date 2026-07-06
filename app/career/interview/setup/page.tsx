@@ -14,7 +14,14 @@ import {
   hasAnyActivity,
   type CareerInterviewContextPayload,
 } from '../contextSource';
-import { upsertInterviewSession } from '../interviewStorage';
+import {
+  upsertInterviewSession,
+  loadInterviewTargetDraft,
+} from '../interviewStorage';
+import {
+  interviewSelectionLabel,
+  interviewPhaseLabel,
+} from '../interviewModes';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchSnapshot } from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
@@ -28,6 +35,7 @@ import type {
   CareerInterviewMode,
   CareerInterviewSession,
   CareerInterviewType,
+  CareerInterviewTarget,
 } from '@/types/careerInterview';
 import {
   CAREER_COMPANY_INTEREST_LABELS,
@@ -72,6 +80,11 @@ export default function CareerInterviewSetupPage() {
     () => (isMounted ? buildInterviewContextPayload() : null),
     [isMounted],
   );
+  // 前段（target 画面）で入力した受験先・選考の想定。未入力なら null（従来どおり）。
+  const target = useMemo<CareerInterviewTarget | null>(
+    () => (isMounted ? loadInterviewTargetDraft() : null),
+    [isMounted],
+  );
   // 保存済み企業研究ログ（最新更新順）。面接で深掘りの根拠に使える。
   const researchLogs = useMemo<CareerCompanyResearchLog[]>(() => {
     if (!isMounted) return [];
@@ -100,7 +113,7 @@ export default function CareerInterviewSetupPage() {
       const res = await fetch('/api/career/interview/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, interviewType }),
+        body: JSON.stringify({ ...payload, interviewType, target }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -121,6 +134,8 @@ export default function CareerInterviewSetupPage() {
         interviewType,
         turns: [{ role: 'question', content: data.question }],
         maxTurns: MAX_TURNS,
+        // 受験先・選考の想定（前段入力・任意）。turn / complete でも同じ文脈に使う。
+        ...(target ? { target } : {}),
         // 企業研究ログ連携（選択時のみ）。turn / complete でも同じログを文脈に使う。
         ...(selectedResearchLog
           ? {
@@ -156,6 +171,43 @@ export default function CareerInterviewSetupPage() {
             基本情報または活動整理のいずれかを入力すると面接を始められます。
           </p>
         )}
+      </Card>
+
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+              受ける企業・選考
+            </p>
+            {target ? (
+              <>
+                <p className="text-sm font-bold text-slate-900 break-words">
+                  {target.companyName}
+                </p>
+                <p className="mt-1 text-xs text-slate-500 leading-relaxed break-words">
+                  {[
+                    target.industry,
+                    target.jobType,
+                    interviewSelectionLabel(target.selectionType),
+                    interviewPhaseLabel(target.interviewPhase),
+                  ]
+                    .filter((s) => s)
+                    .join('・') || '企業名のみ指定'}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600 leading-relaxed">
+                企業は未指定です。特定の企業に合わせたい場合は設定できます。
+              </p>
+            )}
+          </div>
+          <Link
+            href="/career/interview/target"
+            className="shrink-0 text-xs font-semibold text-blue-600 hover:underline whitespace-nowrap"
+          >
+            {target ? '変更する' : '企業を設定'}
+          </Link>
+        </div>
       </Card>
 
       {researchLogs.length > 0 && (

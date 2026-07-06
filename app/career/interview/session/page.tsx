@@ -154,6 +154,7 @@ export default function CareerInterviewSessionPage() {
         body: JSON.stringify({
           ...ctx,
           interviewType: session.interviewType,
+          target: session.target,
           turns: turnsBefore,
           answer: trimmed,
         }),
@@ -214,6 +215,7 @@ export default function CareerInterviewSessionPage() {
         body: JSON.stringify({
           ...ctx,
           interviewType: session.interviewType,
+          target: session.target,
           turns: session.turns,
         }),
       });
@@ -236,6 +238,8 @@ export default function CareerInterviewSessionPage() {
         interviewType: session.interviewType,
         turns: session.turns,
         result: data.result,
+        // 受験先・選考の想定（あれば結果からも辿れるよう保持）。
+        ...(session.target ? { target: session.target } : {}),
         // 参照した企業研究ログ（あれば結果からも辿れるよう保持）。
         ...(session.companyResearchLogId
           ? {

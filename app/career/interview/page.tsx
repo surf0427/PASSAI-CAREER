@@ -87,10 +87,10 @@ export default function CareerInterviewEntryPage() {
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
         <p className="text-sm font-bold text-slate-800 mb-1">面接練習を始める</p>
         <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          登録済みのプロフィール・活動・自己分析・ESをもとに、面接官AIが質問します。
+          まず受ける企業・選考を入力すると、その企業に合わせて面接官AIが質問します（企業名だけでもOK）。
         </p>
         <Link
-          href="/career/interview/setup"
+          href="/career/interview/target"
           className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
         >
           面接を始める →
@@ -100,8 +100,8 @@ export default function CareerInterviewEntryPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <ModeCard
           title="面接を始める"
-          description="モードを選んで、面接官AIとの練習を始めます。"
-          href="/career/interview/setup"
+          description="受ける企業・選考を入れて、面接官AIとの練習を始めます。"
+          href="/career/interview/target"
         />
         <ModeCard
           title="過去の結果を見る"
