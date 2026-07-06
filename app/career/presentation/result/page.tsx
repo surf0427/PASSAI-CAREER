@@ -27,6 +27,7 @@ import {
   getPresentationModeConfig,
   getScenarioConfig,
   getFormatLabel,
+  getSelectionTypeLabel,
   evalFocusLabels,
 } from '../presentationModes';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
@@ -192,7 +193,7 @@ export default function CareerPresentationResultPage() {
             まだプレゼンの結果がありません。プレゼンを実施してください。
           </p>
           <Link
-            href="/career/presentation/setup"
+            href="/career/presentation/target"
             className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline"
           >
             プレゼンを始める →
@@ -442,6 +443,8 @@ function ConditionRow({ result }: { result: CareerPresentationResult }) {
   if (cfg?.companyName) parts.push(`企業: ${cfg.companyName}`);
   if (cfg?.industry) parts.push(`業界: ${cfg.industry}`);
   if (cfg?.jobType) parts.push(`職種: ${cfg.jobType}`);
+  const sel = getSelectionTypeLabel(cfg?.selectionType);
+  if (sel) parts.push(`選考種別: ${sel}`);
   const fmt = getFormatLabel(cfg?.format);
   if (fmt) parts.push(`形式: ${fmt}`);
   parts.push(

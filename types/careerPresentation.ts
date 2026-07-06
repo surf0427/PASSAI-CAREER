@@ -46,6 +46,27 @@ export type CareerPresentationFormat =
   | 'without_materials' // 資料なし
   | 'unspecified'; // 指定なし
 
+// 選考種別（本選考 / インターン）。未指定は「指定なし」。
+export type CareerPresentationSelectionType = 'main' | 'internship';
+
+// お題生成の前段（/career/presentation/target）で入力する「選考文脈」。
+// すべて optional。setup 開始時に config の初期値として読み込む。
+// localStorage 下書きキー: 'careerPresentationTargetDraft'。
+export type CareerPresentationTarget = {
+  companyName?: string;
+  industry?: string;
+  jobType?: string;
+  scenario?: CareerPresentationScenario;
+  selectionType?: CareerPresentationSelectionType;
+  format?: CareerPresentationFormat;
+  // 企業について分かっていること・メモ（AIの企業情報は本メモを最優先根拠にする）。
+  companyMemo?: string;
+  // 特に練習したいこと。
+  focusPoint?: string;
+  // AIお題生成の難易度（'standard' は標準）。
+  difficulty?: 'easy' | 'standard' | 'hard';
+};
+
 // お題ベースプレゼンの任意設定（session / result に optional で持つ）。
 export type CareerPresentationConfig = {
   scenario?: CareerPresentationScenario;
@@ -53,6 +74,12 @@ export type CareerPresentationConfig = {
   industry?: string;
   jobType?: string;
   format?: CareerPresentationFormat;
+  // 選考種別（target 由来。任意）。
+  selectionType?: CareerPresentationSelectionType;
+  // 企業について分かっていること・メモ（target 由来。AIの企業情報の最優先根拠）。
+  companyMemo?: string;
+  // 特に練習したいこと（target 由来。任意）。
+  focusPoint?: string;
   // 評価してほしい観点（CAREER_PRESENTATION_EVAL_FOCUS の key 群）。
   evaluationFocus?: string[];
   // 補足メモ。

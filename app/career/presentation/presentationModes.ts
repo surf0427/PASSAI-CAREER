@@ -10,6 +10,9 @@ import type {
   CareerPresentationType,
   CareerPresentationScenario,
   CareerPresentationFormat,
+  CareerPresentationSelectionType,
+  CareerPresentationTarget,
+  CareerPresentationConfig,
 } from '@/types/careerPresentation';
 
 export type CareerPresentationModeConfig = {
@@ -325,4 +328,84 @@ export const CAREER_PRESENTATION_DIFFICULTIES: Array<{
 
 export function resolveDifficulty(v: unknown): CareerPresentationDifficulty {
   return v === 'easy' || v === 'standard' || v === 'hard' ? v : 'standard';
+}
+
+// 選考種別の選択肢・ラベル。
+export const CAREER_PRESENTATION_SELECTION_TYPES: Array<{
+  value: CareerPresentationSelectionType | null;
+  label: string;
+}> = [
+  { value: null, label: '指定なし' },
+  { value: 'main', label: '本選考' },
+  { value: 'internship', label: 'インターン' },
+];
+
+export function getSelectionTypeLabel(v: unknown): string | null {
+  if (v === 'main') return '本選考';
+  if (v === 'internship') return 'インターン';
+  return null;
+}
+
+// ── お題生成の前段 target（選考文脈）─────────────────────────────────
+// 任意入力（unknown / 下書き / 旧ログ）を CareerPresentationTarget に防御的に正規化する。
+// 中身が空（有効な文脈が1つも無い）なら null を返す（= 指定なし扱い）。
+function trimStr(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+export function normalizePresentationTarget(raw: unknown): CareerPresentationTarget | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const target: CareerPresentationTarget = {};
+
+  const companyName = trimStr(r.companyName);
+  if (companyName) target.companyName = companyName;
+  const industry = trimStr(r.industry);
+  if (industry) target.industry = industry;
+  const jobType = trimStr(r.jobType);
+  if (jobType) target.jobType = jobType;
+  if (isCareerPresentationScenario(r.scenario)) target.scenario = r.scenario;
+  if (r.selectionType === 'main' || r.selectionType === 'internship') {
+    target.selectionType = r.selectionType;
+  }
+  if (CAREER_PRESENTATION_FORMATS.some((f) => f.key === r.format)) {
+    target.format = r.format as CareerPresentationFormat;
+  }
+  const companyMemo = trimStr(r.companyMemo);
+  if (companyMemo) target.companyMemo = companyMemo;
+  const focusPoint = trimStr(r.focusPoint);
+  if (focusPoint) target.focusPoint = focusPoint;
+  if (r.difficulty === 'easy' || r.difficulty === 'standard' || r.difficulty === 'hard') {
+    target.difficulty = r.difficulty;
+  }
+
+  // 意味のある文脈が1つも無ければ null（指定なしの汎用練習）。
+  const hasContent =
+    !!target.companyName ||
+    !!target.industry ||
+    !!target.jobType ||
+    !!target.scenario ||
+    !!target.selectionType ||
+    !!target.format ||
+    !!target.companyMemo ||
+    !!target.focusPoint;
+  return hasContent ? target : null;
+}
+
+// target（選考文脈）を config（セッション設定）の初期値へ写す。
+// お題・発表時間・評価観点は setup で決めるため含めない。
+export function presentationConfigFromTarget(
+  target: CareerPresentationTarget | null | undefined,
+): CareerPresentationConfig {
+  const cfg: CareerPresentationConfig = {};
+  if (!target) return cfg;
+  if (target.scenario) cfg.scenario = target.scenario;
+  if (target.companyName) cfg.companyName = target.companyName;
+  if (target.industry) cfg.industry = target.industry;
+  if (target.jobType) cfg.jobType = target.jobType;
+  if (target.format) cfg.format = target.format;
+  if (target.selectionType) cfg.selectionType = target.selectionType;
+  if (target.companyMemo) cfg.companyMemo = target.companyMemo;
+  if (target.focusPoint) cfg.focusPoint = target.focusPoint;
+  return cfg;
 }

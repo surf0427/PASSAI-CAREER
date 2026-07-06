@@ -1,8 +1,10 @@
 import type {
   CareerPresentationSession,
   CareerPresentationResult,
+  CareerPresentationTarget,
 } from '@/types/careerPresentation';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+import { normalizePresentationTarget } from './presentationModes';
 
 // 就活版（career）プレゼン対策AIの localStorage 保存層。
 // 受験版（presentation_sessions / Supabase Storage・DB）とは完全に分離する。
@@ -11,6 +13,22 @@ import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 // DB / Supabase / usage / 課金には一切接続しない（localStorage のみ）。
 const SESSIONS_KEY = 'careerPresentationSessions';
 const RESULTS_KEY = 'careerPresentationResults';
+// お題生成の前段（/target）で入力する選考文脈の下書き。setup が読む。canonical ではない。
+const TARGET_DRAFT_KEY = 'careerPresentationTargetDraft';
+
+// ── target 下書き（お題生成の前段の選考文脈）─────────────────────────
+
+export function loadPresentationTargetDraft(): CareerPresentationTarget | null {
+  return normalizePresentationTarget(safeGetStorage<unknown>(TARGET_DRAFT_KEY, null));
+}
+
+export function savePresentationTargetDraft(target: CareerPresentationTarget): void {
+  safeSetStorage(TARGET_DRAFT_KEY, target);
+}
+
+export function clearPresentationTargetDraft(): void {
+  safeSetStorage(TARGET_DRAFT_KEY, null);
+}
 
 // ── セッション ────────────────────────────────────────────────────
 

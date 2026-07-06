@@ -168,7 +168,7 @@ export default function CareerPresentationSessionPage() {
         <Card variant="soft" padding="md">
           <p className="text-sm text-slate-600 mb-4">進行中のプレゼンがありません。</p>
           <Link
-            href="/career/presentation/setup"
+            href="/career/presentation/target"
             className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline"
           >
             プレゼンを始める →

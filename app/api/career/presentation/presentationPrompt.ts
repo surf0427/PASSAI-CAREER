@@ -28,6 +28,7 @@ import type {
 import {
   getScenarioConfig,
   getFormatLabel,
+  getSelectionTypeLabel,
   evalFocusLabels,
   resolveDifficulty,
   CAREER_PRESENTATION_DIFFICULTIES,
@@ -72,10 +73,22 @@ function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   if (cfg?.companyName?.trim()) conds.push(`企業名: ${cfg.companyName.trim()}`);
   if (cfg?.industry?.trim()) conds.push(`業界: ${cfg.industry.trim()}`);
   if (cfg?.jobType?.trim()) conds.push(`職種: ${cfg.jobType.trim()}`);
+  const selectionLabel = getSelectionTypeLabel(cfg?.selectionType);
+  if (selectionLabel) conds.push(`選考種別: ${selectionLabel}`);
   const formatLabel = getFormatLabel(cfg?.format);
   if (formatLabel) conds.push(`発表形式: ${formatLabel}`);
   if (conds.length > 0) {
     lines.push('', '【発表条件】' + conds.join(' / '));
+  }
+
+  if (cfg?.companyMemo?.trim()) {
+    lines.push(
+      `【企業について分かっていること（ユーザー提供）】${cfg.companyMemo.trim()}`,
+      '※企業情報はこのメモを最優先の根拠にする。メモに無い事業内容・課題を断定・捏造しない。',
+    );
+  }
+  if (cfg?.focusPoint?.trim()) {
+    lines.push(`【特に練習したいこと】${cfg.focusPoint.trim()}`);
   }
 
   const focus = evalFocusLabels(cfg?.evaluationFocus);
@@ -242,11 +255,14 @@ export function buildThemeUserPrompt(params: {
   const timeLimitSec = typeof params.timeLimitSec === 'number' ? params.timeLimitSec : 0;
   const fmtTime = timeLimitSec > 0 ? `${Math.floor(timeLimitSec / 60)}分` : '指定なし';
 
+  const selectionLabel = getSelectionTypeLabel(cfg?.selectionType);
+
   const conds: string[] = [];
   if (cfg?.companyName?.trim()) conds.push(`企業名: ${cfg.companyName.trim()}`);
   if (cfg?.industry?.trim()) conds.push(`業界: ${cfg.industry.trim()}`);
   if (cfg?.jobType?.trim()) conds.push(`職種: ${cfg.jobType.trim()}`);
-  if (cfg?.note?.trim()) conds.push(`補足メモ: ${cfg.note.trim()}`);
+  if (selectionLabel) conds.push(`選考種別: ${selectionLabel}`);
+  if (cfg?.focusPoint?.trim()) conds.push(`特に練習したいこと: ${cfg.focusPoint.trim()}`);
 
   return [
     '新卒就活の選考プレゼン練習用に、本番でありそうな「お題（プレゼンテーマ）」を1つだけ提案してください。',
@@ -254,7 +270,15 @@ export function buildThemeUserPrompt(params: {
     `発表時間: ${fmtTime}（この時間で発表しきれる粒度にする）`,
     `難易度: ${diffCfg?.label ?? '標準'}（${diffCfg?.hint ?? ''}）`,
     conds.length > 0 ? `考慮する条件: ${conds.join(' / ')}` : '',
-    '企業名がある場合でも、その企業の具体的な事業内容・課題を断定・捏造しないこと。情報が不足する場合は一般的な業界課題・仮説として表現する。',
+    cfg?.companyName?.trim()
+      ? 'この企業を受ける想定のお題にする。ただし企業の事業内容・制度・課題を断定・捏造しない。'
+      : '',
+    cfg?.industry?.trim() && !cfg?.companyName?.trim()
+      ? 'その業界で出やすいテーマに寄せる。特定企業の事実は出さない。'
+      : '',
+    cfg?.companyMemo?.trim()
+      ? `企業情報は次のユーザー提供メモを最優先の根拠にする（メモに無い事実は断定しない）: ${cfg.companyMemo.trim()}`
+      : '企業メモが無い場合は、一般的な業界課題・職種理解・選考文脈として扱う。',
     '出力はお題の文そのものだけ（前置き・説明・記号・引用符・コードブロックは付けない）。',
   ]
     .filter((s) => s !== '')

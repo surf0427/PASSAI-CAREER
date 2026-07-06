@@ -1,8 +1,8 @@
 'use client';
 
 // PASSAI 就活版 — プレゼン対策AI setup 画面（お題ベース）。
-// 就活・選考で出される「お題」に対して発表する形式。最重要は「お題」と「発表時間」。
-// 想定シーン・企業/業界/職種・発表形式・評価観点・補足メモは任意（画面を重くしない）。
+// 選考文脈（企業/業界/職種/想定シーンなど）は前段 /career/presentation/target で入力し、
+// 本画面はその要約を表示するに留める。setup の主役は「お題」「発表時間」「評価してほしい観点」。
 // お題は手動入力 or AIに提案してもらう。セッションを作成して session へ。
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
@@ -16,25 +16,27 @@ import {
   buildPresentationContextPayload,
   type CareerPresentationContextPayload,
 } from '../contextSource';
-import { upsertPresentationSession } from '../presentationStorage';
+import {
+  upsertPresentationSession,
+  loadPresentationTargetDraft,
+} from '../presentationStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerPresentationSessionsToSupabase } from '@/lib/supabase/careerPresentation';
 import { useVoice } from '@/app/career/interview/useVoice';
 import {
   CAREER_PRESENTATION_TIME_LIMITS,
-  CAREER_PRESENTATION_SCENARIOS,
-  CAREER_PRESENTATION_FORMATS,
   CAREER_PRESENTATION_EVAL_FOCUS,
-  CAREER_PRESENTATION_DIFFICULTIES,
-  DEFAULT_CAREER_PRESENTATION_SCENARIO,
+  presentationConfigFromTarget,
   getScenarioConfig,
+  getFormatLabel,
+  getSelectionTypeLabel,
+  resolveDifficulty,
 } from '../presentationModes';
 import type {
   CareerPresentationMode,
   CareerPresentationSession,
-  CareerPresentationScenario,
-  CareerPresentationFormat,
   CareerPresentationConfig,
+  CareerPresentationTarget,
   CareerPresentationType,
 } from '@/types/careerPresentation';
 
@@ -53,22 +55,22 @@ export default function CareerPresentationSetupPage() {
   const router = useRouter();
   const userId = useCurrentUserId();
 
-  // 最重要（お題・発表時間）。
+  const isMounted = useSyncExternalStore(
+    subscribeMount,
+    getMountedSnapshot,
+    getMountedServerSnapshot,
+  );
+
+  // 前段 /target の選考文脈（下書き）。setup ではこれを要約表示し、config の土台にする。
+  const target = useMemo<CareerPresentationTarget | null>(
+    () => (isMounted ? loadPresentationTargetDraft() : null),
+    [isMounted],
+  );
+
+  // 最重要（お題・発表時間・評価してほしい観点）。
   const [theme, setTheme] = useState('');
   const [timeLimitSec, setTimeLimitSec] = useState<number>(180);
-
-  // 任意設定（想定シーン・企業/業界/職種・発表形式・評価観点・補足メモ）。
-  const [scenario, setScenario] = useState<CareerPresentationScenario>(
-    DEFAULT_CAREER_PRESENTATION_SCENARIO,
-  );
-  const [companyName, setCompanyName] = useState('');
-  const [industry, setIndustry] = useState('');
-  const [jobType, setJobType] = useState('');
-  const [format, setFormat] = useState<CareerPresentationFormat>('unspecified');
   const [evaluationFocus, setEvaluationFocus] = useState<string[]>([]);
-  const [note, setNote] = useState('');
-  const [difficulty, setDifficulty] = useState<'easy' | 'standard' | 'hard'>('standard');
-  const [showDetails, setShowDetails] = useState(false);
 
   const [mode, setMode] = useState<CareerPresentationMode>('voice');
   const [generating, setGenerating] = useState(false);
@@ -77,26 +79,18 @@ export default function CareerPresentationSetupPage() {
 
   const { sttSupported } = useVoice();
 
-  const isMounted = useSyncExternalStore(
-    subscribeMount,
-    getMountedSnapshot,
-    getMountedServerSnapshot,
-  );
-
   const ctx = useMemo<CareerPresentationContextPayload | null>(
     () => (isMounted ? buildPresentationContextPayload() : null),
     [isMounted],
   );
 
-  // 現在の入力から config を組み立てる（空値は入れない）。
+  const difficulty = resolveDifficulty(target?.difficulty);
+
+  // target（選考文脈）＋ setup（評価観点）から最終 config を組み立てる。
   function buildConfig(): CareerPresentationConfig {
-    const cfg: CareerPresentationConfig = { scenario };
-    if (companyName.trim()) cfg.companyName = companyName.trim();
-    if (industry.trim()) cfg.industry = industry.trim();
-    if (jobType.trim()) cfg.jobType = jobType.trim();
-    if (format !== 'unspecified') cfg.format = format;
+    const cfg = presentationConfigFromTarget(target);
+    if (!cfg.scenario) cfg.scenario = 'unspecified';
     if (evaluationFocus.length > 0) cfg.evaluationFocus = evaluationFocus;
-    if (note.trim()) cfg.note = note.trim();
     return cfg;
   }
 
@@ -142,7 +136,7 @@ export default function CareerPresentationSetupPage() {
       mode === 'voice' && !sttSupported ? 'text' : mode;
     const config = buildConfig();
     // presentationType は後方互換のため scenario からマッピングして埋める（Supabase 列・旧表示用）。
-    const presentationType: CareerPresentationType = getScenarioConfig(scenario).legacyType;
+    const presentationType: CareerPresentationType = getScenarioConfig(config.scenario).legacyType;
     const now = new Date().toISOString();
     const session: CareerPresentationSession = {
       id: newId(),
@@ -163,14 +157,15 @@ export default function CareerPresentationSetupPage() {
     router.push('/career/presentation/session');
   }
 
-  const scenarioCfg = getScenarioConfig(scenario);
-
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
         title="お題プレゼンの準備"
-        description="就活・選考で出される「お題」に対して発表する練習です。お題と発表時間を決めれば始められます。"
+        description="お題と発表時間を決めれば始められます。想定した選考文脈に合わせて、AIがお題を作れます。"
       />
+
+      {/* 今回の想定条件（前段 /target の要約） */}
+      <TargetSummary target={target} isMounted={isMounted} />
 
       {/* お題（必須・主役） */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
@@ -191,17 +186,9 @@ export default function CareerPresentationSetupPage() {
           placeholder="例: あなたの強みを3分でプレゼンしてください / 若者向けの新サービスを提案してください"
           rows={3}
         />
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] text-slate-400">AI提案の難易度:</span>
-          {CAREER_PRESENTATION_DIFFICULTIES.map((d) => (
-            <Chip
-              key={d.key}
-              label={d.label}
-              active={difficulty === d.key}
-              onClick={() => setDifficulty(d.key)}
-            />
-          ))}
-        </div>
+        <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
+          自分で入力するか、上のボタンで想定条件に沿ったお題をAIに作ってもらえます。
+        </p>
       </Card>
 
       {/* 発表時間（重要） */}
@@ -219,97 +206,21 @@ export default function CareerPresentationSetupPage() {
         </div>
       </Card>
 
-      {/* 詳細設定（任意・折りたたみ） */}
+      {/* 評価してほしい観点（任意・複数選択） */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <button
-          type="button"
-          onClick={() => setShowDetails((v) => !v)}
-          className="w-full flex items-center justify-between"
-        >
-          <span className="text-[11px] font-bold text-blue-700 tracking-widest">
-            詳細設定（任意）
-          </span>
-          <span className="text-xs text-slate-400">
-            {showDetails ? '閉じる ▲' : `想定シーン・企業・観点など ▼`}
-          </span>
-        </button>
-
-        {!showDetails && (
-          <p className="mt-2 text-xs text-slate-500">
-            現在の想定シーン: {scenarioCfg.emoji} {scenarioCfg.label}
-            {evaluationFocus.length > 0 && `・評価観点 ${evaluationFocus.length}件`}
-          </p>
-        )}
-
-        {showDetails && (
-          <div className="mt-4 flex flex-col gap-5">
-            {/* 想定シーン */}
-            <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">想定シーン</p>
-              <div className="flex flex-wrap gap-2">
-                {CAREER_PRESENTATION_SCENARIOS.map((s) => (
-                  <Chip
-                    key={s.scenario}
-                    label={`${s.emoji} ${s.label}`}
-                    active={scenario === s.scenario}
-                    onClick={() => setScenario(s.scenario)}
-                  />
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-                {scenarioCfg.evaluationEmphasis}
-              </p>
-            </div>
-
-            {/* 企業名・業界・職種 */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <TextField label="企業名" value={companyName} onChange={setCompanyName} placeholder="例: 〇〇株式会社" />
-              <TextField label="業界" value={industry} onChange={setIndustry} placeholder="例: IT・人材" />
-              <TextField label="職種" value={jobType} onChange={setJobType} placeholder="例: 営業・企画" />
-            </div>
-
-            {/* 発表形式 */}
-            <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">発表形式</p>
-              <div className="flex flex-wrap gap-2">
-                {CAREER_PRESENTATION_FORMATS.map((f) => (
-                  <Chip
-                    key={f.key}
-                    label={f.label}
-                    active={format === f.key}
-                    onClick={() => setFormat(f.key)}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* 評価してほしい観点（複数選択） */}
-            <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">評価してほしい観点（複数可）</p>
-              <div className="flex flex-wrap gap-2">
-                {CAREER_PRESENTATION_EVAL_FOCUS.map((f) => (
-                  <Chip
-                    key={f.key}
-                    label={f.label}
-                    active={evaluationFocus.includes(f.key)}
-                    onClick={() => toggleFocus(f.key)}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* 補足メモ */}
-            <div>
-              <p className="text-xs font-bold text-slate-700 mb-2">補足メモ</p>
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="発表の前提・意識したいことなどを自由に。"
-                rows={2}
-              />
-            </div>
-          </div>
-        )}
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
+          評価してほしい観点（任意・複数可）
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {CAREER_PRESENTATION_EVAL_FOCUS.map((f) => (
+            <Chip
+              key={f.key}
+              label={f.label}
+              active={evaluationFocus.includes(f.key)}
+              onClick={() => toggleFocus(f.key)}
+            />
+          ))}
+        </div>
       </Card>
 
       {/* 入力モード */}
@@ -363,6 +274,65 @@ export default function CareerPresentationSetupPage() {
   );
 }
 
+// 前段 /target で入力した選考文脈の要約。未入力（汎用練習）なら案内を出す。
+function TargetSummary({
+  target,
+  isMounted,
+}: {
+  target: CareerPresentationTarget | null;
+  isMounted: boolean;
+}) {
+  const items: string[] = [];
+  if (target) {
+    if (target.companyName) items.push(target.companyName);
+    if (target.industry) items.push(target.industry);
+    if (target.jobType) items.push(target.jobType);
+    if (target.selectionType) {
+      const l = getSelectionTypeLabel(target.selectionType);
+      if (l) items.push(l);
+    }
+    if (target.scenario) items.push(getScenarioConfig(target.scenario).label);
+    const fmt = getFormatLabel(target.format);
+    if (fmt) items.push(fmt);
+  }
+
+  return (
+    <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest">今回の想定条件</p>
+        <Link
+          href="/career/presentation/target"
+          className="text-xs font-semibold text-blue-600 hover:underline"
+        >
+          変更する
+        </Link>
+      </div>
+      {!isMounted ? (
+        <p className="text-sm text-slate-400">—</p>
+      ) : items.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {items.map((it, i) => (
+            <span
+              key={i}
+              className="rounded-md bg-white ring-1 ring-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700"
+            >
+              {it}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500 leading-relaxed">
+          企業・業界・シーンは未設定です（汎用のお題で練習します）。
+          <Link href="/career/presentation/target" className="ml-1 text-blue-600 hover:underline">
+            選考文脈を設定する
+          </Link>
+          と、その選考で出そうなお題をAIが作りやすくなります。
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function Chip({
   label,
   active,
@@ -384,31 +354,6 @@ function Chip({
     >
       {label}
     </button>
-  );
-}
-
-function TextField({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-xs font-bold text-slate-700 mb-1.5">{label}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-lg ring-1 ring-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
-      />
-    </label>
   );
 }
 

@@ -77,7 +77,7 @@ export default function CareerPresentationEntryPage() {
           お題と発表時間を決めて、発表を録音（またはテキスト入力）し、AIの評価を受けます。
         </p>
         <Link
-          href="/career/presentation/setup"
+          href="/career/presentation/target"
           className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
         >
           お題を設定して始める →
@@ -88,7 +88,7 @@ export default function CareerPresentationEntryPage() {
         <NavCard
           title="お題プレゼンを始める"
           description="お題・発表時間を決めて、AIプレゼン練習を始めます。"
-          href="/career/presentation/setup"
+          href="/career/presentation/target"
         />
         <NavCard
           title="過去の結果を見る"
