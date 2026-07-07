@@ -14,7 +14,7 @@ import type {
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisTurn } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 import {
   CAREER_SELF_ANALYSIS_MODEL,
   CAREER_SELF_ANALYSIS_MAX_TURNS,
@@ -29,8 +29,28 @@ export const maxDuration = 80;
 
 const MAX_ANSWER_CHARS = 8000;
 
+// 深掘り質問は max_tokens 400〜500 と軽く、通常 15 秒以内に返る。
+// AI timeout を 30 秒に絞ることで、応答が遅い場合でも Vercel/モバイルSafari が接続を
+// 切る前に必ず JSON エラーを返せる（＝スマホで raw な "Load failed" を出さない）。
+const QUESTION_AI_TIMEOUT_MS = 30_000;
+
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+// 失敗時の共通 JSON レスポンス（形を統一: error=機械コード / code=同値 / detail=ユーザー向け日本語）。
+function jsonError(code: string, status: number, detail: string) {
+  return Response.json({ error: code, code, detail }, { status });
+}
+
+// 開発者向けの安全なログ。個人情報・入力全文・secret は出さず、件数と有無フラグのみ。
+function logFailure(stage: string, meta: Record<string, unknown>, error?: unknown): void {
+  const msg = error instanceof Error ? error.message : error ? String(error) : '';
+  console.error('[career/self-analysis/question]', {
+    stage,
+    ...meta,
+    ...(msg ? { error: msg.slice(0, 200) } : {}),
+  });
 }
 
 // 受信した turns を {role, content} の交互列に正規化する（壊れた要素は除去）。
@@ -61,7 +81,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
+    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
   }
 
   const b = (body && typeof body === 'object' ? body : {}) as {
@@ -81,23 +101,36 @@ export async function POST(req: Request) {
   // プロフィールも活動も無ければ深掘りの材料が無いので弾く（単発生成と同基準）。
   const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
   const hasActivity = !!b.activity && Object.keys(b.activity).length > 0;
+  const hasValues = !!b.values && Object.keys(b.values).length > 0;
+  const isSeed = turns.length === 0 && !answer;
+
+  // 開発者ログ用の安全なメタ（件数・有無のみ。入力全文や個人情報は含めない）。
+  const meta = {
+    stageKind: isSeed ? 'seed' : 'followup',
+    hasProfile,
+    hasActivity,
+    hasValues,
+    turns: turns.length,
+    answers: countAnswers(turns),
+    pastSummaries: pastSummaries.length,
+  };
+
   if (!hasProfile && !hasActivity) {
-    return Response.json(
-      { error: '基本情報または活動整理のいずれかを入力してください。' },
-      { status: 400 },
-    );
+    return jsonError('INPUT_REQUIRED', 400, '基本情報または活動整理のいずれかを入力してください。');
   }
 
-  const system = buildDeepDiveBaseSystem({
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    values: b.values ?? null,
-    pastSummaries,
-  });
+  // buildDeepDiveBaseSystem・AI 呼び出しをまとめて try で囲み、想定外の throw でも
+  // 必ず JSON エラーを返す（非JSONな 500 → スマホで "Load failed" になるのを防ぐ）。
+  try {
+    const system = buildDeepDiveBaseSystem({
+      profile: b.profile ?? null,
+      activity: b.activity ?? null,
+      values: b.values ?? null,
+      pastSummaries,
+    });
 
-  // ── seed（1問目）: turns 空かつ answer 無し ──────────────────────
-  if (turns.length === 0 && !answer) {
-    try {
+    // ── seed（1問目）: turns 空かつ answer 無し ──────────────────────
+    if (isSeed) {
       const message = await anthropic.messages.create(
         {
           model: CAREER_SELF_ANALYSIS_MODEL,
@@ -106,53 +139,42 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: buildSeedUserPrompt() }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(QUESTION_AI_TIMEOUT_MS) },
       );
       const question = extractText(
         message.content as Array<{ type: string; text?: string }>,
       );
       if (!question) {
-        return Response.json(
-          { error: 'AI_SELF_ANALYSIS_EMPTY', detail: '質問の生成に失敗しました。' },
-          { status: 502 },
-        );
+        logFailure('seed-empty', meta);
+        return jsonError('AI_SELF_ANALYSIS_EMPTY', 502, '質問の生成に失敗しました。もう一度お試しください。');
       }
       return Response.json({ reaction: '', question, done: false });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error('Career self-analysis question(seed) API error:', msg);
-      return Response.json(
-        { error: 'AI_REQUEST_FAILED', detail: '深掘りの開始に失敗しました。' },
-        { status: 500 },
-      );
     }
-  }
 
-  // ── followup（回答を踏まえた次の1問）─────────────────────────────
-  if (!answer) {
-    return Response.json({ error: '回答が空です。' }, { status: 400 });
-  }
-  if (answer.length > MAX_ANSWER_CHARS) {
-    return Response.json({ error: '回答が長すぎます。' }, { status: 413 });
-  }
-  // 直前に未回答の質問が必要（末尾が question）。
-  const last = turns[turns.length - 1];
-  if (!last || last.role !== 'question') {
-    return Response.json({ error: '回答対象の質問がありません。' }, { status: 409 });
-  }
+    // ── followup（回答を踏まえた次の1問）─────────────────────────────
+    if (!answer) {
+      return jsonError('EMPTY_ANSWER', 400, '回答を入力してください。');
+    }
+    if (answer.length > MAX_ANSWER_CHARS) {
+      return jsonError('ANSWER_TOO_LONG', 413, '回答が長すぎます。少し短くしてお試しください。');
+    }
+    // 直前に未回答の質問が必要（末尾が question）。
+    const last = turns[turns.length - 1];
+    if (!last || last.role !== 'question') {
+      return jsonError('NO_PENDING_QUESTION', 409, '回答対象の質問が見つかりませんでした。画面を更新してお試しください。');
+    }
 
-  // 回答を会話に加えた後の回答数。上限到達なら followup を生成せず done。
-  const newAnswerCount = countAnswers(turns) + 1;
-  if (newAnswerCount >= CAREER_SELF_ANALYSIS_MAX_TURNS) {
-    return Response.json({ done: true, reaction: '', question: null });
-  }
+    // 回答を会話に加えた後の回答数。上限到達なら followup を生成せず done。
+    const newAnswerCount = countAnswers(turns) + 1;
+    if (newAnswerCount >= CAREER_SELF_ANALYSIS_MAX_TURNS) {
+      return Response.json({ done: true, reaction: '', question: null });
+    }
 
-  const priorTurns: CareerSelfAnalysisTurn[] = [
-    ...turns,
-    { role: 'answer', content: answer },
-  ];
+    const priorTurns: CareerSelfAnalysisTurn[] = [
+      ...turns,
+      { role: 'answer', content: answer },
+    ];
 
-  try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する。
     for (let attempt = 1; attempt <= 2; attempt++) {
       const message = await anthropic.messages.create(
@@ -163,16 +185,14 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: buildFollowupUserPrompt(priorTurns) }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(QUESTION_AI_TIMEOUT_MS) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
       if (message.stop_reason === 'max_tokens') {
-        return Response.json(
-          { error: 'AI_SELF_ANALYSIS_TRUNCATED', detail: 'AI応答が途中で切れました。' },
-          { status: 502 },
-        );
+        logFailure('followup-truncated', meta);
+        return jsonError('AI_SELF_ANALYSIS_TRUNCATED', 502, 'AIの応答が途中で切れました。もう一度お試しください。');
       }
 
       try {
@@ -186,23 +206,17 @@ export async function POST(req: Request) {
         });
       } catch {
         if (attempt === 1) continue;
-        return Response.json(
-          { error: 'AI_SELF_ANALYSIS_PARSE_FAILED', detail: 'AI応答を解釈できませんでした。' },
-          { status: 502 },
-        );
+        logFailure('followup-parse', meta);
+        return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
       }
     }
 
-    return Response.json(
-      { error: 'AI_SELF_ANALYSIS_PARSE_FAILED', detail: 'AI応答を解釈できませんでした。' },
-      { status: 502 },
-    );
+    return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error('Career self-analysis question(followup) API error:', msg);
-    return Response.json(
-      { error: 'AI_REQUEST_FAILED', detail: '次の質問の生成に失敗しました。' },
-      { status: 500 },
-    );
+    const timeout = isAbortError(error);
+    logFailure(timeout ? 'ai-timeout' : 'ai-failed', meta, error);
+    return timeout
+      ? jsonError('AI_TIMEOUT', 503, 'AIの応答に時間がかかっています。少し時間を置いてもう一度お試しください。')
+      : jsonError('AI_REQUEST_FAILED', 500, isSeed ? '深掘りの開始に失敗しました。もう一度お試しください。' : '次の質問の生成に失敗しました。もう一度お試しください。');
   }
 }

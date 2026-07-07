@@ -26,7 +26,7 @@ import type {
   CareerSelfAnalysisTurn,
 } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 import {
   buildCoverageInventory,
   formatCoverageForPrompt,
@@ -96,6 +96,21 @@ const GENERATION_GUIDANCE = [
   '- 今回まだ十分に確認できていない観点（未確認の活動・価値観・弱み・ストレス要因）は無理に断定せず、',
   '  nextActions に「次回の自己分析で深掘りすべきテーマ」として具体的に1つ以上含める。',
 ].join('\n');
+
+// 失敗時の共通 JSON レスポンス（形を統一: error=機械コード / code=同値 / detail=ユーザー向け日本語）。
+function jsonError(code: string, status: number, detail: string) {
+  return Response.json({ error: code, code, detail }, { status });
+}
+
+// 開発者向けの安全なログ。個人情報・入力全文・secret は出さず、件数と有無フラグのみ。
+function logFailure(stage: string, meta: Record<string, unknown>, error?: unknown): void {
+  const msg = error instanceof Error ? error.message : error ? String(error) : '';
+  console.error('[career/self-analysis]', {
+    stage,
+    ...meta,
+    ...(msg ? { error: msg.slice(0, 200) } : {}),
+  });
+}
 
 // 任意の値を string に丸める。
 function str(value: unknown): string {
@@ -170,7 +185,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
+    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
   }
 
   const b = (body && typeof body === 'object' ? body : {}) as {
@@ -193,47 +208,57 @@ export async function POST(req: Request) {
   // プロフィールも活動も無ければ自己分析の材料が無いので弾く。
   const hasProfile = !!profile && Object.keys(profile).length > 0;
   const hasActivity = !!activity && Object.keys(activity).length > 0;
+  const hasValues = !!values && Object.keys(values).length > 0;
+
+  // 開発者ログ用の安全なメタ（件数・有無のみ。入力全文や個人情報は含めない）。
+  const meta = {
+    hasProfile,
+    hasActivity,
+    hasValues,
+    conversation: conversation.length,
+    pastSummaries: pastSummaries.length,
+  };
+
   if (!hasProfile && !hasActivity) {
-    return Response.json(
-      { error: '基本情報または活動整理のいずれかを入力してください。' },
-      { status: 400 },
-    );
+    return jsonError('INPUT_REQUIRED', 400, '基本情報または活動整理のいずれかを入力してください。');
   }
 
-  // 就活版共通基盤でコンテキスト → system prompt を組み立てる。
-  const context = buildCareerAiContext({
-    featureKey: FEATURE_KEY,
-    profile,
-    activity,
-    values,
-    userInput,
-  });
-
-  // 入力済みの活動・就活軸の棚卸し（複数項目を横断して分析させる）。
-  const coverageBlock = formatCoverageForPrompt(buildCoverageInventory(activity, values));
-  // 過去ログサマリ（無ければ空文字＝ブロックごと出さない）。
-  const pastBlock = formatPastSummariesForPrompt(pastSummaries);
-  // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む。
-  const conversationBlock = renderConversation(conversation);
-  const systemPrompt = [
-    buildCareerSystemPrompt(context),
-    coverageBlock,
-    conversationBlock,
-    pastBlock,
-    GENERATION_GUIDANCE,
-    OUTPUT_FORMAT_INSTRUCTION,
-  ]
-    .filter((s): s is string => !!s)
-    .join('\n\n');
-
-  // user メッセージは実行トリガ。機能別指示を再掲して JSON 出力を促す。
-  const userMessage = [
-    buildCareerFeatureInstruction(FEATURE_KEY),
-    '',
-    '以上を踏まえ、指定の JSON 形式で自己分析の結果のみを出力してください。',
-  ].join('\n');
-
+  // プロンプト組み立て〜AI 呼び出しをまとめて try で囲み、想定外の throw でも
+  // 必ず JSON エラーを返す（非JSONな 500 → スマホで "Load failed" になるのを防ぐ）。
   try {
+    // 就活版共通基盤でコンテキスト → system prompt を組み立てる。
+    const context = buildCareerAiContext({
+      featureKey: FEATURE_KEY,
+      profile,
+      activity,
+      values,
+      userInput,
+    });
+
+    // 入力済みの活動・就活軸の棚卸し（複数項目を横断して分析させる）。
+    const coverageBlock = formatCoverageForPrompt(buildCoverageInventory(activity, values));
+    // 過去ログサマリ（無ければ空文字＝ブロックごと出さない）。
+    const pastBlock = formatPastSummariesForPrompt(pastSummaries);
+    // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む。
+    const conversationBlock = renderConversation(conversation);
+    const systemPrompt = [
+      buildCareerSystemPrompt(context),
+      coverageBlock,
+      conversationBlock,
+      pastBlock,
+      GENERATION_GUIDANCE,
+      OUTPUT_FORMAT_INSTRUCTION,
+    ]
+      .filter((s): s is string => !!s)
+      .join('\n\n');
+
+    // user メッセージは実行トリガ。機能別指示を再掲して JSON 出力を促す。
+    const userMessage = [
+      buildCareerFeatureInstruction(FEATURE_KEY),
+      '',
+      '以上を踏まえ、指定の JSON 形式で自己分析の結果のみを出力してください。',
+    ].join('\n');
+
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（受験版 summarize と同方針）。
     let result: CareerSelfAnalysisResult | null = null;
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -253,10 +278,8 @@ export async function POST(req: Request) {
 
       // max_tokens 到達の途中切れは長さ起因なので retry せず明示エラーで返す。
       if (message.stop_reason === 'max_tokens') {
-        return Response.json(
-          { error: 'AI_SELF_ANALYSIS_TRUNCATED', detail: 'AI応答が途中で切れました。' },
-          { status: 502 },
-        );
+        logFailure('truncated', meta);
+        return jsonError('AI_SELF_ANALYSIS_TRUNCATED', 502, 'AIの応答が途中で切れました。もう一度お試しください。');
       }
 
       try {
@@ -264,27 +287,22 @@ export async function POST(req: Request) {
         break;
       } catch {
         if (attempt === 1) continue;
-        return Response.json(
-          { error: 'AI_SELF_ANALYSIS_PARSE_FAILED', detail: 'AI応答をJSONとして解釈できませんでした。' },
-          { status: 502 },
-        );
+        logFailure('parse-failed', meta);
+        return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
       }
     }
 
     if (!result) {
-      return Response.json(
-        { error: 'AI_SELF_ANALYSIS_PARSE_FAILED', detail: 'AI応答をJSONとして解釈できませんでした。' },
-        { status: 502 },
-      );
+      logFailure('parse-failed', meta);
+      return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
     }
 
     return Response.json({ result });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error('Career self-analysis API error:', msg);
-    return Response.json(
-      { error: 'AI_REQUEST_FAILED', detail: '自己分析の生成に失敗しました。' },
-      { status: 500 },
-    );
+    const timeout = isAbortError(error);
+    logFailure(timeout ? 'ai-timeout' : 'ai-failed', meta, error);
+    return timeout
+      ? jsonError('AI_TIMEOUT', 503, 'AIの応答に時間がかかっています。少し時間を置いてもう一度お試しください。')
+      : jsonError('AI_REQUEST_FAILED', 500, '自己分析の生成に失敗しました。もう一度お試しください。');
   }
 }

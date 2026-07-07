@@ -52,6 +52,61 @@ function newId(): string {
   return `csa-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+// クライアント側のタイムアウト（サーバ無応答でも操作不能にならないよう上限を設ける）。
+// 質問生成は軽い（サーバ AI timeout 30s）ため 35s。結果生成は重い（サーバ 60s）ため 70s。
+const QUESTION_TIMEOUT_MS = 35_000;
+const GENERATE_TIMEOUT_MS = 70_000;
+
+// HTTP status → ユーザー向けフォールバック文言。detail が無い場合に使う。
+function statusFallback(status: number, fallback: string): string {
+  if (status === 429) return 'ただいま混み合っています。少し時間を置いてお試しください。';
+  if (status === 503 || status === 504) {
+    return 'AIの応答に時間がかかっています。少し時間を置いてもう一度お試しください。';
+  }
+  return fallback;
+}
+
+// タイムアウト付き POST。fetch 自体の reject（モバイルSafari の "Load failed" 等）と
+// API エラー（!res.ok）を区別し、常に自然な日本語メッセージに変換して throw する。
+// 成功時は JSON をそのまま返す。呼び出し側は throw された Error.message をそのまま表示できる。
+async function postJson(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  fallbackMessage: string,
+): Promise<Record<string, unknown>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    // ネットワーク reject（"Load failed" / "Failed to fetch"）or クライアント timeout（abort）。
+    const aborted = !!e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError';
+    throw new Error(
+      aborted
+        ? '時間内に応答がありませんでした。電波の良い場所で、もう一度お試しください。'
+        : '通信に失敗しました。電波の良い場所で、少し時間を置いてもう一度お試しください。',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(data?.detail ?? statusFallback(res.status, fallbackMessage));
+  }
+
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!data) throw new Error(fallbackMessage);
+  return data;
+}
+
 // 画面の論理状態（busy は loading フラグで別管理する）。
 type Phase = 'intro' | 'chatting' | 'done';
 
@@ -126,28 +181,26 @@ export default function CareerSelfAnalysisRunPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/career/self-analysis/question', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload(), turns: [] }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(data?.detail ?? '深掘りの開始に失敗しました。');
-      }
-      const data = (await res.json()) as { question?: string | null };
-      if (!data.question) throw new Error('質問の生成に失敗しました。');
-      setTurns([{ role: 'question', content: data.question }]);
+      const data = await postJson(
+        '/api/career/self-analysis/question',
+        { ...payload(), turns: [] },
+        QUESTION_TIMEOUT_MS,
+        '深掘りの開始に失敗しました。もう一度お試しください。',
+      );
+      const question = typeof data.question === 'string' ? data.question : '';
+      if (!question) throw new Error('質問の生成に失敗しました。もう一度お試しください。');
+      setTurns([{ role: 'question', content: question }]);
       setReaction('');
       setPhase('chatting');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '深掘りの開始に失敗しました。');
+      setError(e instanceof Error ? e.message : '深掘りの開始に失敗しました。もう一度お試しください。');
     } finally {
       setLoading(false);
     }
   }
 
   // 回答を送って次の質問（or 終了）を取得。
+  // 失敗時は回答文・turns を保持し、同じ回答でそのまま再試行 or「ここまでで生成」に進めるようにする。
   async function submitAnswer() {
     if (phase !== 'chatting' || busy) return;
     const trimmed = answer.trim();
@@ -162,67 +215,63 @@ export default function CareerSelfAnalysisRunPage() {
     ];
 
     try {
-      const res = await fetch('/api/career/self-analysis/question', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload(), turns: turnsBefore, answer: trimmed }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(data?.detail ?? '次の質問の生成に失敗しました。');
-      }
-      const data = (await res.json()) as {
-        done?: boolean;
-        reaction?: string;
-        question?: string | null;
-      };
+      const data = await postJson(
+        '/api/career/self-analysis/question',
+        { ...payload(), turns: turnsBefore, answer: trimmed },
+        QUESTION_TIMEOUT_MS,
+        '次の質問の生成に失敗しました。もう一度お試しください。',
+      );
 
-      if (data.done || !data.question) {
+      const done = data.done === true;
+      const nextQuestion = typeof data.question === 'string' ? data.question : '';
+      const reactionText = typeof data.reaction === 'string' ? data.reaction : '';
+
+      if (done || !nextQuestion) {
         setTurns(withAnswer);
-        setReaction(data.reaction ?? '');
+        setReaction(reactionText);
         setAnswer('');
         setPhase('done');
         return;
       }
 
-      setTurns([...withAnswer, { role: 'question', content: data.question }]);
-      setReaction(data.reaction ?? '');
+      setTurns([...withAnswer, { role: 'question', content: nextQuestion }]);
+      setReaction(reactionText);
       setAnswer('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '次の質問の生成に失敗しました。');
+      // answer/turns は保持したまま（再試行 or 途中生成できるように）。
+      setError(e instanceof Error ? e.message : '次の質問の生成に失敗しました。もう一度お試しください。');
     } finally {
       setLoading(false);
     }
   }
 
   // 自己分析結果を生成する（会話があれば conversation として渡す）。
+  // 質問生成が失敗していても、既存 turns があれば本関数で結果生成に進める。
   async function generate() {
     if (!canRun || busy) return;
     setError(null);
     setGenerating(true);
     try {
-      const res = await fetch('/api/career/self-analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload(), conversation: turns }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(data?.detail ?? '自己分析の生成に失敗しました。');
-      }
-      const data = (await res.json()) as { result: CareerSelfAnalysisResult };
+      const data = await postJson(
+        '/api/career/self-analysis',
+        { ...payload(), conversation: turns },
+        GENERATE_TIMEOUT_MS,
+        '分析の生成に失敗しました。入力内容は保持されています。もう一度お試しください。',
+      );
+      const result = data.result as CareerSelfAnalysisResult | undefined;
+      if (!result) throw new Error('分析の生成に失敗しました。もう一度お試しください。');
       const log = {
         id: newId(),
         createdAt: new Date().toISOString(),
         userInput: '',
-        result: data.result,
+        result,
       };
       appendSelfAnalysisLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
       if (userId) void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
       router.push('/career/self-analysis/result');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '自己分析の生成に失敗しました。');
+      setError(e instanceof Error ? e.message : '分析の生成に失敗しました。もう一度お試しください。');
       setGenerating(false);
     }
     // 成功時は遷移するため setGenerating(false) は不要（失敗時のみ上で解除）。
