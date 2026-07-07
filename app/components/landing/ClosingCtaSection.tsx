@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { isCareerVariantByEnv } from '@/lib/appVariant';
 // FREEZE(legacy-diagnosis): 締めの主 CTA（/diagnosis）は凍結中。CTA 非表示に伴い
 // LinkButton は未使用となるため import も停止。サブ CTA（/home）は Link のまま残す。
 // import { LinkButton } from '@/components/ui/LinkButton';
@@ -9,6 +10,9 @@ import Link from 'next/link';
 // Free Diagnosis CTA とのカニバリ回避のため、本文を厚めに、CTA は同色だがコンテキストで差別化。
 
 export function ClosingCtaSection() {
+  // 就活版（CAREER）では「PASSAIを始める」を受験版課金（/pricing）ではなく
+  // CAREER 基本情報（/career/profile・guest 可）へ向ける。受験版は従来どおり /pricing。
+  const startHref = isCareerVariantByEnv() ? '/career/profile' : '/pricing';
   return (
     <section className="relative overflow-hidden">
       <div
@@ -69,7 +73,7 @@ export function ClosingCtaSection() {
               完全一致しないため（text-sm sm:text-base）、ここは Link のまま残し、
               次の PR で「subtle」size を追加するときに揃える。 */}
           <Link
-            href="/pricing"
+            href={startHref}
             className="inline-flex justify-center items-center bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-sm sm:text-base px-6 py-3 rounded-xl transition-colors"
           >
             PASSAIを始める

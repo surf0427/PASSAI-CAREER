@@ -59,6 +59,12 @@ export function Header() {
   // 「始める」は CAREER では基本情報入力（guest 可・localStorage canonical）へ、
   // 受験版では従来どおり課金（/pricing）へ。
   const lpStartHref = isCareerSite ? '/career/profile' : '/pricing';
+  // CAREER では料金セクション（#pricing）を非表示にするため、LP アンカーナビからも
+  // 「料金」を落とす（デッドアンカー防止）。それ以外の受験版セクション文言は本 PR の
+  // スコープ外（CTA/導線のみ CAREER 化）。
+  const lpNavLinks = isCareerSite
+    ? LP_NAV_LINKS.filter((link) => link.href !== '#pricing')
+    : LP_NAV_LINKS;
   // 認証ページ（/login）と料金ページ（/pricing）では Home / 基本情報 のナビを
   // 出さず、ロゴのみ表示する。
   //   - /login: ログイン完了までユーザーを導くため、他ページへの導線は不要。
@@ -91,7 +97,7 @@ export function Header() {
           <>
             {/* LP 内アンカーナビ：PC のみ表示 */}
             <nav className="hidden sm:flex flex-1 justify-center items-center gap-4 lg:gap-6 text-sm">
-              {LP_NAV_LINKS.map((link) => (
+              {lpNavLinks.map((link) => (
                 <a
                   key={link.href}
                   href={link.href}

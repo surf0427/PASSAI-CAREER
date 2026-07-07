@@ -7,6 +7,7 @@ import { FreeDiagnosisCtaSection } from '@/app/components/landing/FreeDiagnosisC
 import { FaqSection } from '@/app/components/landing/FaqSection';
 import { ClosingCtaSection } from '@/app/components/landing/ClosingCtaSection';
 import { FooterSection } from '@/app/components/landing/FooterSection';
+import { isCareerVariantByEnv } from '@/lib/appVariant';
 
 // ── PASSAI ランディングページ（LP / トップページ） ─────────────────
 // セクション構成：
@@ -26,16 +27,21 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 // 文言・デザイン・リンクの変更はそれぞれの section ファイルで行う。
 
 export default function LandingPage() {
+  // 就活版（CAREER）デプロイでは、受験版専用の課金（PricingSection）・受験タイプ
+  // 診断（FreeDiagnosisCtaSection）セクションを非表示にする。両者は文言も CTA も
+  // 100% 受験版（/pricing・Stripe・/diagnosis）で CAREER 相当が無いため、非表示に
+  // することで受験版導線をトップから排除する（env は SSR 安全＝初回描画から確定）。
+  const isCareer = isCareerVariantByEnv();
   return (
     <div className="bg-white text-slate-900">
       <HeroSection />
       <ProblemSection />
       <FeatureFlowSection />
-      <PricingSection />
+      {!isCareer && <PricingSection />}
       <CompareSection />
       {/* ⑥ 無料の受験タイプ診断（無料で試せる入口・有料 CTA とは別物）。
-          flag は /diagnosis 側で legacy / 9タイプを出し分ける。 */}
-      <FreeDiagnosisCtaSection />
+          flag は /diagnosis 側で legacy / 9タイプを出し分ける。CAREER では非表示。 */}
+      {!isCareer && <FreeDiagnosisCtaSection />}
       <FaqSection />
       <ClosingCtaSection />
       <FooterSection />
