@@ -1,12 +1,15 @@
 import type { Metadata } from 'next';
 
+import { CareerAuthProvider } from '@/app/career/components/CareerAuthProvider';
+
 // /career 配下専用の nested layout（server component）。
 //
-// 役割は「metadata の就活版上書き」と children の passthrough のみ。
-//   - career ページの多くは 'use client' のため、ページから metadata を export できない。
-//     server layout でここに集約して、ルート layout の受験版 metadata を career だけ上書きする。
-//   - Header / AuthProvider / PlanGate / <html> はルート app/layout.tsx が持つ。
-//     ここでは再描画・再ラップしない（二重描画・二重 Provider を避ける）。
+// 役割:
+//   - metadata の就活版上書き（ルート layout の受験版 metadata を career だけ上書き）。
+//   - 就活版（CAREER）専用の認証コンテキスト CareerAuthProvider で children を包む。
+//     受験版の Header / AuthProvider / PlanGate / <html> はルート app/layout.tsx が持つ。
+//     CareerAuthProvider は career 専用 Supabase client 上の **独立** した provider で、
+//     受験版 AuthProvider には干渉しない（identity を career 側にだけ持たせる）。
 //   - 受験版（総合型選抜・志望理由書・小論文 等）の語彙は入れない。新卒就活のみ。
 export const metadata: Metadata = {
   title: 'PASSAI CAREER',
@@ -19,5 +22,5 @@ export default function CareerLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return children;
+  return <CareerAuthProvider>{children}</CareerAuthProvider>;
 }

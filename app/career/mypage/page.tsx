@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { LinkButton } from '@/components/ui/LinkButton';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
+import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard';
 import {
   buildMypageSummary,
   type MypageSummary,
@@ -76,6 +77,11 @@ export default function CareerMypagePage() {
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
           就活の進捗・練習履歴・次にやることをまとめて確認できます。
         </p>
+      </div>
+
+      {/* ログイン状態（履歴・クラウド同期の導線） */}
+      <div className="mb-6">
+        <CareerLoginStatusCard redirect="/career/mypage" />
       </div>
 
       {summary.isEmpty ? (
