@@ -2,8 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 import { Logo } from '@/app/components/Logo';
+import {
+  isCareerVariantByEnv,
+  isCareerVariantByHostname,
+} from '@/lib/appVariant';
+
+// 就活版（CAREER）デプロイ判定を SSR 安全に読む（/career/home 等の mount フラグと同形）。
+//   - server / hydration: env（NEXT_PUBLIC_APP_VARIANT）だけで判定し SSR と一致させる。
+//   - client 確定後: env に加え hostname（passai-career.*）フォールバックも見る。
+// これにより hydration mismatch も setState-in-effect も避けつつ、env 未設定の
+// vercel ドメインでも CAREER 導線に切り替わる。
+const subscribeNoop = () => () => {};
+const getCareerSiteSnapshot = () =>
+  isCareerVariantByEnv() || isCareerVariantByHostname(window.location.hostname);
+const getCareerSiteServerSnapshot = () => isCareerVariantByEnv();
 
 // ── Header ────────────────────────────────────────────────────────
 // 上部ナビは「Home」と「基本情報」だけに限定する。
@@ -29,6 +43,22 @@ const LP_NAV_LINKS = [
 export function Header() {
   const pathname = usePathname();
   const isLanding = pathname === '/';
+
+  // 就活版（CAREER）デプロイでは LP ヘッダーの「ログイン」「PASSAIを始める」を
+  // 受験版導線（/login → /home → /input/basic）ではなく CAREER 側へ向ける。
+  const isCareerSite = useSyncExternalStore(
+    subscribeNoop,
+    getCareerSiteSnapshot,
+    getCareerSiteServerSnapshot,
+  );
+  // 未ログイン→ログイン後は CAREER 基本情報（/career/profile）へ着地させる。
+  // /career/login は redirect（同一オリジン相対パスのみ）を尊重する。
+  const lpLoginHref = isCareerSite
+    ? '/career/login?redirect=%2Fcareer%2Fprofile'
+    : '/login';
+  // 「始める」は CAREER では基本情報入力（guest 可・localStorage canonical）へ、
+  // 受験版では従来どおり課金（/pricing）へ。
+  const lpStartHref = isCareerSite ? '/career/profile' : '/pricing';
   // 認証ページ（/login）と料金ページ（/pricing）では Home / 基本情報 のナビを
   // 出さず、ロゴのみ表示する。
   //   - /login: ログイン完了までユーザーを導くため、他ページへの導線は不要。
@@ -77,13 +107,13 @@ export function Header() {
                 どちらも whitespace-nowrap で改行・崩れを防ぐ。 */}
             <div className="ml-auto sm:ml-0 flex items-center gap-2">
               <Link
-                href="/login"
+                href={lpLoginHref}
                 className="px-2.5 sm:px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-700 hover:text-brand-600 hover:bg-gray-100 transition-colors whitespace-nowrap"
               >
                 ログイン
               </Link>
               <Link
-                href="/pricing"
+                href={lpStartHref}
                 className="px-2.5 sm:px-3 py-1.5 rounded-lg text-sm font-semibold bg-brand-600 text-white hover:bg-brand-700 transition-colors whitespace-nowrap"
               >
                 PASSAIを始める
