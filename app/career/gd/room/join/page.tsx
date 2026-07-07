@@ -83,7 +83,7 @@ export default function CareerGdRoomJoinPage() {
           </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Link
-              href="/login"
+              href={`/login?next=${encodeURIComponent('/career/gd/room/join')}`}
               className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
             >
               ログインする →

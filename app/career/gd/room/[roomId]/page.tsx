@@ -126,7 +126,7 @@ export default function CareerGdRoomPage() {
             マルチGDルームの閲覧にはログインが必要です。
           </p>
           <Link
-            href="/login"
+            href={`/login?next=${encodeURIComponent(`/career/gd/room/${roomId}`)}`}
             className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
           >
             ログインする →
