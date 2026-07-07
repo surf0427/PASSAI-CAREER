@@ -27,6 +27,12 @@ import type {
 } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
+import {
+  buildCoverageInventory,
+  formatCoverageForPrompt,
+  formatPastSummariesForPrompt,
+  normalizeSelfAnalysisPastSummaries,
+} from '@/lib/careerSelfAnalysis/pastLogSummary';
 
 // 本ルートの機能キーは自己分析に固定する。
 const FEATURE_KEY = 'career-self-analysis' as const;
@@ -49,6 +55,8 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '- 就活軸との整合性（重視/回避したい条件と本人の特性が噛み合うか）',
   '- ガクチカ化できる経験、自己PR化できる経験',
   '一般論で埋めず、必ず本人の活動・経験・就活軸に紐づけて具体的に述べてください。',
+  '- 活動整理・就活軸整理に複数の項目がある場合は、1つに偏らず複数を横断して分析する。',
+  '- 今回の対話・入力で扱えた活動や価値観が限られている場合は断定しすぎず、「仮説」として述べる。',
   '',
   '# 出力形式（厳守）',
   '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
@@ -64,7 +72,7 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '  "selfPrIdeas": string[],     // 自己PR候補',
   '  "esAngles": string[],        // ESで使える経験の切り口',
   '  "interviewQuestions": string[], // 面接で深掘りされそうな想定質問',
-  '  "nextActions": string[],     // 次にやるべきこと',
+  '  "nextActions": string[],     // 次にやるべきこと。うち1つ以上は「次回の自己分析で深掘りすべき観点」（今回まだ十分に語られていない活動・価値観・弱み・ストレス要因など）にする',
   '  "careerDirection": string,   // キャリアの方向性・志望の核（1〜3文。志望動機の軸）',
   '  "recommendedIndustries": string[], // 向いている業界候補（根拠を短く）',
   '  "recommendedJobs": string[],       // 向いている職種候補（根拠を短く）',
@@ -76,6 +84,17 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '  "companySelectionCriteria": string[], // 企業選びで重視すべき条件',
   '  "developmentPoints": string[]      // 今後伸ばすべき点',
   '}',
+].join('\n');
+
+// 複数回利用を前提にした分析方針。初回は広い仮説、2回目以降は具体化。
+const GENERATION_GUIDANCE = [
+  '# 分析の進め方（複数回利用を前提に）',
+  '自己分析は1回で完成させるものではなく、ユーザーが複数回使うことで少しずつ深まる設計です。',
+  '- 初回（過去の自己分析が無い）場合は、活動・価値観を幅広く捉えた「広い仮説」として述べ、断定しすぎない。',
+  '- 2回目以降（過去の自己分析がある）場合は、過去の結論を踏まえてさらに具体化し、',
+  '  ES・面接で使えるエピソード化、志望業界・職種との接続、矛盾点・意思決定基準の精密化に踏み込む。',
+  '- 今回まだ十分に確認できていない観点（未確認の活動・価値観・弱み・ストレス要因）は無理に断定せず、',
+  '  nextActions に「次回の自己分析で深掘りすべきテーマ」として具体的に1つ以上含める。',
 ].join('\n');
 
 // 任意の値を string に丸める。
@@ -160,6 +179,7 @@ export async function POST(req: Request) {
     values?: CareerValuesInput | null;
     conversation?: unknown;
     userInput?: string;
+    pastSummaries?: unknown;
   };
 
   const profile = b.profile ?? null;
@@ -167,6 +187,8 @@ export async function POST(req: Request) {
   const values = b.values ?? null;
   const conversation = normalizeConversation(b.conversation);
   const userInput = typeof b.userInput === 'string' ? b.userInput : '';
+  // 過去の自己分析ログ（軽量サマリ・最大3件）。初回/2回目以降の出し分けと繰り返し回避に使う。
+  const pastSummaries = normalizeSelfAnalysisPastSummaries(b.pastSummaries);
 
   // プロフィールも活動も無ければ自己分析の材料が無いので弾く。
   const hasProfile = !!profile && Object.keys(profile).length > 0;
@@ -187,11 +209,18 @@ export async function POST(req: Request) {
     userInput,
   });
 
-  // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む（未入力なら従来と完全一致）。
+  // 入力済みの活動・就活軸の棚卸し（複数項目を横断して分析させる）。
+  const coverageBlock = formatCoverageForPrompt(buildCoverageInventory(activity, values));
+  // 過去ログサマリ（無ければ空文字＝ブロックごと出さない）。
+  const pastBlock = formatPastSummariesForPrompt(pastSummaries);
+  // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む。
   const conversationBlock = renderConversation(conversation);
   const systemPrompt = [
     buildCareerSystemPrompt(context),
+    coverageBlock,
     conversationBlock,
+    pastBlock,
+    GENERATION_GUIDANCE,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s): s is string => !!s)

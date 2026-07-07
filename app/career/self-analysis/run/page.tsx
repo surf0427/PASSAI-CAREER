@@ -26,9 +26,10 @@ import {
   loadCareerValues,
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
-import { appendSelfAnalysisLog } from '../selfAnalysisStorage';
+import { appendSelfAnalysisLog, loadSelfAnalysisLogs } from '../selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerSelfAnalysisResultsToSupabase } from '@/lib/supabase/careerSelfAnalysis';
+import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -94,6 +95,14 @@ export default function CareerSelfAnalysisRunPage() {
     [isMounted],
   );
 
+  // 過去の自己分析ログの軽量サマリ（最新→過去・最大3件）。今回のログ生成前に読むので過去分のみ。
+  // 深掘り質問・結果生成へ渡し「繰り返し回避」と「次テーマ選定」「初回/2回目以降の出し分け」に使う。
+  const pastSummaries = useMemo(
+    () => (isMounted ? buildSelfAnalysisPastSummaries(loadSelfAnalysisLogs()) : []),
+    [isMounted],
+  );
+  const isRepeatRun = pastSummaries.length > 0;
+
   const profileReady = !!basicInfo;
   const activityReady = hasAnyActivity(activity);
   const valuesReady = !!values && !isCareerValuesEmpty(values);
@@ -106,8 +115,9 @@ export default function CareerSelfAnalysisRunPage() {
   const busy = loading || generating;
 
   // 入力データを body に積む（最新の localStorage を反映）。
+  // pastSummaries は過去ログの軽量サマリ（全文は渡さない）。
   function payload() {
-    return { profile: basicInfo, activity, values };
+    return { profile: basicInfo, activity, values, pastSummaries };
   }
 
   // 深掘り開始（1問目を取得）。成功するまで画面は intro のまま。
@@ -240,13 +250,33 @@ export default function CareerSelfAnalysisRunPage() {
         )}
       </Card>
 
+      {/* 複数回利用の前提を伝える案内（初回 / 2回目以降で文言を出し分け）。 */}
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+          自己分析の進め方
+        </p>
+        {isRepeatRun ? (
+          <p className="text-xs text-slate-600 leading-relaxed">
+            自己分析は1回で完成させるものではありません。今回は前回までに扱えていない活動・価値観を中心に、
+            別の観点から深掘りします。回数を重ねるほど、強み・向いている環境・志望軸がより具体的になり、
+            ES・面接・企業選びに使える自己理解に育っていきます。
+          </p>
+        ) : (
+          <p className="text-xs text-slate-600 leading-relaxed">
+            今回は活動・価値観を幅広く確認し、全体像（仮説）を作ります。1回で掘り切る必要はありません。
+            活動整理・就活軸整理をもとに、自己分析を複数回行うことで、強み・向いている環境・志望軸が
+            少しずつ具体化され、ES・面接・企業選びに使える自己理解に育っていきます。
+          </p>
+        )}
+      </Card>
+
       {/* intro: 開始方法の選択 */}
       {phase === 'intro' && (
         <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
           <p className="text-sm font-bold text-slate-800 mb-1">深掘りしながら分析する（おすすめ）</p>
           <p className="text-xs text-slate-500 leading-relaxed mb-4">
-            AIが {MAX_TURNS} 問程度の質問を1つずつ出します。あなたの回答に合わせて深掘りし、
-            行動の理由・成果・価値観・向いている環境までを引き出してから分析を作ります。
+            AIが {MAX_TURNS} 問程度の質問を1つずつ出します。1つの活動に偏らず、複数の活動・価値観・就活軸を
+            幅広く横断しながら、行動の理由・成果・向いている環境までを引き出して分析を作ります。
           </p>
           {error && (
             <p className="mb-3 text-sm text-red-600 leading-relaxed" role="alert">

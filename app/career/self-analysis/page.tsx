@@ -96,6 +96,8 @@ export default function SelfAnalysisEntryPage() {
 
       <p className="mt-6 text-xs text-slate-500 leading-relaxed">
         まずは「自己分析を始める」から、基本情報・活動整理をもとに就活向けの自己分析を生成できます。
+        自己分析は1回で完成させるものではありません。使うたびに別の観点から活動・価値観を深掘りし、
+        ES・面接・企業選びに使える自己理解を育てていきます。
       </p>
 
       {/* ホームへの戻り導線。受験版は /home だが就活版は /career/home。 */}

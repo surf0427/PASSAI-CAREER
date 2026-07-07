@@ -23,6 +23,7 @@ import {
   buildFollowupUserPrompt,
   countAnswers,
 } from '../deepDivePrompt';
+import { normalizeSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 
 export const maxDuration = 80;
 
@@ -69,10 +70,13 @@ export async function POST(req: Request) {
     values?: CareerValuesInput | null;
     turns?: unknown;
     answer?: unknown;
+    pastSummaries?: unknown;
   };
 
   const turns = normalizeTurns(b.turns);
   const answer = str(b.answer);
+  // 過去の自己分析ログ（軽量サマリ）。繰り返し回避・次テーマ選定に使う。無ければ空配列。
+  const pastSummaries = normalizeSelfAnalysisPastSummaries(b.pastSummaries);
 
   // プロフィールも活動も無ければ深掘りの材料が無いので弾く（単発生成と同基準）。
   const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
@@ -88,6 +92,7 @@ export async function POST(req: Request) {
     profile: b.profile ?? null,
     activity: b.activity ?? null,
     values: b.values ?? null,
+    pastSummaries,
   });
 
   // ── seed（1問目）: turns 空かつ answer 無し ──────────────────────
