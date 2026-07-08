@@ -21,6 +21,7 @@ export type CareerContextPurpose =
   | 'company_research_review'
   | 'matching'
   | 'self_analysis'
+  | 'self_analysis_deep_dive'
   | 'mypage_summary';
 
 export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
@@ -34,6 +35,7 @@ export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
   'company_research_review',
   'matching',
   'self_analysis',
+  'self_analysis_deep_dive',
   'mypage_summary',
 ];
 
@@ -67,14 +69,15 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
   maxContextChars: 3500,
 };
 
-// Orchestrator 移行状況（P3-D 時点）:
+// Orchestrator 移行状況（P3-E 時点）:
 //   移行済み: es_generation(P3-A) / interview_practice(P3-A, start·turn·complete 共有) /
 //             matching(P3-B) / presentation_feedback(P3-C, evaluate·qa) /
-//             company_research_review(P3-C) / consultation(P3-C, base のみ) / self_analysis(P3-D, route.ts)
+//             company_research_review(P3-C) / consultation(P3-C, base のみ) /
+//             self_analysis(P3-D, route.ts) / self_analysis_deep_dive(P3-E, question の base builder)
 //   未移行  : es_review(静的 SYSTEM_PROMPT・base 不使用) / gd_feedback(transcript 主体・base 不使用) /
 //             interview_complete(purpose 自体は未使用) / mypage_summary(route 未実装)
-//   保留    : self-analysis deepDive(質問生成)は P3-E（幅優先ローテ・coverage・過去ログのため慎重に）
-// policy は宣言（観測用）。purpose 別の実削減は P3-E 以降。route 挙動は policy に依存しない。
+//   → career の全 AI route/builder が base context を Orchestrator 経由に統一（base 不使用 route を除く）。
+// policy は宣言（観測用）。purpose 別の実削減は P3-F 以降。route 挙動は policy に依存しない。
 export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContextPolicy> = {
   es_generation: {
     profile: 'include',
@@ -164,7 +167,16 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'exclude', // 横断ログは読まない。過去の自己分析ログ(自分)+coverage は route が付与
     companyContext: 'exclude',
     maxContextChars: 3500,
-    notes: 'P3-D で本体(route.ts)を Orchestrator 移行済み。deepDive(質問生成)は P3-E 保留。',
+    notes: 'P3-D で本体(route.ts)を Orchestrator 移行済み。',
+  },
+  self_analysis_deep_dive: {
+    profile: 'include',
+    activity: 'compact',
+    values: 'include',
+    recentLogs: 'exclude', // 横断ログは読まない。coverage 棚卸し・過去自己分析ログは builder が付与
+    companyContext: 'exclude',
+    maxContextChars: 3500,
+    notes: 'P3-E で deepDive(質問生成)の base builder を Orchestrator 移行済み。coverage/pastLog/topics/幅優先ローテは builder 側で不変。',
   },
   mypage_summary: {
     profile: 'minimal',

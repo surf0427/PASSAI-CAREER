@@ -9,10 +9,8 @@
 //   - 引き出す情報は ES・面接・マッチング・企業分析AI で再利用できる粒度を狙う。
 // 本ファイルは route ではない（route.ts 以外なのでエンドポイント化されない）。共有モジュール。
 
-import {
-  buildCareerAiContext,
-  buildCareerSystemPrompt,
-} from '@/lib/careerAi';
+import { buildCareerAiContext } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -114,6 +112,9 @@ export function buildDeepDiveBaseSystem(input: CareerSelfAnalysisDeepDiveInput):
     values: input.values ?? null,
     userInput: '',
   });
+  // P3-E: base system prompt を Context Orchestrator（purpose=self_analysis_deep_dive）経由で取得する。
+  //   委譲のため出力は現行と同一。coverage/pastLog/topics/幅優先ローテ/最大ターンは builder 側で不変。
+  const orchestrated = buildCareerContextForPurpose('self_analysis_deep_dive', context);
 
   // 入力済みの活動・就活軸の棚卸し（活動/価値観の偏りを防ぎ、幅広い横断を促す）。
   const coverageBlock = formatCoverageForPrompt(
@@ -124,9 +125,8 @@ export function buildDeepDiveBaseSystem(input: CareerSelfAnalysisDeepDiveInput):
 
   return [
     COACH_PERSONA,
-    // P3-C: 機能別指示は buildCareerSystemPrompt 内に既に含まれるため、同一 system 内の
-    //   二重 append を削除（純粋な重複除去。deepDive は Orchestrator 移行せず dedup のみ）。
-    buildCareerSystemPrompt(context),
+    // 機能別指示は orchestrated.systemPrompt（buildCareerSystemPrompt 内）に既に1回含まれる。
+    orchestrated.systemPrompt,
     coverageBlock,
     pastBlock,
     `# 深掘りで扱うテーマ（観点を変えて掘り下げる）\n${CAREER_SELF_ANALYSIS_TOPICS.map((t) => `- ${t}`).join('\n')}`,
