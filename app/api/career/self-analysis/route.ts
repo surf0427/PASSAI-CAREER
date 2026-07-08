@@ -13,9 +13,9 @@
 
 import {
   buildCareerAiContext,
-  buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -234,6 +234,9 @@ export async function POST(req: Request) {
       values,
       userInput,
     });
+    // P3-D: base system prompt を Context Orchestrator（purpose=self_analysis）経由で取得する。
+    //   委譲のため出力は現行と同一（結果 schema・項目・保存・深掘り会話ブロックは不変）。
+    const orchestrated = buildCareerContextForPurpose('self_analysis', context);
 
     // 入力済みの活動・就活軸の棚卸し（複数項目を横断して分析させる）。
     const coverageBlock = formatCoverageForPrompt(buildCoverageInventory(activity, values));
@@ -242,7 +245,7 @@ export async function POST(req: Request) {
     // 深掘り対話があれば、共通基盤プロンプトと出力形式の間に挟む。
     const conversationBlock = renderConversation(conversation);
     const systemPrompt = [
-      buildCareerSystemPrompt(context),
+      orchestrated.systemPrompt,
       coverageBlock,
       conversationBlock,
       pastBlock,

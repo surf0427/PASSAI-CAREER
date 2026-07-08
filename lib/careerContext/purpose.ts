@@ -20,6 +20,7 @@ export type CareerContextPurpose =
   | 'presentation_feedback'
   | 'company_research_review'
   | 'matching'
+  | 'self_analysis'
   | 'mypage_summary';
 
 export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
@@ -32,6 +33,7 @@ export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
   'presentation_feedback',
   'company_research_review',
   'matching',
+  'self_analysis',
   'mypage_summary',
 ];
 
@@ -65,6 +67,14 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
   maxContextChars: 3500,
 };
 
+// Orchestrator 移行状況（P3-D 時点）:
+//   移行済み: es_generation(P3-A) / interview_practice(P3-A, start·turn·complete 共有) /
+//             matching(P3-B) / presentation_feedback(P3-C, evaluate·qa) /
+//             company_research_review(P3-C) / consultation(P3-C, base のみ) / self_analysis(P3-D, route.ts)
+//   未移行  : es_review(静的 SYSTEM_PROMPT・base 不使用) / gd_feedback(transcript 主体・base 不使用) /
+//             interview_complete(purpose 自体は未使用) / mypage_summary(route 未実装)
+//   保留    : self-analysis deepDive(質問生成)は P3-E（幅優先ローテ・coverage・過去ログのため慎重に）
+// policy は宣言（観測用）。purpose 別の実削減は P3-E 以降。route 挙動は policy に依存しない。
 export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContextPolicy> = {
   es_generation: {
     profile: 'include',
@@ -82,7 +92,7 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'exclude',
     companyContext: 'optional',
     maxContextChars: 3500,
-    notes: '添削は対象ドラフトが主。base は薄めで良い（P3-B で minimal 実適用）。',
+    notes: '未移行。es-review は静的 SYSTEM_PROMPT で base(buildCareerSystemPrompt) を使わない。',
   },
   interview_practice: {
     profile: 'include',
@@ -100,7 +110,7 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'include',
     companyContext: 'optional',
     maxContextChars: 3500,
-    notes: '最終評価。出力 schema が重いため base は現行維持（P3-A は非移行の宣言のみ）。',
+    notes: '面接最終評価。base は interview_practice の共有 builder 経由で移行済み。interview_complete purpose 自体は現状未使用（将来 complete 専用 policy 用に予約）。',
   },
   consultation: {
     profile: 'include',
@@ -127,6 +137,7 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 3500,
+    notes: 'P3-C で Orchestrator 移行済み（evaluate/qa が共有する base builder 経由）。',
   },
   company_research_review: {
     profile: 'include',
@@ -135,7 +146,7 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'include', // 自己分析 / マッチング結果を route が付与
     companyContext: 'include', // 添削対象の企業研究テキストが主題（user メッセージ側）
     maxContextChars: 3500,
-    notes: 'AI 生成ではなく本人一次メモの添削・本人整合（identity 移行）。',
+    notes: 'P3-C で Orchestrator 移行済み。AI 生成ではなく本人一次メモの添削・本人整合。',
   },
   matching: {
     profile: 'include',
@@ -144,6 +155,16 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 3500,
+    notes: 'P3-B で Orchestrator 移行済み。総合スコア・順位は決定的エンジンが別計算。',
+  },
+  self_analysis: {
+    profile: 'include',
+    activity: 'compact',
+    values: 'include',
+    recentLogs: 'exclude', // 横断ログは読まない。過去の自己分析ログ(自分)+coverage は route が付与
+    companyContext: 'exclude',
+    maxContextChars: 3500,
+    notes: 'P3-D で本体(route.ts)を Orchestrator 移行済み。deepDive(質問生成)は P3-E 保留。',
   },
   mypage_summary: {
     profile: 'minimal',
@@ -152,6 +173,7 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 1500,
+    notes: '未使用（route 未実装・将来のマイページ要約用に予約）。',
   },
 };
 
