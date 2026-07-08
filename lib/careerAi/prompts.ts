@@ -19,6 +19,7 @@ import type {
   CareerValuesContext,
 } from './types';
 import { CAREER_AI_FEATURE_LABELS } from './types';
+import { formatCareerActivityForPrompt } from '@/lib/careerContext';
 
 // すべての機能で共有する基本方針（system prompt の土台）。
 const CAREER_BASE_POLICY = [
@@ -125,34 +126,11 @@ function renderProfile(profile: CareerProfileContext): string {
 }
 
 // 活動コンテキストを system prompt 用の可読テキストに整形する。
+// P2-A: 18 セクションの無圧縮 dump を防ぐため、整形を lib/careerContext の共通 formatter に委譲する。
+//   上限内のデータでは従来と同一出力（section 順・ラベル・"■/  - " 形式・未入力 fallback を厳密踏襲）。
+//   上限超過分のみ field 文字数・カード件数・セクション数・全体文字数で決定論的に圧縮する。
 function renderActivity(activity: CareerActivityContext): string {
-  const sections: Array<[label: string, lines: string[]]> = [
-    ['MBTI・性格', activity.personality],
-    ['学業・学生時代の活動', activity.academics],
-    ['学生時代に力を入れたこと（ガクチカ）', activity.focusedActivities],
-    ['アルバイト', activity.partTimeJobs],
-    ['インターン', activity.internships],
-    ['サークル・部活動', activity.clubActivities],
-    ['プロジェクト経験', activity.projects],
-    ['リーダー経験', activity.leadership],
-    ['ボランティア・社会活動', activity.volunteer],
-    ['海外経験', activity.overseas],
-    ['資格', activity.certifications],
-    ['ITスキル', activity.itSkills],
-    ['語学', activity.languages],
-    ['趣味・特技', activity.hobbies],
-    ['表彰・実績', activity.awards],
-    ['SNS・情報発信', activity.snsActivities],
-    ['ポートフォリオ・制作物', activity.portfolios],
-    ['人生経験', activity.lifeExperiences],
-    ['その他', activity.others],
-  ];
-
-  const rendered = sections
-    .filter(([, lines]) => lines.length > 0)
-    .map(([label, lines]) => `■ ${label}\n${lines.map((l) => `  - ${l}`).join('\n')}`);
-
-  return rendered.length > 0 ? rendered.join('\n') : '- （活動・経験は未入力）';
+  return formatCareerActivityForPrompt(activity);
 }
 
 // 就活軸整理（/career/values）を system prompt 用の可読テキストに整形する。
