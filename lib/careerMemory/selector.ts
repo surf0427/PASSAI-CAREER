@@ -16,7 +16,7 @@ import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisLog, CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsLog, CareerEsResult } from '@/types/careerEs';
-import type { CareerInterviewResult } from '@/types/careerInterview';
+import type { CareerInterviewResult, CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import type { CareerGdResult, CareerGdRoomLog } from '@/types/careerGd';
@@ -179,5 +179,53 @@ export function buildInterviewRequestContext(
     matching,
     consultationInsights: collectConsultationInsights(input.consultationThreads),
     companyResearch: resolveInterviewCompanyResearch(input.companyResearchLog),
+  };
+}
+
+// ── presentation（P4-E1: app/career/presentation/contextSource.ts の proto-selector を抽出） ──
+
+// プレゼン対策AI API に渡す入力コンテキスト（旧 contextSource.ts の同名型を移設。importer 互換のため
+// contextSource が本型を re-export する）。key 順は旧実装と一致。
+export type CareerPresentationContextPayload = {
+  profile: CareerProfile | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
+  selfAnalysis: CareerSelfAnalysisResult | null;
+  es: CareerEsResult | null;
+  // 任意の参考データ（存在しないユーザーでは null / 空配列。プロンプトに出さないだけで落ちない）。
+  interview: CareerInterviewFinalResult | null;
+  matching: CareerMatchEngineResult | null;
+  consultationInsights: string[];
+};
+
+// contextSource(client) が load* / guarded read して渡す生データ（selector 自身は読まない）。
+export type PresentationSelectorInput = {
+  profile: CareerProfile | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
+  selfAnalysisLogs: CareerSelfAnalysisLog[];
+  esLogs: CareerEsLog[];
+  interviewResults: CareerInterviewResult[];
+  matchingLogs: CareerMatchingLog[];
+  // 相談スレッド（guarded read 済み。読めなければ空配列で渡す）。
+  consultationThreads: CareerConsultationThread[];
+};
+
+// プレゼンAI API に渡す入力コンテキストを、contextSource が読み込んだ生データから組み立てる純関数。
+// 返す object の key 順・latest 選択（最新1件）・fallback は旧 buildPresentationContextPayload と byte 一致。
+// consultationInsights は interview と同一の collectConsultationInsights（最大5・dedup・新しい順）を共有する。
+export function buildPresentationRequestContext(
+  input: PresentationSelectorInput,
+): CareerPresentationContextPayload {
+  const { selfAnalysisLogs, esLogs, interviewResults, matchingLogs } = input;
+  return {
+    profile: input.profile,
+    activity: input.activity,
+    values: input.values,
+    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
+    es: esLogs.length > 0 ? esLogs[0].result : null,
+    interview: interviewResults.length > 0 ? interviewResults[0].result : null,
+    matching: matchingLogs.length > 0 ? matchingLogs[0].result : null,
+    consultationInsights: collectConsultationInsights(input.consultationThreads),
   };
 }
