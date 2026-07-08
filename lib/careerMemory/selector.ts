@@ -14,20 +14,26 @@
 import type { CareerProfile } from '@/types/careerProfile';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
-import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
-import type { CareerEsLog } from '@/types/careerEs';
+import type { CareerSelfAnalysisLog, CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
+import type { CareerEsLog, CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewResult } from '@/types/careerInterview';
 import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import type { CareerGdResult, CareerGdRoomLog } from '@/types/careerGd';
 import type { CareerMatchingLog } from '@/types/careerMatching';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import type { CareerConsultationThread } from '@/types/careerConsultation';
 import {
   buildSelfAnalysisHistory,
   buildEsHistory,
   buildInterviewHistory,
   buildPresentationHistory,
 } from '@/lib/careerConsultation/historySnapshots';
-import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
+import {
+  buildCompanyResearchContext,
+  buildInterviewCompanyResearchContext,
+  type InterviewCompanyResearchContext,
+} from '@/lib/careerCompanyResearch/context';
 import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
@@ -83,5 +89,95 @@ export function buildConsultationRequestContext(input: ConsultationSelectorInput
     gdRoom: buildLatestGdRoomSignals(input.gdRoomLogs, 3),
     // STEP-CONSULT-03: 企業マッチング結果（最新2件・軽量スナップショット）。
     matching: buildLatestMatchingConsultationSnapshots(input.matchingLogs, 2),
+  };
+}
+
+// ── interview（P4-D: app/career/interview/contextSource.ts の proto-selector を抽出） ──────
+
+// 面接AI API に渡す入力コンテキスト（旧 contextSource.ts の同名型を移設。importer 互換のため
+// contextSource が本型を re-export する）。key 順は旧実装と一致。
+export type CareerInterviewContextPayload = {
+  profile: CareerProfile | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
+  selfAnalysis: CareerSelfAnalysisResult | null;
+  es: CareerEsResult | null;
+  // 任意の参考データ（存在しないユーザーでは null / 空配列。プロンプトに出さないだけで落ちない）。
+  matching: CareerMatchEngineResult | null;
+  consultationInsights: string[];
+  // 選択された企業研究ログの面接用コンテキスト（未選択なら null）。
+  companyResearch: InterviewCompanyResearchContext | null;
+};
+
+// contextSource(client) が load* / guarded read して渡す生データ（selector 自身は読まない）。
+export type InterviewSelectorInput = {
+  profile: CareerProfile | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
+  selfAnalysisLogs: CareerSelfAnalysisLog[];
+  esLogs: CareerEsLog[];
+  matchingLogs: CareerMatchingLog[];
+  // 相談スレッド（guarded read 済み。読めなければ空配列で渡す）。
+  consultationThreads: CareerConsultationThread[];
+  // 選択された企業研究ログ（id 解決済み。未選択/不存在/読取失敗なら null で渡す）。
+  companyResearchLog: CareerCompanyResearchLog | null;
+};
+
+// 相談スレッドから最近の気づき（keyInsights）を最大 maxItems 件・新しい順に集める純関数。
+// （旧 contextSource.collectConsultationInsights の load を除いたロジックと 1:1）。
+function collectConsultationInsights(
+  threads: CareerConsultationThread[],
+  maxItems = 5,
+): string[] {
+  const sorted = [...threads].sort((a, b) =>
+    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
+  );
+  const insights: string[] = [];
+  for (const thread of sorted) {
+    // 新しいメッセージから走査し、assistant の result.keyInsights を拾う。
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      const msg = thread.messages[i];
+      const items = msg.role === 'assistant' ? msg.result?.keyInsights : undefined;
+      if (Array.isArray(items)) {
+        for (const it of items) {
+          const t = typeof it === 'string' ? it.trim() : '';
+          if (t && !insights.includes(t)) insights.push(t);
+          if (insights.length >= maxItems) return insights;
+        }
+      }
+    }
+  }
+  return insights;
+}
+
+// 選択された企業研究ログを面接用コンテキストへ変換（build 失敗時は null）。
+// （旧 contextSource.resolveCompanyResearch の build 部分と 1:1。id→log 解決は contextSource が担う）。
+function resolveInterviewCompanyResearch(
+  log: CareerCompanyResearchLog | null,
+): InterviewCompanyResearchContext | null {
+  if (!log) return null;
+  try {
+    return buildInterviewCompanyResearchContext(log);
+  } catch {
+    return null;
+  }
+}
+
+// 面接AI API に渡す入力コンテキストを、contextSource が読み込んだ生データから組み立てる純関数。
+// 返す object の key 順・latest 選択（最新1件）・fallback は旧 buildInterviewContextPayload と byte 一致。
+export function buildInterviewRequestContext(
+  input: InterviewSelectorInput,
+): CareerInterviewContextPayload {
+  const { selfAnalysisLogs, esLogs, matchingLogs } = input;
+  const matching = matchingLogs.length > 0 ? matchingLogs[0].result : null;
+  return {
+    profile: input.profile,
+    activity: input.activity,
+    values: input.values,
+    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
+    es: esLogs.length > 0 ? esLogs[0].result : null,
+    matching,
+    consultationInsights: collectConsultationInsights(input.consultationThreads),
+    companyResearch: resolveInterviewCompanyResearch(input.companyResearchLog),
   };
 }

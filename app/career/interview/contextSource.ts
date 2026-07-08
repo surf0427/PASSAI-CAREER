@@ -8,6 +8,10 @@
 //   - careerSelfAnalysisLogs[0] → selfAnalysis（最新）
 //   - careerEsLogs[0]          → es（最新）
 // 受験版ストレージ・DB・Supabase は一切参照しない。
+//
+// P4-D: 横断 context の組み立ては lib/careerMemory/selector.ts（純関数）へ抽出した。
+//   本モジュールは「load*（localStorage 読み出し）+ guarded read」に徹し、生データを selector へ渡す。
+//   出力 payload（buildInterviewContextPayload の戻り値）は旧実装と byte 不変。
 
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import {
@@ -21,98 +25,64 @@ import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { loadCompanyResearchLog } from '@/app/career/company-research/companyResearchStorage';
 import {
-  buildInterviewCompanyResearchContext,
-  type InterviewCompanyResearchContext,
-} from '@/lib/careerCompanyResearch/context';
-import type { CareerProfile } from '@/types/careerProfile';
-import type { CareerActivity } from '@/types/careerActivity';
-import type { CareerValues } from '@/types/careerValues';
-import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
-import type { CareerEsResult } from '@/types/careerEs';
-import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+  buildInterviewRequestContext,
+  type CareerInterviewContextPayload,
+} from '@/lib/careerMemory/selector';
+import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
+import type { CareerConsultationThread } from '@/types/careerConsultation';
+import type { CareerMatchingLog } from '@/types/careerMatching';
 
-export type CareerInterviewContextPayload = {
-  profile: CareerProfile | null;
-  activity: CareerActivity | null;
-  values: CareerValues | null;
-  selfAnalysis: CareerSelfAnalysisResult | null;
-  es: CareerEsResult | null;
-  // 任意の参考データ（存在しないユーザーでは null / 空配列。プロンプトに出さないだけで落ちない）。
-  matching: CareerMatchEngineResult | null;
-  consultationInsights: string[];
-  // 選択された企業研究ログの面接用コンテキスト（未選択なら null）。
-  companyResearch: InterviewCompanyResearchContext | null;
-};
-
-// 相談AIスレッドから最近の気づき（keyInsights）を最大 maxItems 件、新しい順に集める。
-// 存在しない／未利用でも空配列を返す（参考程度の連携なので落とさない）。
-function collectConsultationInsights(maxItems = 5): string[] {
-  let threads: ReturnType<typeof loadConsultationThreads>;
-  try {
-    threads = loadConsultationThreads();
-  } catch {
-    return [];
-  }
-  const sorted = [...threads].sort((a, b) =>
-    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-  );
-  const insights: string[] = [];
-  for (const thread of sorted) {
-    // 新しいメッセージから走査し、assistant の result.keyInsights を拾う。
-    for (let i = thread.messages.length - 1; i >= 0; i--) {
-      const msg = thread.messages[i];
-      const items = msg.role === 'assistant' ? msg.result?.keyInsights : undefined;
-      if (Array.isArray(items)) {
-        for (const it of items) {
-          const t = typeof it === 'string' ? it.trim() : '';
-          if (t && !insights.includes(t)) insights.push(t);
-          if (insights.length >= maxItems) return insights;
-        }
-      }
-    }
-  }
-  return insights;
-}
+// 型は selector に移設。既存 importer（interview/setup/page.tsx）互換のため re-export する。
+export type { CareerInterviewContextPayload };
 
 // readiness 判定は activityStorage の hasAnyActivity を正本として再エクスポートする
 // （interview/page.tsx・interview/setup/page.tsx が本モジュール経由で参照する）。
 export { hasAnyActivity };
 
-// 選択された企業研究ログ（id）を面接用コンテキストに変換する。未選択・不存在なら null。
-function resolveCompanyResearch(
+// 相談スレッドを guarded read（読めなければ空配列。参考程度の連携なので落とさない）。
+function loadConsultationThreadsSafe(): CareerConsultationThread[] {
+  try {
+    return loadConsultationThreads();
+  } catch {
+    return [];
+  }
+}
+
+// 企業マッチングログを guarded read（読めなければ空配列）。
+function loadMatchingLogsSafe(): CareerMatchingLog[] {
+  try {
+    return loadMatchingLogs();
+  } catch {
+    return [];
+  }
+}
+
+// 選択された企業研究ログ（id）を guarded read（未選択・不存在・読取失敗なら null）。
+function loadCompanyResearchLogSafe(
   companyResearchLogId?: string | null,
-): InterviewCompanyResearchContext | null {
+): CareerCompanyResearchLog | null {
   if (!companyResearchLogId) return null;
   try {
-    const log = loadCompanyResearchLog(companyResearchLogId);
-    return log ? buildInterviewCompanyResearchContext(log) : null;
+    return loadCompanyResearchLog(companyResearchLogId);
   } catch {
     return null;
   }
 }
 
 // 面接AI API に渡す入力コンテキストを localStorage から組み立てる。
+// P4-D: load* はここ（client）に残し、組み立ては純関数 selector へ委譲する（payload は byte 不変）。
 // companyResearchLogId を渡すと、その企業研究ログを面接用コンテキストとして含める（任意）。
 export function buildInterviewContextPayload(
   companyResearchLogId?: string | null,
 ): CareerInterviewContextPayload {
-  const selfAnalysisLogs = loadSelfAnalysisLogs();
-  const esLogs = loadEsLogs();
-  let matching: CareerMatchEngineResult | null = null;
-  try {
-    const matchingLogs = loadMatchingLogs();
-    matching = matchingLogs.length > 0 ? matchingLogs[0].result : null;
-  } catch {
-    matching = null;
-  }
-  return {
+  return buildInterviewRequestContext({
     profile: loadBasicInfo(),
     activity: loadActivityData(),
     values: loadCareerValues(),
-    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    matching,
-    consultationInsights: collectConsultationInsights(),
-    companyResearch: resolveCompanyResearch(companyResearchLogId),
-  };
+    selfAnalysisLogs: loadSelfAnalysisLogs(),
+    esLogs: loadEsLogs(),
+    matchingLogs: loadMatchingLogsSafe(),
+    consultationThreads: loadConsultationThreadsSafe(),
+    companyResearchLog: loadCompanyResearchLogSafe(companyResearchLogId),
+  });
 }
