@@ -5,3 +5,5 @@
 
 export * from './text';
 export * from './activity';
+export * from './purpose';
+export * from './orchestrator';

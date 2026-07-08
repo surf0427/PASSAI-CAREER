@@ -8,9 +8,9 @@
 
 import {
   buildCareerAiContext,
-  buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -248,6 +248,9 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     values: input.values ?? null,
     userInput: input.userInput ?? '',
   });
+  // P3-A: base system prompt を Context Orchestrator（purpose=interview_practice）経由で取得する。
+  //   start/turn/complete が共有する builder。委譲のため出力は現行と byte 単位で同一。
+  const orchestrated = buildCareerContextForPurpose('interview_practice', context);
 
   const config = getInterviewModeConfig(input.interviewType);
   const selfAnalysisBlock = renderSelfAnalysis(input.selfAnalysis);
@@ -261,7 +264,7 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
 
   return [
     buildPersonaBlock(input.interviewType),
-    buildCareerSystemPrompt(context),
+    orchestrated.systemPrompt,
     buildCareerFeatureInstruction(FEATURE_KEY),
     targetBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',

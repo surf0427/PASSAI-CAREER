@@ -14,9 +14,9 @@
 
 import {
   buildCareerAiContext,
-  buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -318,6 +318,8 @@ export async function POST(req: Request) {
   }
 
   // 就活版共通基盤でコンテキスト → system prompt を組み立てる。
+  // P3-A: base system prompt を Context Orchestrator（purpose=es_generation）経由で取得する。
+  //   P3-A では buildCareerSystemPrompt へ委譲するため出力は現行と同一（route の block は不変）。
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
     profile,
@@ -325,6 +327,7 @@ export async function POST(req: Request) {
     values,
     userInput,
   });
+  const orchestrated = buildCareerContextForPurpose('es_generation', context);
 
   // base（共通基盤）に「企業」「直近の自己分析」「設問 / 出力形式」を追記する。
   // 設問モードでは設問ブロックと answer 用出力形式、それ以外は従来の 7 フィールド出力形式。
@@ -350,7 +353,7 @@ export async function POST(req: Request) {
     : OUTPUT_FORMAT_INSTRUCTION;
 
   const systemPrompt = [
-    buildCareerSystemPrompt(context),
+    orchestrated.systemPrompt,
     companyBlock,
     targetingBlock,
     researchBlock,

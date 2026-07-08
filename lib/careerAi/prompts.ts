@@ -19,7 +19,8 @@ import type {
   CareerValuesContext,
 } from './types';
 import { CAREER_AI_FEATURE_LABELS } from './types';
-import { formatCareerActivityForPrompt } from '@/lib/careerContext';
+// activity.ts を直接指す（barrel 経由だと orchestrator→careerAi→barrel の循環になるため）。
+import { formatCareerActivityForPrompt } from '@/lib/careerContext/activity';
 
 // すべての機能で共有する基本方針（system prompt の土台）。
 const CAREER_BASE_POLICY = [
