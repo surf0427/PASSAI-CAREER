@@ -28,6 +28,8 @@ import type {
   GdCompanyGrade,
   GdRole,
 } from '@/types/careerGd';
+// P4-B: str / clamp100 を共通 util へ集約（clamp100 は careerMatching.round100 と同一実装。出力 byte 一致）。
+import { str, clamp100 } from '@/lib/careerMemory/summaryUtils';
 
 const GRADES: GdCompanyGrade[] = ['S', 'A', 'B', 'C', 'D'];
 const TRAITS: GdBehaviorTrait[] = [
@@ -51,10 +53,6 @@ export type GdMatchingSnapshot = {
   suggestedEnvironments: string[];
   summary: string;
 };
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
 
 // GD 結果 1 件 → matching 連携スナップショット。null / 欠損に耐える。
 export function buildGdMatchingSnapshot(
@@ -326,12 +324,6 @@ export type GdRoomSignalSnapshot = {
 };
 
 const AXIS_KEYS = CAREER_GD_EVAL_AXIS_ORDER;
-
-function clamp100(v: unknown): number {
-  const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.min(100, Math.max(0, n)));
-}
 
 // CareerGdRoomLog 1 件 → 参考シグナル。採点不能（scored=false）は信号にならないので null。
 export function buildGdRoomSignal(log: CareerGdRoomLog | null | undefined): GdRoomSignalSnapshot | null {

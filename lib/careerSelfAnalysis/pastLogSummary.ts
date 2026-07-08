@@ -15,26 +15,8 @@
 
 import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import type { CareerActivityInput, CareerValuesInput } from '@/lib/careerAi';
-
-// ── 小さなヘルパー ────────────────────────────────────────────────
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function truncate(value: unknown, max: number): string {
-  const t = str(value);
-  if (t.length <= max) return t;
-  return `${t.slice(0, max).trim()}…`;
-}
-
-function strList(value: unknown, max = 3, itemMax = 40): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((v) => truncate(v, itemMax))
-    .filter((v) => v !== '')
-    .slice(0, max);
-}
+// P4-B: str / truncate / strList / repeatedItems を共通 util へ集約（出力は従来と byte 一致）。
+import { str, truncate, strList, repeatedItems } from '@/lib/careerMemory/summaryUtils';
 
 // 件数上限（過去ログ最新 N 件）。トークン肥大を避けるため 3 件まで。
 export const SELF_ANALYSIS_PAST_LIMIT = 3;
@@ -118,19 +100,6 @@ export function normalizeSelfAnalysisPastSummaries(raw: unknown): SelfAnalysisPa
     })
     .filter((s): s is SelfAnalysisPastSummary => s !== null)
     .slice(0, SELF_ANALYSIS_PAST_LIMIT);
-}
-
-// 複数サマリから 2 回以上出現する項目（一貫している強み・繰り返しテーマの検出）。
-function repeatedItems(lists: string[][], minCount = 2): string[] {
-  const count = new Map<string, number>();
-  for (const list of lists) {
-    for (const item of new Set(list)) {
-      count.set(item, (count.get(item) ?? 0) + 1);
-    }
-  }
-  return [...count.entries()]
-    .filter(([, c]) => c >= minCount)
-    .map(([item]) => item);
 }
 
 // プロンプト用整形。過去ログ無しなら空文字（ブロックごと出さない）。

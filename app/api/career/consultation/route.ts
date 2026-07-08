@@ -54,6 +54,8 @@ import {
 } from '@/lib/careerConsultation/historySnapshots';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
+// P4-B: str を共通 util へ集約（strArray は route 固有のため local 維持・内部で共通 str を使用）。
+import { str } from '@/lib/careerMemory/summaryUtils';
 
 const FEATURE_KEY = 'career-consultation' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -186,10 +188,6 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '  presentation（プレゼン対策） / companyResearch（企業研究） / consultation（就活相談） / home（ホーム）',
   '例: {"label":"気になる企業を3社選び、就活軸に合う点・合わない点を1行ずつ書く","feature":"companyResearch","reason":"志望企業と就活軸のズレを確認するため","priority":"high"}',
 ].join('\n');
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
 
 function strArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

@@ -16,6 +16,8 @@
 
 import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult, CompanyScore } from '@/lib/careerMatching';
+// P4-B: str / round100 を共通 util へ集約（round100 は careerGd.clamp100 と同一実装。出力 byte 一致）。
+import { str, round100 } from '@/lib/careerMemory/summaryUtils';
 
 // 相談AIへ渡す軽量スナップショット（マッチング1実行分を要約）。
 // 全量（企業ごとの内訳・ロードマップ・シミュレーション）は載せず、司令塔が
@@ -37,10 +39,6 @@ export type MatchingConsultationSnapshot = {
   }>;
 };
 
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
 function strList(value: unknown, max = 6): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -48,12 +46,6 @@ function strList(value: unknown, max = 6): string[] {
     .map((v) => v.trim())
     .filter(Boolean)
     .slice(0, max);
-}
-
-function round100(v: unknown): number {
-  const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(Math.min(100, Math.max(0, n)));
 }
 
 // CompanyScore 1 社 → スナップショットの topCompanies 1 要素へ圧縮。

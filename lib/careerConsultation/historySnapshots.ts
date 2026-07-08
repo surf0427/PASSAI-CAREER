@@ -12,26 +12,8 @@ import type { CareerEsLog } from '@/types/careerEs';
 import type { CareerInterviewResult } from '@/types/careerInterview';
 import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerActivity } from '@/types/careerActivity';
-
-// ── 小さなヘルパー ────────────────────────────────────────────────
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function truncate(value: unknown, max: number): string {
-  const t = str(value);
-  if (t.length <= max) return t;
-  return `${t.slice(0, max).trim()}…`;
-}
-
-function strList(value: unknown, max = 3, itemMax = 60): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((v) => truncate(v, itemMax))
-    .filter((v) => v !== '')
-    .slice(0, max);
-}
+// P4-B: str / truncate / strList / repeatedItems を共通 util へ集約（出力は従来と byte 一致）。
+import { str, truncate, strList, repeatedItems } from '@/lib/careerMemory/summaryUtils';
 
 // 件数上限（各ログ最新 N 件）。トークン肥大を避けるため 3 件まで。
 const HISTORY_LIMIT = 3;
@@ -336,20 +318,6 @@ export function normalizePresentationHistory(raw: unknown): PresentationHistoryS
 }
 
 // ── 推移メモ（ルールベース・AI要約は使わない） ──────────────────────────
-
-// 複数スナップショットの配列群から、k 回以上出現する項目を返す（繰り返し課題・一貫強みの検出）。
-function repeatedItems(lists: string[][], minCount = 2): string[] {
-  const count = new Map<string, number>();
-  for (const list of lists) {
-    // 同一スナップショット内の重複は 1 回として数える。
-    for (const item of new Set(list)) {
-      count.set(item, (count.get(item) ?? 0) + 1);
-    }
-  }
-  return [...count.entries()]
-    .filter(([, c]) => c >= minCount)
-    .map(([item]) => item);
-}
 
 function sameSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;

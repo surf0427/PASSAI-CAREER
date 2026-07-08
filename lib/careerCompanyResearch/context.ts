@@ -14,16 +14,14 @@ import {
   type CareerCompanyResearchLog,
   type CompanyResearchSnapshot,
 } from '@/types/careerCompanyResearch';
+// P4-B: str を共通 util へ集約（truncate は suffix '…（以下略）' が異なるため未統合・local 維持）。
+import { str } from '@/lib/careerMemory/summaryUtils';
 
 // 既定の制限値。
 const DEFAULT_LIMIT = 5; // 相談AI など複数渡しの最大件数
 const DEFAULT_VERIFIED_PREVIEW = 280; // 一覧コンテキストの抜粋文字数
 // 個別選択（ES など 1 件を深く使う）ときの抜粋文字数。
 export const SINGLE_VERIFIED_PREVIEW = 1200;
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
 
 function truncate(text: string, max: number): string {
   const t = text.trim();
