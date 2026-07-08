@@ -33,6 +33,7 @@ import {
 } from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -196,6 +197,16 @@ export default function CareerEsRunPage() {
       appendEsLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
       if (userId) void upsertCareerEsLogsToSupabase(userId, [log]);
+      // Event Log（本文なし・fire-and-forget / member のみ）。設問本文・生成本文は渡さない。
+      void recordCareerEvent(userId, {
+        feature: 'es',
+        eventType: 'ai_generated',
+        completionStatus: 'completed',
+        clientEventId: log.id,
+        industry: trimmedIndustry || null,
+        jobType: trimmedJobType || null,
+        metadata: { ...(selectionType ? { selectionType } : {}) },
+      });
 
       router.push('/career/es/result');
     } catch (e) {

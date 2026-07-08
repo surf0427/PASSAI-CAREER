@@ -31,6 +31,8 @@ import {
 import { appendMatchingLog } from './matchingStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
+import { toScoreBand } from '@/lib/careerEvents/sanitize';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 
@@ -152,6 +154,15 @@ function CareerMatchingStartInner() {
       appendMatchingLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
       if (userId) void upsertCareerMatchingResultsToSupabase(userId, [log]);
+      // Event Log（本文なし・fire-and-forget / member のみ）。生スコアは band 化して保存する。
+      void recordCareerEvent(userId, {
+        feature: 'matching',
+        eventType: 'matching_run',
+        completionStatus: 'completed',
+        clientEventId: log.id,
+        scoreBand: toScoreBand(data.result.companies[0]?.match?.total),
+        metadata: { companyCount: data.result.companies.length },
+      });
       router.push('/career/matching/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'マッチングの生成に失敗しました。');

@@ -60,6 +60,7 @@ import {
   upsertCareerConsultationThreadsToSupabase,
   deleteCareerConsultationThreadFromSupabase,
 } from '@/lib/supabase/careerConsultation';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
@@ -243,6 +244,12 @@ function CareerConsultationInner() {
       if (userId) {
         const t = afterAssistant.find((x) => x.id === threadId);
         if (t) void upsertCareerConsultationThreadsToSupabase(userId, [t]);
+        // Event Log（本文なし・fire-and-forget / member のみ）。相談本文・回答本文は渡さない。
+        void recordCareerEvent(userId, {
+          feature: 'consultation',
+          eventType: 'consultation_asked',
+          completionStatus: 'completed',
+        });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : '相談の生成に失敗しました。');

@@ -25,6 +25,7 @@ import {
   upsertCareerInterviewSessionsToSupabase,
   upsertCareerInterviewResultsToSupabase,
 } from '@/lib/supabase/careerInterview';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
 import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
 import type {
@@ -253,6 +254,17 @@ export default function CareerInterviewSessionPage() {
       if (userIdRef.current) {
         void upsertCareerInterviewSessionsToSupabase(userIdRef.current, [completed]);
         void upsertCareerInterviewResultsToSupabase(userIdRef.current, [resultLog]);
+        // Event Log（本文なし・fire-and-forget / member のみ）。面接回答本文は渡さない。
+        void recordCareerEvent(userIdRef.current, {
+          feature: 'interview',
+          eventType: 'feature_completed',
+          completionStatus: 'completed',
+          clientEventId: resultLog.id,
+          metadata: {
+            ...(session.interviewType ? { interviewType: session.interviewType } : {}),
+            ...(session.mode ? { mode: session.mode } : {}),
+          },
+        });
       }
       router.push('/career/interview/result');
     } catch (e) {
