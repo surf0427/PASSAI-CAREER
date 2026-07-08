@@ -6,11 +6,8 @@
 //   - プロンプト土台は就活版共通基盤（@/lib/careerAi）からのみ組み立てる。
 // 本ファイルは route ではない（共有モジュール）。
 
-import {
-  buildCareerAiContext,
-  buildCareerSystemPrompt,
-  buildCareerFeatureInstruction,
-} from '@/lib/careerAi';
+import { buildCareerAiContext } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -221,6 +218,9 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     values: input.values ?? null,
     userInput: input.userInput ?? '',
   });
+  // P3-C: base system prompt を Context Orchestrator（purpose=presentation_feedback）経由で取得する。
+  //   委譲のため出力は現行と同一（evaluate/qa の response・schema・P0.5 予算は不変）。
+  const orchestrated = buildCareerContextForPurpose('presentation_feedback', context);
 
   // 他PASSAI機能データ（自己分析/ES/面接/マッチング/相談AI）は useCareerContext が
   // true のときだけ「参考程度」に注入する。既定（undefined/false）は注入しない。
@@ -250,8 +250,9 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
 
   return [
     buildEvaluatorPersona(ctx),
-    buildCareerSystemPrompt(context),
-    buildCareerFeatureInstruction(FEATURE_KEY),
+    // P3-C: 機能別指示は orchestrated.systemPrompt 内に既に含まれるため、同一 system 内の
+    //   二重 append を削除（純粋な重複除去）。
+    orchestrated.systemPrompt,
     refGuard,
     selfAnalysisBlock ? `# 参考: 直近の自己分析結果（発表の主役ではない）\n${selfAnalysisBlock}` : '',
     esBlock ? `# 参考: 直近の ES ドラフト（発表の主役ではない）\n${esBlock}` : '',

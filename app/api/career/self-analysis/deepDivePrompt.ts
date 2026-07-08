@@ -12,7 +12,6 @@
 import {
   buildCareerAiContext,
   buildCareerSystemPrompt,
-  buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
 import type {
   CareerProfileInput,
@@ -125,8 +124,9 @@ export function buildDeepDiveBaseSystem(input: CareerSelfAnalysisDeepDiveInput):
 
   return [
     COACH_PERSONA,
+    // P3-C: 機能別指示は buildCareerSystemPrompt 内に既に含まれるため、同一 system 内の
+    //   二重 append を削除（純粋な重複除去。deepDive は Orchestrator 移行せず dedup のみ）。
     buildCareerSystemPrompt(context),
-    buildCareerFeatureInstruction(FEATURE_KEY),
     coverageBlock,
     pastBlock,
     `# 深掘りで扱うテーマ（観点を変えて掘り下げる）\n${CAREER_SELF_ANALYSIS_TOPICS.map((t) => `- ${t}`).join('\n')}`,

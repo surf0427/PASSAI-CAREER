@@ -6,11 +6,8 @@
 //   - プロンプトは就活版共通基盤（@/lib/careerAi）経由（featureKey=career-consultation）。
 //   - 受験版 tutorContext / tutorPrompt / billing は import しない（受験版非依存）。
 
-import {
-  buildCareerAiContext,
-  buildCareerSystemPrompt,
-  buildCareerFeatureInstruction,
-} from '@/lib/careerAi';
+import { buildCareerAiContext } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -421,6 +418,9 @@ export async function POST(req: Request) {
     values: b.values ?? null,
     userInput: '',
   });
+  // P3-C: base system prompt を Context Orchestrator（purpose=consultation）経由で取得する。
+  //   委譲のため出力は現行と同一。手組みアグリゲート（横断スナップショット）は下記のまま維持。
+  const orchestrated = buildCareerContextForPurpose('consultation', context);
 
   // STEP-CONSULT-06: 最新3件の推移スナップショット（新クライアント）。
   // 無ければ旧クライアント互換で「最新1件」ブロックにフォールバックする。
@@ -479,8 +479,8 @@ export async function POST(req: Request) {
 
   const systemPrompt = [
     COMMANDER_PERSONA,
-    buildCareerSystemPrompt(context),
-    buildCareerFeatureInstruction(FEATURE_KEY),
+    // P3-C: 同一 system 内の feature instruction 二重 append を削除（純粋な重複除去）。
+    orchestrated.systemPrompt,
     selfAnalysisBlock,
     esBlock,
     interviewBlock,

@@ -103,12 +103,13 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: '最終評価。出力 schema が重いため base は現行維持（P3-A は非移行の宣言のみ）。',
   },
   consultation: {
-    profile: 'minimal',
-    activity: 'compact',
+    profile: 'include',
+    activity: 'compact', // route 側で compressCareerActivityForConsultation 済みを渡す
     values: 'include',
-    recentLogs: 'include',
-    companyContext: 'optional',
+    recentLogs: 'include', // 司令塔: 自己分析/ES/面接/プレゼン/GD/マッチング等を route が手組みで付与
+    companyContext: 'include', // 保存済み企業研究スナップショット（最大5件）
     maxContextChars: 3500,
+    notes: '司令塔。手組みアグリゲートは route の責務（P3-C は base のみ Orchestrator 経由）。',
   },
   gd_feedback: {
     profile: 'exclude',
@@ -128,12 +129,13 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     maxContextChars: 3500,
   },
   company_research_review: {
-    profile: 'minimal',
+    profile: 'include',
     activity: 'compact',
     values: 'include',
-    recentLogs: 'exclude',
-    companyContext: 'include',
-    maxContextChars: 3000,
+    recentLogs: 'include', // 自己分析 / マッチング結果を route が付与
+    companyContext: 'include', // 添削対象の企業研究テキストが主題（user メッセージ側）
+    maxContextChars: 3500,
+    notes: 'AI 生成ではなく本人一次メモの添削・本人整合（identity 移行）。',
   },
   matching: {
     profile: 'include',
