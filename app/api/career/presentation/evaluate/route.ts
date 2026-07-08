@@ -32,9 +32,14 @@ import {
 
 export const maxDuration = 80;
 
-// 評価レポートは出力が大きい（12 項目 + 8 軸）ため、default 60s ではなく長めの timeout を渡す
-// （maxDuration=80s 以内）。aiTimeout.ts の「大型 max_tokens の route は個別 ms で延長」方針に従う。
-const EVALUATE_TIMEOUT_MS = 75_000;
+// P0.5 timeout 予算是正:
+//   旧実装は per-call 75s の signal を attempt 毎に新規発行していたため、JSON parse retry が走ると
+//   75s + 75s = 150s 相当となり maxDuration=80s を超えて 504 になる構造だった。
+//   対策として (1) per-call を 60s に下げ、(2) 1回目+2回目の合計 AI 時間 TOTAL_BUDGET_MS を wall(80s)
+//   の内側に固定し、(3) 2回目 retry は残予算が足りる時だけ発火する（残予算を signal 上限にも使う）。
+const TOTAL_BUDGET_MS = 74_000; // 1回目+2回目の合計 AI 時間の上限（wall 80s に対し余白 6s）
+const PER_CALL_TIMEOUT_MS = 60_000; // 1回あたりの AI timeout（旧 75s から短縮）
+const MIN_RETRY_BUDGET_MS = 30_000; // 2回目 retry を発火するのに必要な最低残予算
 
 const MAX_TRANSCRIPT_CHARS = 20000;
 
@@ -171,7 +176,17 @@ export async function POST(req: Request) {
 
   try {
     let result: CareerPresentationFinalResult | null = null;
+    const startedAt = Date.now();
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const remainingMs = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      // 残予算が 2回目に足りなければ retry せず打ち切る（maxDuration 超過による 504 を防ぐ）。
+      if (attempt === 2 && remainingMs < MIN_RETRY_BUDGET_MS) {
+        return Response.json(
+          { error: 'AI_PRESENTATION_PARSE_FAILED', detail: 'AI応答を解釈できませんでした。' },
+          { status: 502 },
+        );
+      }
+      const callTimeoutMs = Math.min(PER_CALL_TIMEOUT_MS, Math.max(0, remainingMs));
       const message = await anthropic.messages.create(
         {
           model: CAREER_PRESENTATION_MODEL,
@@ -180,7 +195,7 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: userPrompt }],
         },
-        { signal: createTimeoutSignal(EVALUATE_TIMEOUT_MS) },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const rawText = message.content[0]?.type === 'text' ? message.content[0].text : '';

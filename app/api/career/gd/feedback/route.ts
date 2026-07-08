@@ -30,6 +30,21 @@ import {
 
 export const maxDuration = 80;
 
+// P0.5 transcript 上限化:
+//   従来 normalizeTranscript は全発言を無制限に prompt へ渡していたため、セッションが長いほど
+//   入力トークンが膨張し timeout 要因になっていた。gd/turn（直近 60 発言・1発言 600 字）と対称に、
+//   直近 N 発言＋1発言あたりの文字数を上限化する。講評は全体評価なので turn より広めの N を採る。
+const MAX_TRANSCRIPT_FEEDBACK = 120; // 評価文脈に使う直近発言数の上限
+const MAX_UTTERANCE_CHARS = 600; // 1発言あたりの文字数上限（gd/turn と対称）
+
+// P0.5 timeout 予算是正:
+//   per-call default 60s の signal を attempt 毎に新規発行していたため、JSON parse retry で
+//   60s + 60s = 120s 相当となり maxDuration=80s を超えうる構造だった。
+//   1回目+2回目の合計 AI 時間 TOTAL_BUDGET_MS を wall(80s) 内に固定し、2回目は残予算が足りる時だけ発火する。
+const TOTAL_BUDGET_MS = 74_000; // 1回目+2回目の合計 AI 時間の上限（wall 80s に対し余白 6s）
+const PER_CALL_TIMEOUT_MS = 60_000; // 1回あたりの AI timeout
+const MIN_RETRY_BUDGET_MS = 30_000; // 2回目 retry を発火するのに必要な最低残予算
+
 const ROLES: GdRole[] = ['facilitator', 'scribe', 'timekeeper', 'presenter', 'member'];
 
 // 合計スコアの重み（合計 1.0）。発言量(volume)は最適域評価のため軽め。
@@ -93,12 +108,13 @@ function normalizeTranscript(raw: unknown): GdUtterance[] {
     out.push({
       id: r.id,
       participantId: r.participantId,
-      content: str(r.content),
+      content: str(r.content).slice(0, MAX_UTTERANCE_CHARS),
       createdAt: str(r.createdAt),
       ...(r.kind === 'system' ? { kind: 'system' as const } : {}),
     });
   }
-  return out;
+  // 直近 N 発言だけを評価文脈に使う（古すぎるログは切る）。1回の講評に十分な範囲を残す。
+  return out.slice(-MAX_TRANSCRIPT_FEEDBACK);
 }
 
 function axisFrom(raw: unknown): GdAxisScores {
@@ -157,7 +173,17 @@ export async function POST(req: Request) {
 
   try {
     let parsed: Record<string, unknown> | null = null;
+    const startedAt = Date.now();
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const remainingMs = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      // 残予算が 2回目に足りなければ retry せず打ち切る（maxDuration 超過による 504 を防ぐ）。
+      if (attempt === 2 && remainingMs < MIN_RETRY_BUDGET_MS) {
+        return Response.json(
+          { error: 'AI_GD_PARSE_FAILED', detail: '評価を解釈できませんでした。' },
+          { status: 502 },
+        );
+      }
+      const callTimeoutMs = Math.min(PER_CALL_TIMEOUT_MS, Math.max(0, remainingMs));
       const message = await anthropic.messages.create(
         {
           model: CAREER_GD_MODEL,
@@ -166,7 +192,7 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: user }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
