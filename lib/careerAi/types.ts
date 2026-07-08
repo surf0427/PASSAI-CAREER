@@ -88,6 +88,7 @@ export type CareerProfileContext = {
 export type CareerActivityContext = {
   personality: string[]; // ① MBTI・性格
   academics: string[]; // ② 学業・学生時代の活動
+  focusedActivities: string[]; // ②' 学生時代に力を入れたこと（ガクチカ）
   partTimeJobs: string[]; // ③ アルバイト
   internships: string[]; // ④ インターン
   clubActivities: string[]; // ⑤ サークル・部活動

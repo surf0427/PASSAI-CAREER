@@ -35,7 +35,11 @@ import {
 } from '@/components/career/activity/ActivityField';
 import { RepeatableList } from '@/components/career/activity/RepeatableList';
 import { ExperienceTail } from '@/components/career/activity/ExperienceTail';
-import { loadActivityData, saveActivityData } from './activityStorage';
+import {
+  loadActivityData,
+  saveActivityData,
+  normalizeCareerActivity,
+} from './activityStorage';
 import {
   IT_SKILL_LEVELS,
   IT_SKILL_SUGGESTIONS,
@@ -47,10 +51,15 @@ import {
   SNS_PLATFORM_SUGGESTIONS,
   PORTFOLIO_EXAMPLES,
   PORTFOLIO_KIND_SUGGESTIONS,
+  FOCUSED_ACTIVITY_CATEGORY_SUGGESTIONS,
+  FOCUSED_ACTIVITY_EXAMPLES,
+  OVERSEAS_KINDS,
 } from './careerActivityCategories';
 import type { CareerActivity } from '@/types/careerActivity';
 import {
   emptyCareerActivity,
+  newFocusedActivityEntry,
+  newOverseasEntry,
   newPartTimeJobEntry,
   newInternshipEntry,
   newClubEntry,
@@ -95,7 +104,6 @@ export default function CareerActivityPage() {
 type ObjSectionKey =
   | 'personality'
   | 'academics'
-  | 'overseas'
   | 'lifeExperiences';
 
 // 自由記述（トップレベル string）フィールドのキー。
@@ -164,8 +172,12 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
       const result = await loadCareerActivityFromSupabase(userId);
       if (cancelled || editedRef.current) return;
       if (result.kind === 'ok') {
-        saveActivityData(result.activity); // LS canonical に揃える
-        setActivity(result.activity);
+        // Supabase の durable mirror は旧スキーマ（overseas=単発オブジェクト／
+        // academics.focusedEffort=ガクチカ）で書かれている場合があるため、必ず正規化してから
+        // state / LS に入れる（新カード構造の array 前提の描画で落ちないようにする）。
+        const normalized = normalizeCareerActivity(result.activity);
+        saveActivityData(normalized); // LS canonical に揃える
+        setActivity(normalized);
       }
     })();
     return () => {
@@ -292,15 +304,13 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
           </div>
         </SectionCard>
 
-        {/* ② 学業・学生時代の活動 */}
-        <SectionCard emoji="📚" title="学業・学生時代の活動">
+        {/* ② 学業・学生時代の活動（授業・ゼミ・研究・専攻・学業面の取り組み） */}
+        <SectionCard
+          emoji="📚"
+          title="学業・学生時代の活動"
+          description="授業・ゼミ・研究・専攻など、学業面の取り組みを整理します。打ち込んだ活動（ガクチカ）は下の「学生時代に力を入れたこと」に登録できます。"
+        >
           <div className="space-y-3">
-            <TextareaField
-              label="学生時代に力を入れたこと"
-              value={activity.academics.focusedEffort}
-              onChange={(v) => setObj('academics', 'focusedEffort', v)}
-              placeholder="いわゆる「ガクチカ」。打ち込んだことを自由に書いてください。"
-            />
             <TextareaField
               label="ゼミ・研究"
               value={activity.academics.seminar}
@@ -332,6 +342,144 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
               placeholder="例：成績優秀者表彰、学会発表 など"
             />
           </div>
+        </SectionCard>
+
+        {/* ②' 学生時代に力を入れたこと（ガクチカ・複数カード） */}
+        <SectionCard
+          emoji="🔥"
+          title="学生時代に力を入れたこと"
+          description={`いわゆる「ガクチカ」。ES・面接・自己PR で最も使う項目です。エピソードごとにカードで複数登録できます。例：${FOCUSED_ACTIVITY_EXAMPLES}`}
+        >
+          <RepeatableList
+            items={activity.focusedActivities}
+            addLabel="学生時代に力を入れたことを追加"
+            emptyHint="打ち込んだ経験を 1 つずつカードで追加してください（アルバイト・サークル・学業・インターン など）。"
+            itemLabel={(i) => `力を入れたこと ${i + 1}`}
+            onAdd={() =>
+              update((p) => ({
+                ...p,
+                focusedActivities: [
+                  ...p.focusedActivities,
+                  newFocusedActivityEntry(),
+                ],
+              }))
+            }
+            onRemove={(id) =>
+              update((p) => ({
+                ...p,
+                focusedActivities: p.focusedActivities.filter(
+                  (it) => it.id !== id,
+                ),
+              }))
+            }
+            renderItem={(item) => {
+              const patch = (patchObj: Partial<typeof item>) =>
+                update((p) => ({
+                  ...p,
+                  focusedActivities: p.focusedActivities.map((it) =>
+                    it.id === item.id ? { ...it, ...patchObj } : it,
+                  ),
+                }));
+              return (
+                <>
+                  <TextField
+                    label="タイトル"
+                    value={item.title}
+                    onChange={(v) => patch({ title: v })}
+                    placeholder="例：カフェのアルバイトでの売上改善"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <TextField
+                      label="活動カテゴリ"
+                      value={item.category}
+                      onChange={(v) => patch({ category: v })}
+                      placeholder="例：アルバイト / サークル / 学業"
+                      suggestions={FOCUSED_ACTIVITY_CATEGORY_SUGGESTIONS}
+                    />
+                    <TextField
+                      label="所属・組織・場面"
+                      value={item.organization}
+                      onChange={(v) => patch({ organization: v })}
+                      placeholder="例：個人経営のカフェ／◯◯サークル"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <TextField
+                      label="期間（開始）"
+                      value={item.period.from}
+                      onChange={(v) =>
+                        patch({ period: { ...item.period, from: v } })
+                      }
+                      placeholder="2023年4月"
+                    />
+                    <TextField
+                      label="期間（終了）"
+                      value={item.period.to}
+                      onChange={(v) =>
+                        patch({ period: { ...item.period, to: v } })
+                      }
+                      placeholder="現在 / 2024年3月"
+                    />
+                  </div>
+                  <TextField
+                    label="役割"
+                    value={item.role}
+                    onChange={(v) => patch({ role: v })}
+                    placeholder="例：リーダー / 会計 / フロント担当"
+                  />
+                  <TextareaField
+                    label="目標・課題"
+                    value={item.goal}
+                    onChange={(v) => patch({ goal: v })}
+                    placeholder="何を目指した／どんな課題があったかを書いてください。"
+                  />
+                  <TextareaField
+                    label="具体的な行動"
+                    value={item.action}
+                    onChange={(v) => patch({ action: v })}
+                    placeholder="課題に対して実際に取り組んだことを書いてください。"
+                  />
+                  <TextareaField
+                    label="工夫したこと"
+                    value={item.ingenuity}
+                    onChange={(v) => patch({ ingenuity: v })}
+                    placeholder="自分なりに工夫・意識した点を書いてください。"
+                  />
+                  <TextareaField
+                    label="困難だったこと"
+                    value={item.difficulty}
+                    onChange={(v) => patch({ difficulty: v })}
+                    placeholder="つまずいた点・大変だったことを書いてください。"
+                  />
+                  <TextareaField
+                    label="成果・実績"
+                    value={item.result}
+                    onChange={(v) => patch({ result: v })}
+                    placeholder="取り組みの結果どうなったかを書いてください。"
+                  />
+                  <TextareaField
+                    label="数字で表せる成果"
+                    value={item.quantitativeResult}
+                    onChange={(v) => patch({ quantitativeResult: v })}
+                    hint="数字を入れると ES・面接で説得力が増します"
+                    placeholder="例：売上15%改善 / 参加者200人 / 業務時間30分短縮"
+                  />
+                  <TextareaField
+                    label="学び"
+                    value={item.learning}
+                    onChange={(v) => patch({ learning: v })}
+                    placeholder="この経験から得た学び・強みにつながった点を書いてください。"
+                  />
+                  <TextareaField
+                    label="ES/面接で使いたい度・メモ"
+                    value={item.memo}
+                    onChange={(v) => patch({ memo: v })}
+                    placeholder="例：本命企業の面接で使いたい／リーダーシップの根拠に使える など"
+                  />
+                </>
+              );
+            }}
+          />
         </SectionCard>
 
         {/* ③ アルバイト */}
@@ -611,31 +759,140 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
           />
         </SectionCard>
 
-        {/* ⑨ 海外経験 */}
+        {/* ⑨ 海外経験（複数カード） */}
         <SectionCard
           emoji="✈️"
           title="海外経験"
-          description="留学・ワーキングホリデー・語学学校・海外旅行・国際交流 など。"
+          description="留学・ワーキングホリデー・語学学校・海外旅行・インターン・国際交流 など。複数登録できます。"
         >
-          <div className="space-y-3">
-            <TextareaField
-              label="内容"
-              value={activity.overseas.description}
-              onChange={(v) => setObj('overseas', 'description', v)}
-              placeholder="種類・行き先・目的などを自由に書いてください。"
-            />
-            <TextField
-              label="期間"
-              value={activity.overseas.period}
-              onChange={(v) => setObj('overseas', 'period', v)}
-              placeholder="例：3か月"
-            />
-            <TextareaField
-              label="学び"
-              value={activity.overseas.learning}
-              onChange={(v) => setObj('overseas', 'learning', v)}
-            />
-          </div>
+          <RepeatableList
+            items={activity.overseas}
+            addLabel="海外経験を追加"
+            emptyHint="経験した海外渡航を 1 つずつカードで追加してください。"
+            itemLabel={(i) => `海外経験 ${i + 1}`}
+            onAdd={() =>
+              update((p) => ({
+                ...p,
+                overseas: [...p.overseas, newOverseasEntry()],
+              }))
+            }
+            onRemove={(id) =>
+              update((p) => ({
+                ...p,
+                overseas: p.overseas.filter((it) => it.id !== id),
+              }))
+            }
+            renderItem={(item) => {
+              const patch = (patchObj: Partial<typeof item>) =>
+                update((p) => ({
+                  ...p,
+                  overseas: p.overseas.map((it) =>
+                    it.id === item.id ? { ...it, ...patchObj } : it,
+                  ),
+                }));
+              return (
+                <>
+                  <TextField
+                    label="タイトル"
+                    value={item.title}
+                    onChange={(v) => patch({ title: v })}
+                    placeholder="例：カナダ・バンクーバーへの語学留学"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <TextField
+                      label="国・地域"
+                      value={item.country}
+                      onChange={(v) => patch({ country: v })}
+                      placeholder="例：カナダ"
+                    />
+                    <TextField
+                      label="都市"
+                      value={item.city}
+                      onChange={(v) => patch({ city: v })}
+                      placeholder="例：バンクーバー"
+                    />
+                    <SelectField
+                      label="種別"
+                      value={item.kind}
+                      onChange={(v) => patch({ kind: v })}
+                      options={OVERSEAS_KINDS}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <TextField
+                      label="期間（開始）"
+                      value={item.period.from}
+                      onChange={(v) =>
+                        patch({ period: { ...item.period, from: v } })
+                      }
+                      placeholder="2023年8月"
+                    />
+                    <TextField
+                      label="期間（終了）"
+                      value={item.period.to}
+                      onChange={(v) =>
+                        patch({ period: { ...item.period, to: v } })
+                      }
+                      placeholder="2023年11月"
+                    />
+                  </div>
+                  <TextField
+                    label="所属・学校・プログラム名"
+                    value={item.program}
+                    onChange={(v) => patch({ program: v })}
+                    placeholder="例：◯◯語学学校 / 交換留学プログラム"
+                  />
+                  <TextareaField
+                    label="目的"
+                    value={item.purpose}
+                    onChange={(v) => patch({ purpose: v })}
+                    placeholder="なぜ行ったのか、何を目指したかを書いてください。"
+                  />
+                  <TextareaField
+                    label="現地で取り組んだこと"
+                    value={item.activityContent}
+                    onChange={(v) => patch({ activityContent: v })}
+                    placeholder="現地での学び・活動・チャレンジしたことを書いてください。"
+                  />
+                  <TextareaField
+                    label="困難だったこと"
+                    value={item.difficulty}
+                    onChange={(v) => patch({ difficulty: v })}
+                    placeholder="言語・文化・生活面などで大変だったこと。"
+                  />
+                  <TextareaField
+                    label="乗り越え方"
+                    value={item.howOvercome}
+                    onChange={(v) => patch({ howOvercome: v })}
+                    placeholder="困難にどう向き合い、乗り越えたかを書いてください。"
+                  />
+                  <TextareaField
+                    label="得た価値観・学び"
+                    value={item.learning}
+                    onChange={(v) => patch({ learning: v })}
+                  />
+                  <TextField
+                    label="語学面の変化"
+                    value={item.languageGrowth}
+                    onChange={(v) => patch({ languageGrowth: v })}
+                    placeholder="例：TOEIC 650→820 / 日常会話に困らなくなった"
+                  />
+                  <TextareaField
+                    label="就活で使えそうな強み"
+                    value={item.strength}
+                    onChange={(v) => patch({ strength: v })}
+                    placeholder="例：主体性 / 適応力 / 多様な価値観への理解"
+                  />
+                  <TextareaField
+                    label="メモ"
+                    value={item.memo}
+                    onChange={(v) => patch({ memo: v })}
+                    placeholder="ES・面接で使いたい点や補足を自由に。"
+                  />
+                </>
+              );
+            }}
+          />
         </SectionCard>
 
         {/* ⑩ 資格 */}

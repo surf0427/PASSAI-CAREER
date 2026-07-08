@@ -28,6 +28,8 @@ import type {
   CareerActivity,
   CareerPeriod,
   ExperienceCommon,
+  FocusedActivityEntry,
+  OverseasEntry,
   PartTimeJobEntry,
   InternshipEntry,
   ClubEntry,
@@ -220,6 +222,45 @@ const mapSns = (s: Record<string, unknown>): SnsEntry => ({
   learning: str(s.learning),
 });
 
+// ②' 学生時代に力を入れたこと（ガクチカカード）。
+const mapFocusedActivity = (f: Record<string, unknown>): FocusedActivityEntry => ({
+  id: id(f.id),
+  title: str(f.title),
+  category: str(f.category),
+  period: period(f.period),
+  organization: str(f.organization),
+  role: str(f.role),
+  goal: str(f.goal),
+  action: str(f.action),
+  ingenuity: str(f.ingenuity),
+  difficulty: str(f.difficulty),
+  result: str(f.result),
+  // 旧経験系の `achievement`（成果）が紛れていてもフォールバックで拾う。
+  quantitativeResult: str(f.quantitativeResult) || str(f.achievement),
+  learning: str(f.learning),
+  memo: str(f.memo),
+});
+
+// ⑨ 海外経験カード。旧単発オブジェクト形状（description / period=string / learning）も
+// 同一マッパーで救済する（description は現地で取り組んだことへ、period 文字列は period() が畳み込む）。
+const mapOverseas = (o: Record<string, unknown>): OverseasEntry => ({
+  id: id(o.id),
+  title: str(o.title),
+  country: str(o.country),
+  city: str(o.city),
+  period: period(o.period),
+  kind: str(o.kind),
+  program: str(o.program),
+  purpose: str(o.purpose),
+  activityContent: str(o.activityContent) || str(o.description),
+  difficulty: str(o.difficulty),
+  howOvercome: str(o.howOvercome),
+  learning: str(o.learning),
+  languageGrowth: str(o.languageGrowth),
+  strength: str(o.strength),
+  memo: str(o.memo),
+});
+
 const mapPortfolio = (p: Record<string, unknown>): PortfolioEntry => ({
   id: id(p.id),
   name: str(p.name),
@@ -260,16 +301,38 @@ export function normalizeCareerActivity(raw: unknown): CareerActivity {
     level: languageLevel(l.level),
   }));
 
+  // ② 学業。旧「学生時代に力を入れたこと」(focusedEffort) は ②' カードへ分離するため、
+  //    ここでは読み取るだけにして academics 側からはクリアする（下で focusedActivities に移行）。
+  const academics = objSection(obj.academics, base.academics);
+  const legacyFocusedEffort = academics.focusedEffort.trim();
+  academics.focusedEffort = '';
+
+  // ②' 学生時代に力を入れたこと（複数カード）。
+  const focusedActivities = list<FocusedActivityEntry>(
+    obj.focusedActivities,
+    mapFocusedActivity,
+  );
+  // 旧 academics.focusedEffort に中身があり、まだ移行カードが無ければ 1 枚目として救済する。
+  // （自由記述の本文は「具体的な行動」へ畳み込む。ユーザーが後から項目を整理できる形にする。）
+  if (
+    legacyFocusedEffort !== '' &&
+    !focusedActivities.some((f) => f.action === legacyFocusedEffort)
+  ) {
+    focusedActivities.unshift(mapFocusedActivity({ action: legacyFocusedEffort }));
+  }
+
   return {
     personality: objSection(obj.personality, base.personality),
-    academics: objSection(obj.academics, base.academics),
+    academics,
+    focusedActivities,
     partTimeJobs: list<PartTimeJobEntry>(obj.partTimeJobs, mapPartTimeJob),
     internships: list<InternshipEntry>(obj.internships, mapInternship),
     club: listOrSingle<ClubEntry>(obj.club, mapClub),
     projects: list<ProjectEntry>(obj.projects, mapProject),
     leadership: listOrSingle<LeadershipEntry>(obj.leadership, mapLeadership),
     volunteer: listOrSingle<VolunteerEntry>(obj.volunteer, mapVolunteer),
-    overseas: objSection(obj.overseas, base.overseas),
+    // 配列なら各カードを、旧単発オブジェクト（内容あり）なら 1 枚目のカードへ正規化する。
+    overseas: listOrSingle<OverseasEntry>(obj.overseas, mapOverseas),
     certifications,
     itSkills,
     languages,

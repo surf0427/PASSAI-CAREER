@@ -129,6 +129,7 @@ function renderActivity(activity: CareerActivityContext): string {
   const sections: Array<[label: string, lines: string[]]> = [
     ['MBTI・性格', activity.personality],
     ['学業・学生時代の活動', activity.academics],
+    ['学生時代に力を入れたこと（ガクチカ）', activity.focusedActivities],
     ['アルバイト', activity.partTimeJobs],
     ['インターン', activity.internships],
     ['サークル・部活動', activity.clubActivities],

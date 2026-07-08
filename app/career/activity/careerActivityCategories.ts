@@ -107,5 +107,32 @@ export const PORTFOLIO_KIND_SUGGESTIONS = [
   '動画作品',
 ] as const;
 
+// ②' 学生時代に力を入れたこと（ガクチカ）の活動カテゴリ候補（datalist 用。自由入力も許可）。
+export const FOCUSED_ACTIVITY_CATEGORY_SUGGESTIONS = [
+  'アルバイト',
+  'サークル・部活動',
+  '学業・ゼミ・研究',
+  'インターン',
+  'ボランティア・社会活動',
+  'プロジェクト・個人開発',
+  'イベント運営',
+  '留学・海外経験',
+  'その他',
+] as const;
+
+// ②' ガクチカの例（プレースホルダ/補足表示用）。
+export const FOCUSED_ACTIVITY_EXAMPLES =
+  'アルバイトでの売上改善・サークルの集客・ゼミでの研究・長期インターンでの改善提案 など';
+
+// ⑨ 海外経験の種別（select 用）。
+export const OVERSEAS_KINDS = [
+  '留学',
+  'ワーキングホリデー',
+  '旅行',
+  'インターン',
+  'ボランティア',
+  'その他',
+] as const;
+
 export const IS_VALID_IT_SKILL_LEVEL = new Set<string>(IT_SKILL_LEVELS);
 export const IS_VALID_LANGUAGE_LEVEL = new Set<string>(LANGUAGE_LEVELS);

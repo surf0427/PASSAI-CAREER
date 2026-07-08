@@ -157,9 +157,11 @@ export type PersonalitySection = {
   motivationDown: string; // モチベーションが下がる環境
 };
 
-// ② 学業・学生時代の活動
+// ② 学業・学生時代の活動（授業・ゼミ・研究・専攻・学業面の取り組み）
+// focusedEffort（旧「学生時代に力を入れたこと」）は ②' focusedActivities カードへ分離した。
+// 旧データ救済のため型・保存層では読み取り互換を残す（UI からは編集しない）。
 export type AcademicsSection = {
-  focusedEffort: string; // 学生時代に力を入れたこと
+  focusedEffort: string; // 【旧】学生時代に力を入れたこと（→ focusedActivities へ移行。legacy 読み取り互換）
   seminar: string; // ゼミ・研究
   thesis: string; // 卒業研究・卒論（任意）
   memorableClass: string; // 印象に残った授業
@@ -167,11 +169,42 @@ export type AcademicsSection = {
   academicAwards: string; // 成績・受賞歴（任意）
 };
 
-// ⑨ 海外経験（留学 / ワーホリ / 語学学校 / 海外旅行 / 国際交流）
-export type OverseasSection = {
-  description: string; // 内容（種類・行き先など自由記述）
-  period: string; // 期間
+// ②' 学生時代に力を入れたこと（いわゆる「ガクチカ」。複数登録可能なカード）
+// ES・面接・自己PR で最も使われるため、1 エピソード = 1 カードで構造化して持たせる。
+export type FocusedActivityEntry = {
+  id: string;
+  title: string; // タイトル（例：カフェのアルバイトでの売上改善）
+  category: string; // 活動カテゴリ（アルバイト / サークル / 学業 / ボランティア 等）
+  period: CareerPeriod; // 期間
+  organization: string; // 所属・組織・場面
+  role: string; // 役割
+  goal: string; // 目標・課題
+  action: string; // 具体的な行動
+  ingenuity: string; // 工夫したこと
+  difficulty: string; // 困難だったこと
+  result: string; // 成果・実績
+  quantitativeResult: string; // 数字で表せる成果
   learning: string; // 学び
+  memo: string; // ES/面接で使いたい度、またはメモ
+};
+
+// ⑨ 海外経験（留学 / ワーホリ / 語学学校 / 海外旅行 / インターン / ボランティア 等。複数登録可能なカード）
+export type OverseasEntry = {
+  id: string;
+  title: string; // タイトル
+  country: string; // 国・地域
+  city: string; // 都市
+  period: CareerPeriod; // 期間
+  kind: string; // 種別（留学 / ワーホリ / 旅行 / インターン / ボランティア / その他）
+  program: string; // 所属・学校・プログラム名
+  purpose: string; // 目的
+  activityContent: string; // 現地で取り組んだこと
+  difficulty: string; // 困難だったこと
+  howOvercome: string; // 乗り越え方
+  learning: string; // 得た価値観・学び
+  languageGrowth: string; // 語学面の変化
+  strength: string; // 就活で使えそうな強み
+  memo: string; // メモ
 };
 
 // ⑰ 人生経験
@@ -190,13 +223,14 @@ export type LifeExperiencesSection = {
 export type CareerActivity = {
   personality: PersonalitySection; // ①
   academics: AcademicsSection; // ②
+  focusedActivities: FocusedActivityEntry[]; // ②' 学生時代に力を入れたこと（複数登録可）
   partTimeJobs: PartTimeJobEntry[]; // ③
   internships: InternshipEntry[]; // ④
   club: ClubEntry[]; // ⑤（複数登録可）
   projects: ProjectEntry[]; // ⑥
   leadership: LeadershipEntry[]; // ⑦（複数登録可）
   volunteer: VolunteerEntry[]; // ⑧（複数登録可）
-  overseas: OverseasSection; // ⑨
+  overseas: OverseasEntry[]; // ⑨（複数登録可）
   certifications: CertificationEntry[]; // ⑩
   itSkills: ItSkillEntry[]; // ⑪
   languages: LanguageEntry[]; // ⑫
@@ -234,6 +268,45 @@ function emptyExperienceCommon(): ExperienceCommon {
     ingenuity: '',
     quantitativeResult: '',
     learning: '',
+  };
+}
+
+export function newFocusedActivityEntry(): FocusedActivityEntry {
+  return {
+    id: newActivityId(),
+    title: '',
+    category: '',
+    period: emptyPeriod(),
+    organization: '',
+    role: '',
+    goal: '',
+    action: '',
+    ingenuity: '',
+    difficulty: '',
+    result: '',
+    quantitativeResult: '',
+    learning: '',
+    memo: '',
+  };
+}
+
+export function newOverseasEntry(): OverseasEntry {
+  return {
+    id: newActivityId(),
+    title: '',
+    country: '',
+    city: '',
+    period: emptyPeriod(),
+    kind: '',
+    program: '',
+    purpose: '',
+    activityContent: '',
+    difficulty: '',
+    howOvercome: '',
+    learning: '',
+    languageGrowth: '',
+    strength: '',
+    memo: '',
   };
 }
 
@@ -329,13 +402,14 @@ export function emptyCareerActivity(): CareerActivity {
       gpa: '',
       academicAwards: '',
     },
+    focusedActivities: [],
     partTimeJobs: [],
     internships: [],
     club: [],
     projects: [],
     leadership: [],
     volunteer: [],
-    overseas: { description: '', period: '', learning: '' },
+    overseas: [],
     certifications: [],
     itSkills: [],
     languages: [],
@@ -365,15 +439,16 @@ export function isCareerActivityEmpty(activity: CareerActivity): boolean {
 
   if (objHasValue(activity.personality)) return false;
   if (objHasValue(activity.academics)) return false;
-  if (objHasValue(activity.overseas)) return false;
   if (objHasValue(activity.lifeExperiences)) return false;
 
+  if (activity.focusedActivities.length > 0) return false;
   if (activity.partTimeJobs.length > 0) return false;
   if (activity.internships.length > 0) return false;
   if (activity.club.length > 0) return false;
   if (activity.projects.length > 0) return false;
   if (activity.leadership.length > 0) return false;
   if (activity.volunteer.length > 0) return false;
+  if (activity.overseas.length > 0) return false;
   if (activity.certifications.length > 0) return false;
   if (activity.itSkills.length > 0) return false;
   if (activity.languages.length > 0) return false;

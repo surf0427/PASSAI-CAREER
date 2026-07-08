@@ -218,6 +218,11 @@ export function buildCoverageInventory(
   const activities: string[] = [];
 
   if (objHasValue(a.academics)) activities.push('学業・ゼミ・研究');
+  const focused = listLabel('学生時代に力を入れたこと', a.focusedActivities, [
+    'title',
+    'category',
+  ]);
+  if (focused) activities.push(focused);
   const club = listLabel('サークル・部活動', a.club, ['organizationName']);
   if (club) activities.push(club);
   const part = listLabel('アルバイト', a.partTimeJobs, ['workplace']);
@@ -230,7 +235,8 @@ export function buildCoverageInventory(
   if (lead) activities.push(lead);
   const vol = listLabel('ボランティア・社会活動', a.volunteer, ['activityContent']);
   if (vol) activities.push(vol);
-  if (objHasValue(a.overseas)) activities.push('留学・海外経験');
+  const overseas = listLabel('留学・海外経験', a.overseas, ['title', 'country']);
+  if (overseas) activities.push(overseas);
   const sns = listLabel('SNS・情報発信', a.snsActivities, ['platform', 'theme']);
   if (sns) activities.push(sns);
   const portfolio = listLabel('ポートフォリオ・制作物', a.portfolios, ['name', 'kind']);

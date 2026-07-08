@@ -115,16 +115,36 @@ export function normalizeCareerActivityContext(
     ['モチベーションが下がる環境', (p as Record<string, unknown>).motivationDown],
   ]);
 
-  // ② 学業・学生時代の活動
+  // ② 学業・学生時代の活動（授業・ゼミ・研究・専攻）。
+  // 旧「力を入れたこと」(focusedEffort) は ②' focusedActivities カードへ分離済み。
   const ac = a.academics ?? {};
   const academics = labeledLines([
-    ['力を入れたこと', (ac as Record<string, unknown>).focusedEffort],
     ['ゼミ・研究', (ac as Record<string, unknown>).seminar],
     ['卒業研究・卒論', (ac as Record<string, unknown>).thesis],
     ['印象に残った授業', (ac as Record<string, unknown>).memorableClass],
     ['GPA', (ac as Record<string, unknown>).gpa],
     ['成績・受賞歴', (ac as Record<string, unknown>).academicAwards],
   ]);
+
+  // ②' 学生時代に力を入れたこと（ガクチカ・複数カード）。
+  // ES・面接・自己PR で最優先に使うため、目標→行動→工夫→困難→成果→数字→学び を 1 行に凝縮する。
+  const focusedActivities = (a.focusedActivities ?? []).map((f) =>
+    joinFields([
+      ['タイトル', f.title],
+      ['カテゴリ', f.category],
+      ['所属・場面', f.organization],
+      ['期間', periodText(f.period)],
+      ['役割', f.role],
+      ['目標・課題', f.goal],
+      ['具体的な行動', f.action],
+      ['工夫', f.ingenuity],
+      ['困難', f.difficulty],
+      ['成果・実績', f.result],
+      ['数字で表せる成果', f.quantitativeResult],
+      ['学び', f.learning],
+      ['メモ', f.memo],
+    ]),
+  );
 
   // 経験系の共通フィールド（役割・人数規模・期間・工夫・定量的な成果・学び）を行末尾に付ける。
   // ES・面接 AI が「規模・役割・定量成果・学び（＝強みの根拠）」を読み取れるようにする。
@@ -192,13 +212,26 @@ export function normalizeCareerActivityContext(
     joinFields([['活動内容', v.activityContent], ...experienceFields(v)]),
   );
 
-  // ⑨ 海外経験
-  const ov = a.overseas ?? {};
-  const overseas = labeledLines([
-    ['内容', (ov as Record<string, unknown>).description],
-    ['期間', (ov as Record<string, unknown>).period],
-    ['学び', (ov as Record<string, unknown>).learning],
-  ]);
+  // ⑨ 海外経験（複数カード）。自己PR・価値観・志望動機・面接深掘りに使えるよう、
+  // 目的→取り組み→困難→乗り越え方→学び→語学変化→強み を 1 行に凝縮する。
+  const overseas = (a.overseas ?? []).map((o) =>
+    joinFields([
+      ['タイトル', o.title],
+      ['国・地域', o.country],
+      ['都市', o.city],
+      ['種別', o.kind],
+      ['期間', periodText(o.period)],
+      ['所属・プログラム', o.program],
+      ['目的', o.purpose],
+      ['現地で取り組んだこと', o.activityContent],
+      ['困難', o.difficulty],
+      ['乗り越え方', o.howOvercome],
+      ['得た価値観・学び', o.learning],
+      ['語学面の変化', o.languageGrowth],
+      ['就活で使えそうな強み', o.strength],
+      ['メモ', o.memo],
+    ]),
+  );
 
   // ⑩ 資格
   const certifications = (a.certifications ?? []).map((c) =>
@@ -278,13 +311,14 @@ export function normalizeCareerActivityContext(
   return {
     personality,
     academics,
+    focusedActivities: dropEmpty(focusedActivities),
     partTimeJobs: dropEmpty(partTimeJobs),
     internships: dropEmpty(internships),
     clubActivities: dropEmpty(clubActivities),
     projects: dropEmpty(projects),
     leadership: dropEmpty(leadership),
     volunteer: dropEmpty(volunteer),
-    overseas,
+    overseas: dropEmpty(overseas),
     certifications: dropEmpty(certifications),
     itSkills: dropEmpty(itSkills),
     languages: dropEmpty(languages),
