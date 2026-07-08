@@ -22,7 +22,7 @@ import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import type { CareerGdResult, CareerGdRoomLog } from '@/types/careerGd';
 import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import type { CareerConsultationThread } from '@/types/careerConsultation';
+import type { CareerConsultationThread, CareerConsultationResult } from '@/types/careerConsultation';
 import {
   buildSelfAnalysisHistory,
   buildEsHistory,
@@ -38,6 +38,8 @@ import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
   buildLatestGdRoomSignals,
+  buildLatestGdMatchingSnapshot,
+  buildGdMatchingSnapshotById,
 } from '@/lib/careerGd/context';
 import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
 
@@ -227,5 +229,60 @@ export function buildPresentationRequestContext(
     interview: interviewResults.length > 0 ? interviewResults[0].result : null,
     matching: matchingLogs.length > 0 ? matchingLogs[0].result : null,
     consultationInsights: collectConsultationInsights(input.consultationThreads),
+  };
+}
+
+// ── matching（P4-E2: app/career/matching/page.tsx の page-local proto-selector を抽出） ──────
+
+// matching page(client) が load* して渡す生データ（selector 自身は読まない）。
+export type MatchingSelectorInput = {
+  profile: CareerProfile | null;
+  activity: CareerActivity | null;
+  values: CareerValues | null;
+  selfAnalysisLogs: CareerSelfAnalysisLog[];
+  esLogs: CareerEsLog[];
+  interviewResults: CareerInterviewResult[];
+  // 相談スレッド（旧実装は guarded read せず直接読むため、page 側もガードしない）。
+  consultationThreads: CareerConsultationThread[];
+  gdResults: CareerGdResult[];
+  gdRoomLogs: CareerGdRoomLog[];
+  // GD結果の深リンク（?gdResultId）。指定時はその1件を優先。
+  gdResultId?: string | null;
+};
+
+// 直近の就活相談（最新スレッドの最後の assistant 結果）を取り出す純関数。
+// （旧 page-local latestConsultationResult の load を除いたロジックと 1:1）。
+function latestConsultationResult(
+  threads: CareerConsultationThread[],
+): CareerConsultationResult | null {
+  if (threads.length === 0) return null;
+  const messages = threads[0].messages;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === 'assistant' && m.result) return m.result;
+  }
+  return null;
+}
+
+// マッチングAIに渡す統合コンテキストを、page が読み込んだ生データから組み立てる純関数。
+// 返す object の key 順・latest 選択・GD fallback・件数上限は旧 buildMatchingContext と byte 一致。
+export function buildMatchingRequestContext(input: MatchingSelectorInput) {
+  const { selfAnalysisLogs, esLogs, interviewResults, gdResults } = input;
+  const gdSnapshot =
+    (input.gdResultId ? buildGdMatchingSnapshotById(gdResults, input.gdResultId) : null) ??
+    buildLatestGdMatchingSnapshot(gdResults);
+  // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（最新3件・採点済みのみ・weight 低め）。
+  const gdRoomSignals = buildLatestGdRoomSignals(input.gdRoomLogs, 3);
+  return {
+    profile: input.profile,
+    activity: input.activity,
+    values: input.values,
+    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
+    es: esLogs.length > 0 ? esLogs[0].result : null,
+    interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
+    consultation: latestConsultationResult(input.consultationThreads),
+    // GD 練習結果を補助文脈として渡す。主情報ではなく参考扱い。
+    gdSnapshot,
+    gdRoomSignals,
   };
 }

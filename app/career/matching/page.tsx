@@ -23,17 +23,13 @@ import { loadConsultationThreads } from '@/app/career/consultation/consultationS
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
-import {
-  buildLatestGdMatchingSnapshot,
-  buildGdMatchingSnapshotById,
-  buildLatestGdRoomSignals,
-} from '@/lib/careerGd/context';
+// P4-E2: 横断 context 組み立ては lib/careerMemory/selector.ts へ抽出（出力 request body は byte 不変）。
+import { buildMatchingRequestContext } from '@/lib/careerMemory/selector';
 import { appendMatchingLog } from './matchingStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { toScoreBand } from '@/lib/careerEvents/sanitize';
-import type { CareerConsultationResult } from '@/types/careerConsultation';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 
 const subscribeMount = () => () => {};
@@ -47,42 +43,22 @@ function newId(): string {
   return `cmatch-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-// 直近の就活相談（最新スレッドの最後の assistant 結果）を取り出す。
-function latestConsultationResult(): CareerConsultationResult | null {
-  const threads = loadConsultationThreads();
-  if (threads.length === 0) return null;
-  const messages = threads[0].messages;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === 'assistant' && m.result) return m.result;
-  }
-  return null;
-}
-
 // マッチングAIに渡す統合コンテキストを localStorage から組み立てる。
+// P4-E2: load* はここ（page）に残し、組み立ては純関数 selector へ委譲する（request body は byte 不変）。
 // gdResultId があればその GD 結果を優先し、無い/見つからない場合は最新にフォールバックする。
 function buildMatchingContext(gdResultId?: string | null) {
-  const selfLogs = loadSelfAnalysisLogs();
-  const esLogs = loadEsLogs();
-  const interviewResults = loadInterviewResults();
-  const gdResults = loadGdResults();
-  const gdSnapshot =
-    (gdResultId ? buildGdMatchingSnapshotById(gdResults, gdResultId) : null) ??
-    buildLatestGdMatchingSnapshot(gdResults);
-  // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（最新3件・採点済みのみ・weight 低め）。
-  const gdRoomSignals = buildLatestGdRoomSignals(loadGdRoomLogs(), 3);
-  return {
+  return buildMatchingRequestContext({
     profile: loadBasicInfo(),
     activity: loadActivityData(),
     values: loadCareerValues(),
-    selfAnalysis: selfLogs.length > 0 ? selfLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
-    consultation: latestConsultationResult(),
-    // GD 練習結果を補助文脈として渡す。主情報ではなく参考扱い。
-    gdSnapshot,
-    gdRoomSignals,
-  };
+    selfAnalysisLogs: loadSelfAnalysisLogs(),
+    esLogs: loadEsLogs(),
+    interviewResults: loadInterviewResults(),
+    consultationThreads: loadConsultationThreads(),
+    gdResults: loadGdResults(),
+    gdRoomLogs: loadGdRoomLogs(),
+    gdResultId,
+  });
 }
 
 type Readiness = {
