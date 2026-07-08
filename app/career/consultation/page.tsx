@@ -26,28 +26,19 @@ import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
 import { loadPresentationResults } from '@/app/career/presentation/presentationStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
-import { buildCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { loadGdResults } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
-import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
 import { hasAnyActivity } from '@/app/career/activity/activityStorage';
 import {
   buildConsultationStarters,
   CONSULTATION_STARTER_QUERY,
   type ConsultationDataFlags,
 } from '@/lib/careerConsultation/starterSuggestions';
-import {
-  buildSelfAnalysisHistory,
-  buildEsHistory,
-  buildInterviewHistory,
-  buildPresentationHistory,
-} from '@/lib/careerConsultation/historySnapshots';
-import {
-  buildLatestGdConsultationSnapshots,
-  buildGdConsultationSnapshotById,
-  buildLatestGdRoomSignals,
-} from '@/lib/careerGd/context';
+// P4-C: 横断 context 組み立ては lib/careerMemory/selector.ts へ抽出（出力 request body は byte 不変）。
+import { buildConsultationRequestContext } from '@/lib/careerMemory/selector';
+// buildLatestGdRoomSignals は下部の hasGdRoomSignals（UI注記）でも使うため引き続き import する。
+import { buildLatestGdRoomSignals } from '@/lib/careerGd/context';
 import {
   loadConsultationThreads,
   saveConsultationThreads,
@@ -94,38 +85,23 @@ function computeConsultationDataFlags(): ConsultationDataFlags {
 }
 
 // 相談AIに渡す横断コンテキストを localStorage から組み立てる。
+// P4-C: load* はここ（page）に残し、組み立ては純関数 selector へ委譲する（request body は byte 不変）。
 // gdResultId があれば、そのGD結果を優先して会話文脈に載せる。
 function buildConsultationContext(gdResultId?: string | null) {
-  return {
+  return buildConsultationRequestContext({
     profile: loadBasicInfo(),
-    // activity は全量ではなく相談用ダイジェスト（route 側で圧縮）。生データを渡し、route が truncate する。
     activity: loadActivityData(),
     values: loadCareerValues(),
-    // STEP-CONSULT-06: 最新1件ではなく「軽量な複数件＋推移」を渡す（最新3件まで・圧縮済み）。
-    selfAnalysisHistory: buildSelfAnalysisHistory(loadSelfAnalysisLogs(), 3),
-    esHistory: buildEsHistory(loadEsLogs(), 3),
-    interviewHistory: buildInterviewHistory(loadInterviewResults(), 3),
-    presentationHistory: buildPresentationHistory(loadPresentationResults(), 3),
-    // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
-    companyResearch: buildCompanyResearchContext(loadCompanyResearchLogs(), { limit: 5 }),
-    // GD練習結果。gdResultId があればその1件を優先、無い/見つからない場合は最新2件。
-    gd: gdConsultationContext(gdResultId),
-    // STEP-GD-17: マルチGD の 6 軸評価を参考シグナルとして追加（最新3件・採点済みのみ）。
-    gdRoom: buildLatestGdRoomSignals(loadGdRoomLogs(), 3),
-    // STEP-CONSULT-03: 企業マッチング結果（最新2件・軽量スナップショット）。
-    // 司令塔が「自己理解 × 企業理解」を横断し、就活軸とのズレを指摘できるようにする。
-    matching: buildLatestMatchingConsultationSnapshots(loadMatchingLogs(), 2),
-  };
-}
-
-// gdResultId 指定時はその GD 結果を優先、無ければ最新2件を返す（純粋な組み立て）。
-function gdConsultationContext(gdResultId?: string | null) {
-  const results = loadGdResults();
-  if (gdResultId) {
-    const byId = buildGdConsultationSnapshotById(results, gdResultId);
-    if (byId) return [byId];
-  }
-  return buildLatestGdConsultationSnapshots(results, 2);
+    selfAnalysisLogs: loadSelfAnalysisLogs(),
+    esLogs: loadEsLogs(),
+    interviewResults: loadInterviewResults(),
+    presentationResults: loadPresentationResults(),
+    companyResearchLogs: loadCompanyResearchLogs(),
+    gdResults: loadGdResults(),
+    gdRoomLogs: loadGdRoomLogs(),
+    matchingLogs: loadMatchingLogs(),
+    gdResultId,
+  });
 }
 
 function CareerConsultationInner() {
