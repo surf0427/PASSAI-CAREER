@@ -21,20 +21,25 @@ import {
 
 export type CareerPurposeContext = {
   purpose: CareerContextPurpose;
-  // base career system prompt（P3-A では buildCareerSystemPrompt と同一文字列）。
+  // base career system prompt（P3-A/P3-B では buildCareerSystemPrompt と同一文字列）。
   systemPrompt: string;
-  // 適用された purpose policy（P3-A は宣言。実際の削減は P3-B）。
+  // 適用された purpose policy（宣言。実際の section 削減は P3-C 以降）。
   policy: CareerContextPolicy;
   // 観測用: base context の概算文字数。
   estimatedChars: number;
-  // P3-A では常に空（削減未実施）。P3-B で「省いた section」を積む。
+  // 観測用: policy.maxContextChars を超えているか（route 挙動には影響しない）。
+  isOverPolicyBudget: boolean;
+  // P3-B では削減未実施のため常に空。P3-C で「省いた section」を積む。
   omitted: string[];
+  // 観測用の軽量警告（例: 'over_policy_budget'）。route 挙動・ログには影響しない。
+  warnings: string[];
 };
 
 /**
  * purpose 別に base career system prompt を返す。
- * P3-A は buildCareerSystemPrompt へ委譲する identity-preserving wrapper。
- * context が空（未入力）でも buildCareerSystemPrompt 側の fallback で落ちない。
+ * P3-B も buildCareerSystemPrompt へ委譲する identity-preserving wrapper（出力は現行と byte 一致）。
+ * context が空（未入力）でも buildCareerSystemPrompt 側の fallback で落ちない純関数（非 throw）。
+ * estimatedChars / isOverPolicyBudget / warnings は「観測用」であり、削減は P3-C 以降で実適用する。
  */
 export function buildCareerContextForPurpose(
   purpose: CareerContextPurpose,
@@ -42,11 +47,15 @@ export function buildCareerContextForPurpose(
 ): CareerPurposeContext {
   const policy = getCareerContextPolicy(purpose);
   const systemPrompt = buildCareerSystemPrompt(context);
+  const estimatedChars = systemPrompt.length;
+  const isOverPolicyBudget = estimatedChars > policy.maxContextChars;
   return {
     purpose,
     systemPrompt,
     policy,
-    estimatedChars: systemPrompt.length,
+    estimatedChars,
+    isOverPolicyBudget,
     omitted: [],
+    warnings: isOverPolicyBudget ? ['over_policy_budget'] : [],
   };
 }

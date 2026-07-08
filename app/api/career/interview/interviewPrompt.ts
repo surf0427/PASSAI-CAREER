@@ -6,10 +6,7 @@
 //   - プロンプト土台は就活版共通基盤（@/lib/careerAi）からのみ組み立てる。
 // 本ファイルは route ではない（route.ts 以外なのでエンドポイント化されない）。共有モジュール。
 
-import {
-  buildCareerAiContext,
-  buildCareerFeatureInstruction,
-} from '@/lib/careerAi';
+import { buildCareerAiContext } from '@/lib/careerAi';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
@@ -264,8 +261,9 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
 
   return [
     buildPersonaBlock(input.interviewType),
+    // P3-B: 機能別指示は orchestrated.systemPrompt（buildCareerSystemPrompt 内）に既に含まれるため、
+    //   同一 system message 内の二重 append を削除（schema・評価指示は不変の純粋な重複除去）。
     orchestrated.systemPrompt,
-    buildCareerFeatureInstruction(FEATURE_KEY),
     targetBlock,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',

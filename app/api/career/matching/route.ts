@@ -10,9 +10,9 @@
 
 import {
   buildCareerAiContext,
-  buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -294,6 +294,9 @@ export async function POST(req: Request) {
     values: b.values ?? null,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
+  // P3-B: base system prompt を Context Orchestrator（purpose=matching）経由で取得する。
+  //   buildCareerSystemPrompt へ委譲するため出力は現行と同一（決定的エンジン・response は不変）。
+  const orchestrated = buildCareerContextForPurpose('matching', context);
 
   // ── 決定的な重み・避けたい条件・measured シグナル（AI を通さない） ──
   const priorities = Array.isArray(b.values?.selections?.priorities)
@@ -333,8 +336,9 @@ export async function POST(req: Request) {
 
   const systemPrompt = [
     MATCHING_PERSONA,
-    buildCareerSystemPrompt(context),
-    buildCareerFeatureInstruction(FEATURE_KEY),
+    // P3-B: 機能別指示は orchestrated.systemPrompt 内に既に含まれるため、同一 system 内の
+    //   二重 append を削除（純粋な重複除去。user メッセージ側の JSON 出力トリガは維持）。
+    orchestrated.systemPrompt,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
     interviewBlock ? `# 直近の面接練習の結果\n${interviewBlock}` : '',
