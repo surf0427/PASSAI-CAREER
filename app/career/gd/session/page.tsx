@@ -20,6 +20,8 @@ import {
   upsertGdSession,
   appendGdResult,
 } from '../gdStorage';
+import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type {
   CareerGdSession,
   CareerGdResult,
@@ -63,6 +65,12 @@ function selfSpeechCount(session: CareerGdSession | null): number {
 
 export default function CareerGdSessionPage() {
   const router = useRouter();
+  // Event Log 用（member のみ）。useCallback の deps を変えないよう ref で最新 userId を参照。
+  const userId = useCurrentUserId();
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
   const isMounted = useSyncExternalStore(
     subscribeMount,
     getMountedSnapshot,
@@ -230,6 +238,20 @@ export default function CareerGdSessionPage() {
         ...(data.ranking ? { ranking: data.ranking } : {}),
       };
       appendGdResult(result);
+      // Event Log（本文なし・fire-and-forget / member のみ）。GD topic/発言/評価/改善本文・
+      // 参加者名・ranking コメントは渡さない。selfCompanyGrade は既に S/A/B/C/D の band。
+      void recordCareerEvent(userIdRef.current, {
+        feature: 'gd',
+        eventType: 'feature_completed',
+        completionStatus: 'completed',
+        clientEventId: result.id,
+        scoreBand: result.selfCompanyGrade,
+        metadata: {
+          participationMode: result.participationMode,
+          format: result.format,
+          participantCount: result.participants.length,
+        },
+      });
       // STEP-GD-18: 完了後はソロ結果画面へ（run→result→view の導線統一）。
       router.push(`/career/gd/result?id=${encodeURIComponent(session.id)}`);
     } catch (e) {

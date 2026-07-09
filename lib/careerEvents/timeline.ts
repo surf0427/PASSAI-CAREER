@@ -86,6 +86,7 @@ const META_DISPLAY: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'jobCount', label: '職種数' },
   { key: 'threadCount', label: 'スレッド数' },
   { key: 'turnCount', label: 'ターン数' },
+  { key: 'participantCount', label: '参加人数' }, // P9-E: GD の参加者数
   // 注: 'messageCount' は sanitize.ts の denylist 'message' に一致して書き込み側で必ず落ちる
   //   （allowlist に在っても denylist が勝つ）。DB に入り得ないため表示側でも扱わない。
   { key: 'revisionCount', label: '修正回数' },

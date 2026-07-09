@@ -39,6 +39,8 @@ const ALLOWED_METADATA_KEYS: ReadonlySet<string> = new Set([
   // P9-C: presentation / company_research wiring 用の低リスク enum（本文なし・denylist は不変で継続適用）。
   'scenario', // presentation の想定シーン enum（main_selection / internship / gd_followup 等）
   'sourceType', // company_research の情報源 enum（file / paste / manual / mixed）
+  // P9-E: GD wiring 用の低リスク カウント（本文なし・小さな整数）。
+  'participantCount', // GD の総参加者数（人間＋AI）
 ]);
 
 // allowlist を通過しても、本文が入りうる key 名は必ず drop する（大文字小文字・部分一致）。

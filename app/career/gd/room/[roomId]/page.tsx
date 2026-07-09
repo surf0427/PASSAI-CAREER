@@ -14,7 +14,8 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { useAuthStatus, useIsMember } from '@/app/components/AuthProvider';
+import { useAuthStatus, useIsMember, useCurrentUserId } from '@/app/components/AuthProvider';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { useCareerGdRealtime } from '@/hooks/useCareerGdRealtime';
 import { useCareerGdMessages, type GdPendingMessage } from '@/hooks/useCareerGdMessages';
 import { useCareerGdTimer } from '@/hooks/useCareerGdTimer';
@@ -805,6 +806,12 @@ function FinishedView({
   const [overallEval, setOverallEval] = useState<CareerGdRoomOverallEvaluation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Event Log 用（member のみ）。useCallback の deps を変えないよう ref で最新 userId を参照。
+  const eventUserId = useCurrentUserId();
+  const eventUserIdRef = useRef(eventUserId);
+  useEffect(() => {
+    eventUserIdRef.current = eventUserId;
+  }, [eventUserId]);
 
   const generate = useCallback(async () => {
     setLoading(true);
@@ -851,6 +858,23 @@ function FinishedView({
         source: 'realtime_room',
       };
       appendGdRoomLog(log);
+      // Event Log（本文なし・fire-and-forget / member のみ）。GD topic/発言/評価/改善本文・
+      // 参加者名・join code・ranking コメントは渡さない。room 自身の evaluation.rank は S/A/B/C/D の band。
+      // clientEventId=roomId は unique index が (user_id, client_event_id) で user 別に閉じるため
+      // 参加者間で衝突しない（同一 user の再取得のみ冪等吸収）。
+      void recordCareerEvent(eventUserIdRef.current, {
+        feature: 'gd',
+        eventType: 'feature_completed',
+        completionStatus: 'completed',
+        clientEventId: log.roomId,
+        scoreBand: log.evaluation.scored ? log.evaluation.rank : null,
+        metadata: {
+          participationMode: 'room',
+          format: log.format,
+          participantCount: log.participantCount,
+          durationSec: log.durationSec,
+        },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : '結果の生成に失敗しました。');
     } finally {

@@ -51,7 +51,7 @@ function check(name: string, cond: boolean, detail?: string): void {
 // 注: 'messageCount' は sanitize denylist 'message' に一致し書き込み側で必ず落ちるため表示 allowlist に含めない。
 const DISPLAY_KEYS = [
   'companyCount', 'industryCount', 'jobCount', 'threadCount', 'turnCount',
-  'revisionCount', 'count', 'mode', 'interviewType',
+  'participantCount', 'revisionCount', 'count', 'mode', 'interviewType',
   'selectionType', 'scenario', 'sourceType', 'format', 'participationMode',
   'charLimit', 'timeLimitSec', 'durationSec',
 ];
@@ -395,6 +395,90 @@ console.log('[11] P9-D self_analysis fixture');
   check('sanitize が userInput を drop', !('userInput' in san2));
   check('sanitize が careerAdvice を drop', !('careerAdvice' in san2));
   check('sanitize が personalitySummary を drop', !('personalitySummary' in san2));
+}
+
+// ── 12. P9-E: GD solo / room の実 event 形状 ─────────────────────────
+console.log('[12] P9-E GD solo / room fixture');
+{
+  check('gd は feature enum に存在', (CAREER_EVENT_FEATURES as readonly string[]).includes('gd'));
+  check('feature_completed は event_type enum に存在', (CAREER_EVENT_TYPES as readonly string[]).includes('feature_completed'));
+
+  // GD solo: selfCompanyGrade はそのまま band。topic/発言/評価本文・参加者名は載らない前提。
+  const [soloGd] = toEventTimelineItems([
+    row({
+      id: 'gd-solo-1',
+      feature: 'gd',
+      event_type: 'feature_completed',
+      score_band: 'B',
+      industry: null,
+      job_type: null,
+      metadata: {
+        participationMode: 'solo',
+        format: 'objection',
+        participantCount: 4,
+        // 誤混入を模した本文/名前/topic key（drop されるべき）。
+        topicText: 'GDのお題本文…',
+        transcript: 'GD発言の本文…',
+        participantName: '田中花子',
+        evaluationComment: '評価コメント本文…',
+      },
+    }),
+  ]);
+  check('gd solo feature ラベル', soloGd.featureLabel === 'GD');
+  check('gd solo event ラベル', soloGd.eventTypeLabel === '完了');
+  check('gd solo score band', soloGd.scoreBand === 'B');
+  const soloChips = Object.fromEntries(soloGd.metaChips.map((c) => [c.key, c.value]));
+  check('gd solo participationMode chip', soloChips.participationMode === 'solo');
+  check('gd solo format chip', soloChips.format === 'objection');
+  check('gd solo participantCount chip', soloChips.participantCount === '4');
+  check('gd solo chip 数 = 3（本文/名前 key 全 drop）', soloGd.metaChips.length === 3);
+  check('gd solo 本文 value 非出力', !JSON.stringify(soloGd).includes('本文'));
+  check('gd solo 参加者名 非出力', !JSON.stringify(soloGd).includes('田中花子'));
+  check('gd solo 想定外 key は chip 化されない', soloGd.metaChips.every((c) => DISPLAY_KEYS.includes(c.key)));
+
+  // GD room: evaluation.rank band + durationSec。join code / room title は載らない前提。
+  const [roomGd] = toEventTimelineItems([
+    row({
+      id: 'gd-room-1',
+      feature: 'gd',
+      event_type: 'feature_completed',
+      score_band: 'S',
+      metadata: {
+        participationMode: 'room',
+        format: 'free',
+        participantCount: 6,
+        durationSec: 900,
+        // 誤混入を模した join code / room title / 名前（drop されるべき）。
+        joinCode: 'ABC123',
+        roomTitle: '就活GD練習ルーム本文…',
+        displayName: '佐藤太郎',
+      },
+    }),
+  ]);
+  check('gd room participationMode chip', Object.fromEntries(roomGd.metaChips.map((c) => [c.key, c.value])).participationMode === 'room');
+  check('gd room durationSec chip', Object.fromEntries(roomGd.metaChips.map((c) => [c.key, c.value])).durationSec === '900');
+  check('gd room score band', roomGd.scoreBand === 'S');
+  check('gd room chip 数 = 4', roomGd.metaChips.length === 4);
+  check('gd room join code 非出力', !JSON.stringify(roomGd).includes('ABC123'));
+  check('gd room title 本文 非出力', !JSON.stringify(roomGd).includes('本文'));
+  check('gd room 参加者名 非出力', !JSON.stringify(roomGd).includes('佐藤太郎'));
+  check('gd room 想定外 key は chip 化されない', roomGd.metaChips.every((c) => DISPLAY_KEYS.includes(c.key)));
+
+  // sanitize 整合: participantCount 保持・join code/名前/topic は drop。
+  check('sanitize が participantCount を保持', sanitizeMetadata({ participantCount: 6 }).participantCount === 6);
+  const san3 = sanitizeMetadata({
+    participantCount: 6,
+    joinCode: 'ABC123',
+    roomTitle: '本文',
+    displayName: '佐藤太郎',
+    topicText: 'お題本文',
+    participantName: '田中花子',
+  });
+  check('sanitize が joinCode を drop（allowlist外）', !('joinCode' in san3));
+  check('sanitize が roomTitle を drop', !('roomTitle' in san3));
+  check('sanitize が displayName を drop', !('displayName' in san3));
+  check('sanitize が topicText を drop', !('topicText' in san3));
+  check('sanitize が participantName を drop', !('participantName' in san3));
 }
 
 console.log('');
