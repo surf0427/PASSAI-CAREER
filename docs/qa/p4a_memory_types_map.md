@@ -250,3 +250,119 @@ byte リスクに見合わない。したがって:
   byte 不変では済まない（block 形状・key 順が変わる）ため、**mechanical refactor ではなく設計変更**として、
   fresh byte harness とセットで別フェーズ（P5 想定）に切る。
 - それまでは 4 selector = 各 route の request body を返す薄い純関数、という現状を **正**とする。
+
+---
+
+## I. P5: snapshot→projection 接続完了（P5-G 監査 / 2026-07-09）
+
+> §H-5 が P5 想定として切り出した「型の統一」の第一段階（**byte 不変での 2 段パイプライン接続**）の完了記録。
+> P5-C〜P5-F で 4 selector すべてを `build*Snapshot` → `project*RequestContext` 経路へ接続した結果を、
+> P5-G で **read-only 監査**し本節に反映した（本節は docs のみ追加）。
+> production code / selector / snapshot / route / prompt / AI schema / storage / DB / SQL は **不変**。
+> secret / env / token / Supabase URL / service_role / API key は非参照・非出力。
+
+### I-1. P5-C〜F の実装コミット
+
+| フェーズ | 対象 selector | commit |
+|---|---|---|
+| **P5-C** matching | `buildMatchingRequestContext` | `151d5de refactor(career): route matching memory through snapshot projection` |
+| **P5-D** presentation | `buildPresentationRequestContext` | `fb48e3f refactor(career): route presentation memory through snapshot projection` |
+| **P5-E** interview | `buildInterviewRequestContext` | `2854ea8 refactor(career): route interview memory through snapshot projection` |
+| **P5-F** consultation | `buildConsultationRequestContext` | `28f8f58 refactor(career): route consultation memory through snapshot projection` |
+
+> 前提: `c8ca536`（P5-A/B 由来の memory snapshot mapping harness 追加）で常設 byte harness を整備し、
+> `lib/careerMemory/snapshot.ts`（additive snapshot + projection）と
+> `lib/careerMemory/purposeMapping.ts`（type-only purpose 対応表）を先に地ならししてある。
+
+### I-2. 4 selector の現状態
+
+`lib/careerMemory/selector.ts` の 4 selector はすべて内部が **snapshot→projection の 2 段**に統一済み。
+
+| selector | 経路 | externals |
+|---|---|---|
+| `buildMatchingRequestContext` | `buildMatchingSnapshot` → `projectMatchingRequestContext` | `gdResultId`（深リンク選択 id） |
+| `buildPresentationRequestContext` | `buildPresentationSnapshot` → `projectPresentationRequestContext` | なし |
+| `buildInterviewRequestContext` | `buildInterviewSnapshot` → `projectInterviewRequestContext` | 選択 `companyResearchLog`（id→log 解決済み1件） |
+| `buildConsultationRequestContext` | `buildConsultationSnapshot` → `projectConsultationRequestContext` | `gdResultId`（深リンク選択 id） |
+
+各 selector の使わない source は空配列で snapshot input へ渡す（snapshot は未参照）。外部インターフェース
+（`*SelectorInput` / 返り値形状）と POST 先 route・request body は **不変**で、page/contextSource(client) 側は変わらない。
+
+### I-3. selector と snapshot の責務分担
+
+- **`selector.ts` は薄い委譲層**になった。各 selector は「client が load* した生データを `*Snapshot` input へ
+  詰め替え、externals を渡し、対応する projection を呼んで返す」だけ。build*/normalize* の**直接呼び出しは消え**、
+  selector.ts からの block helper import は不要になった（`./snapshot` から build/project のみ import）。
+- **実際の memory block 組み立ては `snapshot.ts` に集約**された。history 件数上限（3）・companyResearch(5)・
+  gd(id 優先/最新2)・gdRoom(3)・matching(2)・latest pick（`logs[0].result`）・consultationInsights の dedup(≤5)・
+  companyResearch の throw→null fallback など、**旧 selector が持っていた private helper と件数ロジックは
+  snapshot.ts 側の builder へ 1:1 で移設**済み（`gdConsultationContext` / `collectConsultationInsights` /
+  `resolveInterviewCompanyResearch` / `latestConsultationResult` 等）。
+- **projection は key 順の復元のみ**を行う。snapshot が保持する block を、既存 request body の key 順どおりに
+  並べ替えて返すだけ（要約・truncate・件数変更はしない）。→ 出力は旧 selector と **byte 一致**する。
+
+### I-4. purpose mapping の位置づけ
+
+`lib/careerMemory/purposeMapping.ts` は **type-only の共存対応表**であり、production flow には**未接続**のまま。
+live registry（`lib/careerContext/purpose.ts` の `CAREER_CONTEXT_REGISTRY`。route の base system prompt 生成に使用中）と
+design registry（`lib/careerMemory/types.ts` の `CareerMemoryPurpose`）を**統一せず**、対応関係（interview→practice/complete の
+1:N、gd_solo/gd_multiplayer_result→gd_feedback の N:1 等）を型安全に宣言するだけ。P5 の snapshot 接続は
+この対応表を runtime へ接続しない（registry 統合は保留のまま）。
+
+### I-5. raw base 維持の理由 / `BaseMemorySummary` 未接続の理由
+
+- snapshot の `base`（profile/activity/values）は **raw のまま carry**。§C 設計の `BaseMemorySummary`
+  （PII 除外・activity compact の**別形状**）へは接続していない。
+- 理由: `BaseMemorySummary` 化は base prompt の **byte を意図的に変える**設計変更であり、P5 の「byte 不変で
+  2 段パイプラインへ寄せる」目的と両立しない。§H-5 の通り、block 形状・key 順が変わるものは mechanical refactor
+  ではなく設計変更として別フェーズに切る方針。よって P5 では **raw base を守り**、`BaseMemorySummary` は**未接続**。
+- 同様に、strict な `CareerMemorySnapshot` / `*MemorySummary`（要約型）は interview/presentation/matching が運ぶ
+  latest の **full result**、consultation が運ぶ `*HistorySnapshot` を byte 復元できないため、snapshot.ts は
+  設計型に**寄せた block 構造**（faithful interim carrier）に留め、strict 変換は繰り延べている。
+
+### I-6. externals の扱い
+
+selected id / 選択ログは **snapshot 外 input**（builder の第2引数 `CareerMemorySnapshotExternals`）として扱い、
+snapshot object 内には**計算結果のみ**を保持する。
+
+- **`gdResultId`**: consultation / matching が使用。指定時はその1件を優先（`buildGdConsultationSnapshotById` /
+  `buildGdMatchingSnapshotById`）、無ければ最新へ fallback。projection は外部 id を必要としない。
+- **selected `companyResearchLog`**: interview のみ。id→log の解決は呼び出し側（contextSource）の責務。
+  snapshot builder は解決済み1件を受け取り `buildInterviewCompanyResearchContext`（throw→null）で context 化する。
+
+### I-7. 常設 harness（byte 不変ガード）
+
+4 selector の返り値が旧実装と byte 一致することを、以下の常設 harness scripts が担保する。
+
+| npm script | scripts ファイル | ケース数 |
+|---|---|---|
+| `npm run qa:careerMemoryMatching` | `scripts/career-memory-matching-byte-qa.ts` | 18/18 ALL_MATCH |
+| `npm run qa:careerMemoryPresentation` | `scripts/career-memory-presentation-byte-qa.ts` | 16/16 ALL_MATCH |
+| `npm run qa:careerMemoryInterview` | `scripts/career-memory-interview-byte-qa.ts` | 18/18 ALL_MATCH |
+| `npm run qa:careerMemoryConsultation` | `scripts/career-memory-consultation-byte-qa.ts` | 32/32 ALL_MATCH |
+
+**84 ケース ALL_MATCH の意味**: 各 harness は「旧 build*/normalize* 直呼びで組んだ期待 body」と「snapshot→projection
+経由の現 selector 出力」を `JSON.stringify` レベルで突き合わせる。全 84 ケースが一致 = 4 selector の
+経路差し替えが **request body の byte を 1 bit も変えていない**ことの回帰ガード。これらは
+**旧 byte 一致 harness**（現行 prompt/body を守るためのもの）であり、新期待値ベースではない。
+
+### I-8. P5 で完了したこと / P6 に残したこと
+
+**P5 で完了:**
+
+- 4 selector すべてを `build*Snapshot` → `project*RequestContext` の 2 段経路へ接続（P5-C〜F）。
+- selector.ts を薄い委譲層化し、block 組み立てを snapshot.ts へ集約。
+- 84 ケースの常設 byte harness で「経路差し替え = byte 不変」を担保。
+- raw base を守り、externals（gdResultId / 選択 companyResearchLog）を snapshot 外 input として整理。
+
+**P6 に残すもの（byte-breaking 設計変更フェーズ）:**
+
+- strict な `CareerMemorySnapshot` / `BaseMemorySummary` / `*MemorySummary` への寄せ（要約型化）。
+- base の PII 除外・activity 圧縮（`BaseMemorySummary` 接続）。
+- prompt / body byte を**意図的に変える**設計変更（現行 raw carry からの離脱）。
+- self-analysis summary 二重化（`buildSelfAnalysisHistory` × `buildSelfAnalysisPastSummaries`。§H-3）の
+  **共通コア + consumer 別 projection** への統合。
+- 旧 byte 一致 harness から、**新期待値ベースの harness** への切り替え（byte が変わる前提で期待値を更新）。
+
+> P6 は §H-5 の通り mechanical refactor ではなく **byte-breaking フェーズ**として扱う。P6-A で strict memory
+> summary / `BaseMemorySummary` の設計監査を先に行い、fresh byte harness とセットで段階導入する。
