@@ -98,22 +98,25 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: '未移行。es-review は静的 SYSTEM_PROMPT で base(buildCareerSystemPrompt) を使わない。',
   },
   interview_practice: {
-    profile: 'include',
+    // P6-E: PII 除外 pilot 横展開。matching(P6-C)/presentation(P6-D) と同じく profile を minimal に通電し氏名を prompt から落とす。
+    //   request body は不変。prompt byte のみ変更（start/turn/complete が共有する base builder 経由）。
+    profile: 'minimal',
     activity: 'compact',
     values: 'include',
     recentLogs: 'include', // 自己分析 / ES / matching / 相談気づきを route が付与
     companyContext: 'optional',
     maxContextChars: 3500,
-    notes: '面接 練習。start/turn/complete が共有する base builder 経由。',
+    notes: '面接 練習。start/turn/complete が共有する base builder 経由。P6-E で profile:minimal を通電し氏名を prompt から除外（PII pilot 横展開）。',
   },
   interview_complete: {
-    profile: 'include',
+    // P6-E: interview_practice と揃えて minimal 通電（base builder 共有。purpose 自体は現状未使用だが policy を整合させる）。
+    profile: 'minimal',
     activity: 'compact',
     values: 'include',
     recentLogs: 'include',
     companyContext: 'optional',
     maxContextChars: 3500,
-    notes: '面接最終評価。base は interview_practice の共有 builder 経由で移行済み。interview_complete purpose 自体は現状未使用（将来 complete 専用 policy 用に予約）。',
+    notes: '面接最終評価。base は interview_practice の共有 builder 経由で移行済み。interview_complete purpose 自体は現状未使用（将来 complete 専用 policy 用に予約）。P6-E で profile:minimal に整合。',
   },
   consultation: {
     profile: 'include',

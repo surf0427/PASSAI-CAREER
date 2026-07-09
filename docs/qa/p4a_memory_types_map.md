@@ -561,3 +561,49 @@ matching は P6-C 後の値を維持、consultation / interview は不変。`gua
 - **consultation は最後に回す**：compressCareerActivityForConsultation・全機能集約で base 描画の影響面が最大のため、
   他 3 系統（matching/presentation/interview）を揃えてから最後に strict 化する。
 - 全 purpose の PII 除外が揃った後に、block 削減（activity/values policy 通電・strict `*MemorySummary` 化）へ進む。
+
+### J-11. P6-E pilot 結果 — interview profile PII 除外の横展開
+
+J-10 の方針に従い、interview 系（`interview_practice` / `interview_complete`）へ横展開した記録。**interview 系のみ**対象で、
+matching(P6-C) / presentation(P6-D) の strict state は維持し、consultation は未変更（唯一の baseline）。
+
+**policy 変更箇所（orchestrator は無変更）:**
+- [`purpose.ts`](../../lib/careerContext/purpose.ts): `interview_practice.profile` と `interview_complete.profile` を
+  `'include'` → **`'minimal'`**。両者は base builder 共有（start/turn/complete が `interview_practice` 経由）だが、
+  policy 整合のため `interview_complete` も揃える。
+- **[`orchestrator.ts`](../../lib/careerContext/orchestrator.ts) は変更不要**（P6-C の汎用ロジックを再利用）。
+- [harness](../../scripts/career-memory-prompt-golden-qa.ts): `PII_STRICT_PURPOSES` に
+  `interview_practice` / `interview_complete` を追加（計 4 purpose strict）。baseline は consultation のみ。
+
+**変更しなかったもの:**
+- **request body byte 不変**（selector は生 profile を carry・interview body-byte harness 18/18 ALL_MATCH）。
+- `prompts.ts` 無変更 / `BaseMemorySummary` 未接続 / activity・values 削減なし / 自由記述内 email pattern は baseline のまま。
+
+**prompt golden（system prompt byte）:**
+- interview 系の 10 golden のみ更新（`interview_practice__*` / `interview_complete__*` 各 5）。
+  diff は各ファイル **`- 氏名: …` 1 行の削除のみ**。`interview_practice` と `interview_complete` の golden は
+  同一内容（base builder 共有の裏付け）。matching / presentation / consultation の golden は**不変**。
+
+**PII assertion 結果:**
+- matching 氏名行 **0/5（strict PASS ✅）**（P6-C 維持）。
+- presentation_feedback 氏名行 **0/5（strict PASS ✅）**（P6-D 維持）。
+- interview_practice 氏名行 **0/5（strict PASS ✅）**（P6-E 新規）。
+- interview_complete 氏名行 **0/5（strict PASS ✅）**（P6-E 新規）。
+- consultation 氏名行 **5/5（baseline・fail させない）**（唯一の残り baseline）。
+
+**prompt length before(P6-B)/after（文字数ベース / token 実測ではない）:**
+
+| interview case | total before→after | profile section before→after | 削減 |
+|---|---|---|---|
+| interview_practice normal | 852 → 841 | 117 → 106 | −11 |
+| interview_practice heavy | 1882 → 1871 | 290 → 279 | −11 |
+| interview_complete normal | 852 → 841 | 117 → 106 | −11 |
+| interview_complete heavy | 1882 → 1871 | 290 → 279 | −11 |
+
+matching / presentation は既存削減後の値を維持、consultation は不変。`guardRawText` findings は **100 件のまま**。
+
+**次工程の判断:**
+- 残りは **consultation のみ**。`compressCareerActivityForConsultation` を通した base + 全機能集約で影響面が最大のため、
+  最後に P6-F として `consultation.profile` を minimal 通電 + strict 化する（consultation golden 5 件のみ更新）。
+- consultation まで揃えば **全 purpose の profile PII（氏名）除外が完了**し、次の block 削減フェーズ
+  （activity/values policy 通電・strict `*MemorySummary` 化：ES→interview→presentation の順）へ移行できる。

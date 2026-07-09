@@ -222,10 +222,15 @@ function extractSection(prompt: string, header: string): string | null {
 const PII_LABEL = '- 氏名:';
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
 // 氏名(構造化PII)行が prompt に無いことを strict 検証する purpose。
-//   P6-C: matching / P6-D: presentation_feedback を追加。consultation / interview は baseline のまま
-//   （氏名行が残っていても fail させない）。今後順次 strict へ寄せる。
+//   P6-C: matching / P6-D: presentation_feedback / P6-E: interview_practice・interview_complete を追加。
+//   consultation のみ baseline のまま（氏名行が残っていても fail させない）。最後に strict 化する。
 //   email pattern（備考等の自由記述由来）は今回 strict 対象外＝baseline のまま。
-const PII_STRICT_PURPOSES = new Set<CareerContextPurpose>(['matching', 'presentation_feedback']);
+const PII_STRICT_PURPOSES = new Set<CareerContextPurpose>([
+  'matching',
+  'presentation_feedback',
+  'interview_practice',
+  'interview_complete',
+]);
 
 function goldenPath(cfg: PurposeConfig, fx: CaseFixture): string {
   return join(GOLDEN_DIR, `${cfg.purpose}__${fx.name}.txt`);
@@ -333,7 +338,7 @@ for (const purpose of PII_STRICT_PURPOSES) {
 }
 const baselinePiiHits = baselineRows.filter((r) => r.hasPiiLabel).length;
 console.log(
-  `[baseline] others (consultation/interview) 氏名行: ${baselinePiiHits}/${baselineRows.length}（現状維持・fail させない）`,
+  `[baseline] consultation 氏名行: ${baselinePiiHits}/${baselineRows.length}（現状維持・fail させない）`,
 );
 console.log(`[baseline] email パターン:   ${emailHits}/${rows.length} ケース（備考 等の自由記述由来・strict 対象外）`);
 console.log(`[baseline] guardRawText:     ${guardTotal} 件（base context の key ベース。raw data 側は不変）`);
