@@ -718,11 +718,19 @@ function renderEsFull(r: CareerEsResult): string {
   if (s(r.motivation)) lines.push(`- 志望動機: ${s(r.motivation)}`);
   return lines.join('\n');
 }
+// P7-B matching ES strict summary の回帰検知用 readout（hard fail はしない — shape は
+// fixture golden で固定済み。本 section は「body も render も縮んでいる」ことの目視監視）。
+//   - body shrink   : 未使用 field の drop 効果。request body(JSON) は縮むが、未 render field は
+//                     元々 prompt に出ないため **これだけでは prompt/token は減らない**。
+//   - render shrink : render 対象 field(selfPr/motivation)の truncate 効果。**prompt/token が
+//                     減るのはこちら**。両方が縮んでいることが P7-B の意図（docs/qa/p7b_...md §4）。
 function printMatchingEsBeforeAfter(): void {
   const pctDrop = (before: number, after: number) =>
     before === 0 ? '0%' : `${(((before - after) / before) * 100).toFixed(1)}%`;
-  console.log('\n[P7-B matching ES strict summary before/after]');
-  console.log('  (before = full CareerEsResult carry / full render, after = matching strict summary)');
+  console.log('\n[P7-B matching ES strict summary — regression readout (matching-only)]');
+  console.log('  before = full CareerEsResult carry / full render, after = matching strict summary');
+  console.log('  body shrink   = 未使用 field drop（prompt には出ない → token 不変）');
+  console.log('  render shrink = render 対象 field の truncate（prompt/token も減る）');
   for (const [label, g, sp, mo] of [
     ['typical', 250, 250, 250],
     ['heavy', 420, 400, 380],
@@ -734,8 +742,8 @@ function printMatchingEsBeforeAfter(): void {
     const fullRender = renderEsFull(es).length;
     const sumRender = renderMatchingEsSummary(summary).length;
     console.log(`  ── ${label} (gakuchika=${g} selfPr=${sp} motivation=${mo}) ──`);
-    console.log(`     body   : full ${fullBody} → summary ${sumBody}  (−${pctDrop(fullBody, sumBody)})`);
-    console.log(`     render : full ${fullRender} → summary ${sumRender}  (−${pctDrop(fullRender, sumRender)})`);
+    console.log(`     body   shrink : full ${fullBody} → summary ${sumBody}  (−${pctDrop(fullBody, sumBody)})`);
+    console.log(`     render shrink : full ${fullRender} → summary ${sumRender}  (−${pctDrop(fullRender, sumRender)})`);
   }
 }
 

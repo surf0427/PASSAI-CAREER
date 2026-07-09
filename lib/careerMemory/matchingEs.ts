@@ -1,5 +1,7 @@
 // PASSAI CAREER — matching purpose 専用の ES latest summary（P7-B: matching-only pilot）。
 //
+// 設計固定: docs/qa/p7b_matching_es_summary.md（field/cap/drop 方針・横展開しない理由・before/after）。
+//
 // 背景（P7-A 設計監査の結論）:
 //   matching / interview / presentation は従来 `esLogs[0].result` として full CareerEsResult を
 //   carry していたが、matching の prompt render で実際に使うのは headline / selfPr / motivation の
