@@ -159,3 +159,94 @@ rawTextGuard・budget の挙動変更 / helper 共通化 / self-analysis summari
    各 `format*ForPrompt` の出力、`buildCareerContextForPurpose` の base prompt。
 4. **P4-A.5（任意・dev-only）**: `CareerMemorySnapshot` fixture を `guardRawText` に通す self-check を
    `scripts/` に追加（本番 route から自動実行しない）。memory 化の安全網を型と同時に立てる。
+
+---
+
+## H. 実装照合（P4-I 監査 / 2026-07-09）
+
+> P4-C〜P4-H の実装結果を P4-A 設計（§A〜G）と突き合わせた **read-only 監査**の記録。
+> production code / selector / route / prompt / AI schema / storage / DB / SQL は **不変**（本節は docs のみ追加）。
+> secret / env / token / Supabase URL / service_role / API key は非参照・非出力。
+> 実装コミット: `d9cf62c`(P4-B util 共有) / `2f4eef4`(P4-C consultation) / `ab1b09f`(P4-D interview) /
+> `942152e`(P4-E1 presentation) / `e6b79bd`(P4-E2 matching)。P4-F/G/H は **B判定**（抽出せず・§H-2）。
+
+### H-1. 実装済み 4 selector の実態
+
+いずれも `lib/careerMemory/selector.ts` に純関数として存在。page/contextSource(client) が `load*` した生データを
+受け取り、返り値を `fetch` body へ spread する。**page-local proto-selector から「出力 byte 不変」で抽出**したもので、
+route / prompt / AI schema / storage / DB / SQL は一切変更していない（本層は body の一部を組むだけ）。
+
+| selector | 呼び出し元(client) | POST 先 route | body 範囲 | 含む memory source | latest / 件数上限 / fallback | proto-selector 由来 |
+|---|---|---|---|---|---|---|
+| `buildConsultationRequestContext` | `consultation/page.tsx` の `buildConsultationContext(gdResultId?)` | `/api/career/consultation` | message/history を除く横断 context 全部 | profile, activity(raw→route圧縮), values, selfAnalysis/es/interview/presentation history(各3), companyResearch(5), gd(id優先/最新2), gdRoom(3), matching(2) | history=3 / companyResearch=5 / gd=最新2(id深リンク優先) / gdRoom=3 / matching=2。空は空配列で残る | 旧 page-local `buildConsultationContext`（key順・件数・fallback 完全一致） |
+| `buildInterviewRequestContext` | `interview/contextSource.ts` の `buildInterviewContextPayload(researchLogId?)` | `/interview/start`・`/turn`・`/complete` | payload 全体（`{ ...payload, interviewType, target }` 等） | profile, activity, values, selfAnalysis(最新1), es(最新1), matching(最新1), consultationInsights(最大5・dedup), companyResearch(選択1件) | latest=`logs[0].result`／未選択・失敗は null／insights ≤5 | 旧 `contextSource.buildInterviewContextPayload`（型 `CareerInterviewContextPayload` を selector から re-export し importer 互換維持） |
+| `buildPresentationRequestContext` | `presentation/contextSource.ts` の `buildPresentationContextPayload()` | `/presentation/theme`・`/evaluate`・`/qa` | payload 全体（`{ ...ctx, ... }`） | profile, activity, values, selfAnalysis(最新1), es(最新1), interview(最新1), matching(最新1), consultationInsights(最大5) | latest=`logs[0].result`／null fallback／insights ≤5（interview と同一 `collectConsultationInsights` を共有） | 旧 `contextSource.buildPresentationContextPayload`（型 `CareerPresentationContextPayload` を re-export） |
+| `buildMatchingRequestContext` | `matching/page.tsx` の `buildMatchingContext(gdResultId?)` | `/api/career/matching` | `{ ...ctx, userInput }` の ctx 部 | profile, activity, values, selfAnalysis(最新1), es(最新1), interviewResult(最新1), consultation(最新thread末尾assistant), gdSnapshot(id優先/最新), gdRoomSignals(3) | latest=`logs[0].result`／GD は id 深リンク→最新の順で fallback／gdRoom=3 | 旧 page-local `buildMatchingContext`（key順・latest・GD fallback・件数一致） |
+
+**P4-A 設計との整合:** §D の route 別契約（history=3 / companyResearch=5 / matching=2、cross は要約・件数上限つき）と
+一致する。相違点は「設計 §C の `CareerMemorySnapshot`（block 単位の中央 snapshot 型）には**まだ寄せていない**」こと。
+現状 4 selector は各 route の **既存 request body 形状をそのまま返す薄い純関数**であり、`CareerMemorySnapshot` /
+`CareerMemoryPurposePolicy` への統一は P4-A の設計宣言のまま（型は `types.ts` に存在するが未接続）。これは
+「byte 不変で抽出」を最優先した結果であり、設計とのズレではなく **段階導入の途中状態**として妥当。
+
+### H-2. B判定 route（selector 抽出を行わない方針）
+
+以下は「専用 selector を切り出す利得が薄い / 抽出が byte リスクを上げる」ため、**現状の inline 構造を維持**する。
+
+- **self-analysis（P4-F: B判定）** — route は `self-analysis/route.ts`（結果生成）と `self-analysis/question/route.ts`
+  （深掘り質問）。run page の body は `{ profile, activity, values, pastSummaries }` の **pass-through**
+  （`pastSummaries` = `buildSelfAnalysisPastSummaries` の軽量サマリ）。coverage 棚卸し
+  （`formatCoverageForPrompt(buildCoverageInventory(...))`）は **route 側**で生成。cross-feature aggregation なし。
+  → 横断 memory を組む selector 層が不要なため抽出対象外。
+- **ES（P4-G: B判定）** — body は `es/run/page.tsx` の `handleRun` 内**インライン** `JSON.stringify({...})`。
+  memory 由来値（profile/activity/values/selfAnalysis）と **UI フォーム値**（userInput/question/charLimit/
+  companyName/selectionType/industry/jobType）が同一 object に混在し、`companyResearchContext` が**非連続の最終 key**。
+  抽出すると memory 部と UI 部を分離することになり **key-order byte リスク**が上がる。利得も薄いため見送り。
+  - **es-review** — route は `es-review/route.ts`。body は `{ answer, question, companyName, charLimit,
+    selectionType, industry, jobType, companyResearchContext }`（`es/result/page.tsx` の `runReview`）。
+    profile/activity/values/selfAnalysis 等の**横断 base memory は持たない**。唯一の cross-feature 値は
+    添削対象に紐づく `companyResearchContext`（選択企業1件のスナップショット）のみで、これは §C の
+    「es_review は base 不使用・添削対象本文は user 側」の設計と整合。中央 memory aggregation は実質ゼロ。
+- **company-research（B判定・read-only 所見）** — ES と同型。`company-research/do/page.tsx` が `useMemo` の
+  **latest-pick**（`selfAnalysis = logs[0].result` / `matching = logs[0].result`）+ basicInfo/activity/values memo を持ち、
+  body を**インライン** `JSON.stringify({ profile, activity, values, selfAnalysis, matching })` で組む。route は
+  `buildCareerAiContext` → `buildCareerContextForPurpose('company_research_review', ...)` を通す。
+  **専用 proto-selector は無し**。追加抽出の利得は薄い見込み。将来 cross-feature 拡張が入るなら
+  fresh byte harness つきで再検討する（現時点は現状維持）。
+
+### H-3. self-analysis summary の mechanical 統合は不可（現時点）
+
+`buildSelfAnalysisHistory`（consultation 用・`historySnapshots.ts`）と
+`buildSelfAnalysisPastSummaries`（deep-dive 用・`pastLogSummary.ts`）は **mechanical merge 禁止**。根拠:
+
+- **summary truncate が異なる**: consultation=`truncate(r.summary, 160)` / deep-dive=`truncate(r.summary, 140)`。
+- **共通 field の object key 位置が異なる**: consultation snapshot は
+  `createdAt, summary, careerDirection, strengths, weaknesses, recommendedIndustries, ...`（valueKeywords/
+  strengthKeywords/nextActions を持たず、gakuchikaIdeas を持つ）。deep-dive summary は
+  `... weaknesses, valueKeywords, strengthKeywords, recommendedIndustries, ...`（valueKeywords/strengthKeywords/
+  nextActions を持ち、gakuchikaIdeas を持たない）。→ 共通 field（recommendedIndustries 等）の **key index がズレる**。
+- 両者とも request body に `JSON.stringify` され、**key 順が byte に直結**する（consultation は
+  `selfAnalysisHistory`、deep-dive は `pastSummaries` として送出）。
+- 「共通コア + consumer 別 projection」は**将来設計としては可能**だが、**現時点では実装しない**。
+- 新 consumer が出た時のみ、**fresh byte harness 付き**で再検討する（§G-2 の引き継ぎを本判断で確定）。
+
+### H-4. latest-pick helper 化は見送り（現時点）
+
+- `logs.length > 0 ? logs[0].result : null` の反復は selector.ts に存在する
+  （interview/presentation/matching の selfAnalysis/es/interview/matching pick、計 9 箇所前後）。
+- helper 化自体は **byte-safe**（純関数・同一式）だが、**実利が薄い**。
+- 加えて page 側（company-research/do・interview 等）は同型を `useMemo` **境界内**で持つため、揃えると
+  UI の useMemo 境界に **churn** が出る。
+- よって **現時点では実装しない**。反復は許容し、必要になった時点で selector 内のみに閉じた helper 化を検討する。
+
+### H-5. P4 mechanical 抽出フェーズの自然境界
+
+P4-C〜P4-E2 で「page-local proto-selector を byte 不変で `lib/careerMemory/selector.ts` へ寄せる」対象は **出尽くした**。
+残る consultation-body 系（self-analysis / ES / company-research）は §H-2 の通り **B判定**で、これ以上の mechanical 抽出は
+byte リスクに見合わない。したがって:
+
+- **mechanical 抽出フェーズ（P4-C〜P4-H）はここが自然な打ち切り点**。
+- 次の実利は「型の統一」= §C `CareerMemorySnapshot` / §D `CareerMemoryPurposePolicy` への接続だが、これは
+  byte 不変では済まない（block 形状・key 順が変わる）ため、**mechanical refactor ではなく設計変更**として、
+  fresh byte harness とセットで別フェーズ（P5 想定）に切る。
+- それまでは 4 selector = 各 route の request body を返す薄い純関数、という現状を **正**とする。
