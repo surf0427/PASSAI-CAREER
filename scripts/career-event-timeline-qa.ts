@@ -35,6 +35,7 @@ import {
   type RecentCareerEventRow,
 } from '@/lib/careerEvents/timeline';
 import { sanitizeMetadata } from '@/lib/careerEvents/sanitize';
+import { CAREER_EVENT_FEATURES, CAREER_EVENT_TYPES } from '@/types/careerEvents';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string): void {
@@ -335,6 +336,65 @@ console.log('[10] P9-C presentation / company_research fixture');
   check('sanitize が verifiedResearchText を drop', !('verifiedResearchText' in san));
   check('sanitize が interviewContextSummary を drop', !('interviewContextSummary' in san));
   check('sanitize が feedbackText を drop', !('feedbackText' in san));
+}
+
+// ── 11. P9-D: self_analysis の実 event 形状 ──────────────────────────
+console.log('[11] P9-D self_analysis fixture');
+{
+  // feature / event_type が既存 enum と整合すること（wiring 設計の前提）。
+  check('self_analysis は feature enum に存在', (CAREER_EVENT_FEATURES as readonly string[]).includes('self_analysis'));
+  check('ai_generated は event_type enum に存在', (CAREER_EVENT_TYPES as readonly string[]).includes('ai_generated'));
+
+  const [sa] = toEventTimelineItems([
+    row({
+      id: 'sa-1',
+      feature: 'self_analysis',
+      event_type: 'ai_generated',
+      score_band: null,
+      industry: null,
+      job_type: null,
+      metadata: {
+        turnCount: 4,
+        // 誤混入を模した自己分析本文 / 深掘り回答 / 相談本文 key（すべて drop されるべき）。
+        summary: '自己分析サマリ本文…',
+        weaknessText: '弱みの本文…',
+        deepDiveAnswer: '深掘り質問への回答本文…',
+        userInput: 'ユーザーが添えた相談本文…',
+        careerAdvice: 'キャリア助言本文…',
+        personalitySummary: '性格要約本文…',
+      },
+    }),
+  ]);
+  check('self_analysis feature ラベル', sa.featureLabel === '自己分析');
+  check('self_analysis event ラベル（AI生成）', sa.eventTypeLabel === 'AI生成');
+  check('self_analysis score band なし', sa.scoreBand === null);
+  check('self_analysis industry/jobType なし', sa.industry === null && sa.jobType === null);
+  const saChips = Object.fromEntries(sa.metaChips.map((c) => [c.key, c.value]));
+  check('self_analysis turnCount chip', saChips.turnCount === '4');
+  check('self_analysis chip 数 = 1（本文 key 全 drop）', sa.metaChips.length === 1);
+  check(
+    'self_analysis 本文 key は chip 化されない',
+    sa.metaChips.every((c) => DISPLAY_KEYS.includes(c.key)),
+  );
+  check('self_analysis 本文 value 非出力', !JSON.stringify(sa).includes('本文'));
+
+  // sanitize 側の防御: 自己分析本文 key を drop・turnCount を保持。
+  const san2 = sanitizeMetadata({
+    turnCount: 4,
+    summary: '本文',
+    weaknessText: '本文',
+    deepDiveAnswer: '本文',
+    userInput: '本文',
+    careerAdvice: '本文',
+    personalitySummary: '本文',
+  });
+  check('sanitize が turnCount を保持', san2.turnCount === 4);
+  check('sanitize が summary を drop', !('summary' in san2));
+  check('sanitize が weaknessText を drop', !('weaknessText' in san2));
+  check('sanitize が deepDiveAnswer を drop', !('deepDiveAnswer' in san2));
+  check('sanitize が userInput を drop', !('userInput' in san2));
+  check('sanitize が careerAdvice を drop', !('careerAdvice' in san2));
+  check('sanitize が personalitySummary を drop', !('personalitySummary' in san2));
 }
 
 console.log('');

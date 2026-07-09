@@ -29,6 +29,7 @@ import {
 import { appendSelfAnalysisLog, loadSelfAnalysisLogs } from '../selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerSelfAnalysisResultsToSupabase } from '@/lib/supabase/careerSelfAnalysis';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
@@ -268,7 +269,19 @@ export default function CareerSelfAnalysisRunPage() {
       };
       appendSelfAnalysisLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
-      if (userId) void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
+      if (userId) {
+        void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
+        // Event Log（本文なし・fire-and-forget / member のみ）。自己分析本文・AI出力本文・
+        // 強み弱み本文・深掘り質問/回答本文・userInput は渡さない。深掘り回数のみ turnCount で記録。
+        // event_type は ai_generated（AI生成物である点で ES と同方針）。
+        void recordCareerEvent(userId, {
+          feature: 'self_analysis',
+          eventType: 'ai_generated',
+          completionStatus: 'completed',
+          clientEventId: log.id,
+          metadata: { turnCount: countAnswers(turns) },
+        });
+      }
       router.push('/career/self-analysis/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : '分析の生成に失敗しました。もう一度お試しください。');
