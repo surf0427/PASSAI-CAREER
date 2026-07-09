@@ -18,6 +18,8 @@ import {
   type CareerContextPolicy,
   type CareerContextPurpose,
 } from './purpose';
+// P8-B: activity:'minimal' 通電時に使う matching 専用 tighter limits（formatter は既存を再利用）。
+import { MATCHING_ACTIVITY_LIMITS } from './activity';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -72,7 +74,13 @@ export function buildCareerContextForPurpose(
     }
   }
 
-  const systemPrompt = buildCareerSystemPrompt(effectiveContext);
+  // P8-B: activity:'minimal' の purpose（現状 matching のみ）は activity render を tighter limits で縮める。
+  //   effectiveContext（＝生 activity object）・request body は不変。formatter へ渡す上限だけを差し替える
+  //   （buildCareerSystemPrompt options 経由）。profile:minimal と対称の「prompt 生成側だけ」通電。
+  const activityLimits = policy.activity === 'minimal' ? MATCHING_ACTIVITY_LIMITS : undefined;
+  if (activityLimits) omitted = [...omitted, 'activity.compacted'];
+
+  const systemPrompt = buildCareerSystemPrompt(effectiveContext, { activityLimits });
   const estimatedChars = systemPrompt.length;
   const isOverPolicyBudget = estimatedChars > policy.maxContextChars;
   return {

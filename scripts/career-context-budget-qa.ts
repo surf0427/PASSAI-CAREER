@@ -34,6 +34,9 @@ import {
   createContextBudgetReport,
   formatContextBudgetReport,
   guardRawText,
+  formatCareerActivityForPrompt,
+  CAREER_ACTIVITY_LIMITS,
+  MATCHING_ACTIVITY_LIMITS,
   type ContextBlock,
   type ContextBudgetReport,
   type RawTextGuardResult,
@@ -791,6 +794,49 @@ function printPresentationEsBeforeAfter(): void {
   }
 }
 
+// P8-B matching activity compact の回帰検知用 readout（hard fail はしない — persona spot-check /
+// prompt golden で固定済み。本 section は「body 不変 / render 削減」の目視監視）。
+//   - body   : request body の raw activity(JSON) は圧縮対象外＝before/after 不変（body-neutral）。
+//   - render : prompt の activity section が MATCHING_ACTIVITY_LIMITS で縮む（prompt/token が減るのはこちら）。
+//   - score  : 総合スコア/順位は raw activity を読む決定的エンジン側で算出＝本圧縮の影響を受けない。
+function sectionLen(prompt: string, header: string): number {
+  const marker = `# ${header}\n`;
+  const start = prompt.indexOf(marker);
+  if (start === -1) return 0;
+  const from = start + marker.length;
+  let end = prompt.indexOf('\n\n#', from);
+  if (end === -1) end = prompt.length;
+  return prompt.slice(from, end).length;
+}
+function printMatchingActivityBeforeAfter(): void {
+  const pctDrop = (before: number, after: number) =>
+    before === 0 ? '0%' : `${(((before - after) / before) * 100).toFixed(1)}%`;
+  console.log('\n[P8-B matching activity compact — regression readout (matching-only)]');
+  console.log('  before = default limits (全 purpose 共通) / after = MATCHING_ACTIVITY_LIMITS (matching:activity=minimal)');
+  console.log('  body   = request body の raw activity(JSON.stringify) — 圧縮対象外・不変であるべき');
+  console.log('  render = prompt の activity section 文字数 — matching narrative の圧縮分だけ縮む（token が減るのはこちら）');
+  console.log('  score  = 総合スコア/順位は raw activity を読む決定的エンジンで別計算＝本圧縮の影響なし');
+  for (const scenario of ['normal', 'heavy'] as const) {
+    const ctx = mockContext(scenario, 'career-company-matching');
+    // after = production 現行（matching は activity:'minimal' 通電済み）。
+    const afterPrompt = buildCareerContextForPurpose('matching', ctx).systemPrompt;
+    const beforeActivity = formatCareerActivityForPrompt(ctx.activity, CAREER_ACTIVITY_LIMITS).length;
+    const afterActivity = formatCareerActivityForPrompt(ctx.activity, MATCHING_ACTIVITY_LIMITS).length;
+    // activity block 以外は before/after で不変のため、total は activity 差分だけずれる。
+    const afterTotal = afterPrompt.length;
+    const beforeTotal = afterTotal - afterActivity + beforeActivity;
+    const bodyRaw = JSON.stringify(ctx.activity).length;
+    const profileLen = sectionLen(afterPrompt, '学生プロフィール');
+    const valuesLen = sectionLen(afterPrompt, '就活軸（重視・回避・志向）');
+    const staticScaffold = afterTotal - profileLen - afterActivity - valuesLen;
+    console.log(`  ── ${scenario} ──`);
+    console.log(`     body   (raw activity JSON) : before ${bodyRaw} → after ${bodyRaw}  (−0.0%)  [body-neutral]`);
+    console.log(`     render (activity section)  : before ${beforeActivity} → after ${afterActivity}  (−${pctDrop(beforeActivity, afterActivity)})`);
+    console.log(`     base prompt total          : before ${beforeTotal} → after ${afterTotal}  (−${pctDrop(beforeTotal, afterTotal)})`);
+    console.log(`     breakdown (after)          : profile=${profileLen} activity=${afterActivity} values=${valuesLen} static+scaffold=${staticScaffold}`);
+  }
+}
+
 function main(): void {
   const rows = measureAll();
 
@@ -805,6 +851,7 @@ function main(): void {
 
   printMatchingEsBeforeAfter();
   printPresentationEsBeforeAfter();
+  printMatchingActivityBeforeAfter();
 
   const write = process.argv.includes('--write');
   if (write) {

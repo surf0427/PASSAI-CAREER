@@ -41,7 +41,8 @@ export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
 
 // 各 section の扱い（宣言用）。P3-A では活動は常に P2-A formatter で compact 済み。
 export type ProfileInclusion = 'include' | 'minimal' | 'exclude';
-export type ActivityInclusion = 'compact' | 'exclude';
+// compact = P2-A 既定上限 / minimal = purpose 別 tighter 上限（P8-B: matching のみ通電）/ exclude = 非搭載。
+export type ActivityInclusion = 'compact' | 'minimal' | 'exclude';
 export type ValuesInclusion = 'include' | 'exclude';
 export type LogsInclusion = 'include' | 'exclude';
 export type CompanyInclusion = 'include' | 'optional' | 'exclude';
@@ -162,12 +163,15 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     // P6-C: PII 除外 pilot。profile を minimal に通電し、orchestrator が氏名(構造化PII)を prompt から落とす。
     //   request body は不変（生 profile は route まで届く）。prompt byte のみ matching で意図的に変更。
     profile: 'minimal',
-    activity: 'compact',
+    // P8-B: activity を minimal に通電。orchestrator が MATCHING_ACTIVITY_LIMITS（field/全体を絞る tighter 上限）で
+    //   activity render を縮める。section/card 上限は既定と同一で見出し・title・役割・資格/IT/語学は残す。
+    //   request body の raw activity は不変（決定的エンジンは raw を読む＝スコア/順位は不変）。prompt narrative のみ縮む。
+    activity: 'minimal',
     values: 'include',
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 3500,
-    notes: 'P3-B で Orchestrator 移行済み。P6-C で profile:minimal を通電し氏名を prompt から除外（PII pilot）。総合スコア・順位は決定的エンジンが別計算。',
+    notes: 'P3-B で Orchestrator 移行済み。P6-C で profile:minimal（氏名除外）。P8-B で activity:minimal（tighter limits で narrative 圧縮・スコアは raw activity の決定的エンジンで別計算のため不変）。総合スコア・順位は決定的エンジンが別計算。',
   },
   self_analysis: {
     profile: 'include',

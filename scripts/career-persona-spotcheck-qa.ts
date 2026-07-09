@@ -33,35 +33,31 @@ import { buildCareerContextForPurpose } from '@/lib/careerContext/orchestrator';
 import {
   formatCareerActivityForPrompt,
   CAREER_ACTIVITY_LIMITS,
+  MATCHING_ACTIVITY_LIMITS,
+  type CareerActivityFormatLimits,
 } from '@/lib/careerContext/activity';
 import { guardRawText } from '@/lib/careerContext/rawTextGuard';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const any = (v: unknown) => v as any;
 
-// ── limits（before = 現行 production / after = 将来 P8-B の tighter を差し込む口） ──────────────
-// 現時点では after も現行 limits と同一（before ≡ after → 挙動固定）。
-// --tighter は「圧縮しても核が残るか」を手元で確認するための demo プリセット（CI では使わない）。
-//
-// 注: production の CareerActivityFormatLimits は `as const` の literal 型（値が固定）であり、
-//   別の数値を渡せない。ここでは harness 用に number へ緩めた ActivityLimits を使い、call 時に
-//   any() で production 関数へ渡す（runtime は数値を読むだけで不変）。P8-B で実際に tighter limits を
-//   通電するには production 側で CareerActivityFormatLimits を number へ widen する必要がある（要記録）。
-type ActivityLimits = {
-  maxSections: number;
-  maxCardsPerSection: number;
-  maxFieldChars: number;
-  maxTotalChars: number;
-};
-const BEFORE_LIMITS: ActivityLimits = CAREER_ACTIVITY_LIMITS;
-const TIGHTER_DEMO_LIMITS: ActivityLimits = {
+// ── limits（before = 現行 default / after = P8-B production の matching tighter limits） ──────────
+// P8-B: AFTER_LIMITS を production の MATCHING_ACTIVITY_LIMITS に一致させた。activity:'minimal' 通電で
+//   matching prompt の activity render がこの limits で縮む。7 cases すべてで核情報が残ることを検査する
+//   （normal 等は上限未満で before ≡ after ＝ no-loss、heavy は長い自由記述 field だけ trim される）。
+// --tighter は「さらに攻めた」demo（card 上限 2）で、harness が実際に核欠落（例: 3件目の IT スキル）を
+//   検知することの確認用（CI では使わない）。
+const BEFORE_LIMITS: CareerActivityFormatLimits = CAREER_ACTIVITY_LIMITS;
+const TIGHTER_DEMO_LIMITS: CareerActivityFormatLimits = {
   maxSections: 12,
   maxCardsPerSection: 2,
-  maxFieldChars: 100,
+  maxFieldChars: 50,
   maxTotalChars: 2000,
 };
 const USE_TIGHTER = process.argv.includes('--tighter');
-const AFTER_LIMITS: ActivityLimits = USE_TIGHTER ? TIGHTER_DEMO_LIMITS : BEFORE_LIMITS;
+const AFTER_LIMITS: CareerActivityFormatLimits = USE_TIGHTER
+  ? TIGHTER_DEMO_LIMITS
+  : MATCHING_ACTIVITY_LIMITS;
 
 // ── section label（lib/careerContext/activity.ts SECTION_DEFS と厳密一致。preservation 検査用） ──
 const S = {
@@ -337,8 +333,8 @@ function evaluate(fx: PersonaCase): CaseResult {
     values: fx.values,
   });
 
-  const before = formatCareerActivityForPrompt(ctx.activity, any(BEFORE_LIMITS));
-  const after = formatCareerActivityForPrompt(ctx.activity, any(AFTER_LIMITS));
+  const before = formatCareerActivityForPrompt(ctx.activity, BEFORE_LIMITS);
+  const after = formatCareerActivityForPrompt(ctx.activity, AFTER_LIMITS);
 
   // profile / values は activity 圧縮では本来不変。base prompt に核 token が載っていることを確認する
   // （formatCareerActivityForPrompt は activity のみを引数に取るため、圧縮が profile/values を壊せない）。

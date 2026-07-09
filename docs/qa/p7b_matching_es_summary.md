@@ -112,6 +112,13 @@ summary 化（4 field / cap 300・`useCareerContext` gate 限定）。interview 
 fixture: `scripts/fixtures/matching-es-render/{typical,heavy}.txt` /
 `scripts/fixtures/matching-es-body/heavy-es.json`。
 
+> **P7-H 注記（時点差の明示 / P8-B 同梱）**: 上表「interview / presentation / consultation body が不変」は
+> **P7-B 時点の記述**である。その後 **P7-F で presentation の ES body は strict summary 化された**
+> （§6 の「横展開の実績」参照。`PresentationEsSummary` 4 field / cap 300）。したがって現時点では
+> presentation の ES body は P7-B 当時とは異なる（`qa:careerMemoryPresentation` は両経路が同一 summary を
+> 通るため PASS を継続するが、body 内容自体は P7-F で意図的に変わっている）。interview / consultation は
+> 引き続き不変。この注記は P8-B（matching activity compact）の docs 更新に同梱して追加した。
+
 ## 8. スコープ厳守（P7-B / P7-C 共通）
 
 - matching-local。interview / presentation / consultation の snapshot builder / render / body は不変。

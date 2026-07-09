@@ -20,7 +20,10 @@ import type {
 } from './types';
 import { CAREER_AI_FEATURE_LABELS } from './types';
 // activity.ts を直接指す（barrel 経由だと orchestrator→careerAi→barrel の循環になるため）。
-import { formatCareerActivityForPrompt } from '@/lib/careerContext/activity';
+import {
+  formatCareerActivityForPrompt,
+  type CareerActivityFormatLimits,
+} from '@/lib/careerContext/activity';
 
 // すべての機能で共有する基本方針（system prompt の土台）。
 const CAREER_BASE_POLICY = [
@@ -130,8 +133,15 @@ function renderProfile(profile: CareerProfileContext): string {
 // P2-A: 18 セクションの無圧縮 dump を防ぐため、整形を lib/careerContext の共通 formatter に委譲する。
 //   上限内のデータでは従来と同一出力（section 順・ラベル・"■/  - " 形式・未入力 fallback を厳密踏襲）。
 //   上限超過分のみ field 文字数・カード件数・セクション数・全体文字数で決定論的に圧縮する。
-function renderActivity(activity: CareerActivityContext): string {
-  return formatCareerActivityForPrompt(activity);
+// P8-B: activityLimits を任意で受け取り formatter へそのまま渡す（未指定なら現行 default limits）。
+//   formatter の挙動は不変。matching の activity:'minimal' 通電時のみ orchestrator が tighter limits を渡す。
+function renderActivity(
+  activity: CareerActivityContext,
+  activityLimits?: CareerActivityFormatLimits,
+): string {
+  return activityLimits
+    ? formatCareerActivityForPrompt(activity, activityLimits)
+    : formatCareerActivityForPrompt(activity);
 }
 
 // 就活軸整理（/career/values）を system prompt 用の可読テキストに整形する。
@@ -171,7 +181,12 @@ function renderValues(values: CareerValuesContext): string | null {
 
 // 就活版 AI の共通 system prompt を組み立てる。
 // 基本方針 + 機能別指示 + 学生プロフィール + 活動経験 + 就活軸（入力があれば）+ ユーザー入力（あれば）を 1 つにまとめる。
-export function buildCareerSystemPrompt(context: CareerAiContext): string {
+// P8-B: options.activityLimits を任意で受け取り activity render の上限を差し替えられる（未指定なら現行と byte 一致）。
+//   matching の activity:'minimal' policy 通電時のみ orchestrator が tighter limits を渡す。他 purpose は不変。
+export function buildCareerSystemPrompt(
+  context: CareerAiContext,
+  options?: { activityLimits?: CareerActivityFormatLimits },
+): string {
   const featureLabel = CAREER_AI_FEATURE_LABELS[context.featureKey];
 
   const blocks: string[] = [
@@ -179,7 +194,7 @@ export function buildCareerSystemPrompt(context: CareerAiContext): string {
     `今回の機能: ${featureLabel}`,
     buildCareerFeatureInstruction(context.featureKey),
     `# 学生プロフィール\n${renderProfile(context.profile)}`,
-    `# 活動・経験\n${renderActivity(context.activity)}`,
+    `# 活動・経験\n${renderActivity(context.activity, options?.activityLimits)}`,
   ];
 
   // 就活軸整理は「入力があるときだけ」セクションを足す（未入力ユーザーへの影響ゼロ）。

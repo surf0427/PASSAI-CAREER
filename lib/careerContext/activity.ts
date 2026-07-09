@@ -17,16 +17,33 @@
 import type { CareerActivityContext } from '@/lib/careerAi/types';
 import { truncateText } from './text';
 
-// 上限（現行データ量と prompt 量から設定）。majority（各セクション ≤3 カード・
-// 各 field ≤160 字・非空セクション ≤12・全体 ≤3500 字）は現行と同一出力になる。
-export const CAREER_ACTIVITY_LIMITS = {
+// 整形上限の形（P8-B で number へ widen。formatter の挙動は不変で、値を purpose 別に差し込めるようにするだけ）。
+export type CareerActivityFormatLimits = {
+  maxSections: number;
+  maxCardsPerSection: number;
+  maxFieldChars: number;
+  maxTotalChars: number;
+};
+
+// 既定（現行 production の挙動。全 purpose 共通の compact 上限）。majority（各セクション ≤3 カード・
+// 各 field ≤160 字・非空セクション ≤12・全体 ≤3500 字）は現行と同一出力になる。値は不変。
+export const CAREER_ACTIVITY_LIMITS: CareerActivityFormatLimits = {
   maxSections: 12,
   maxCardsPerSection: 3,
   maxFieldChars: 160,
   maxTotalChars: 3500,
-} as const;
+};
 
-export type CareerActivityFormatLimits = typeof CAREER_ACTIVITY_LIMITS;
+// P8-B: matching 専用の tighter limits（policy.activity==='minimal' 通電時のみ orchestrator が使用）。
+//   section / card 上限は既定と同一に保つ（section 見出し・title・役割・資格/ITスキル/語学 card を落とさない
+//   ＝ persona spot-check / matching fit の核を守る）。長い自由記述 field と全体量だけを決定論的に絞る
+//   （AI 再要約なし・trim のみ）。→ matching の AI narrative 根拠だけが縮み、他 purpose は不変。
+export const MATCHING_ACTIVITY_LIMITS: CareerActivityFormatLimits = {
+  maxSections: 12,
+  maxCardsPerSection: 3,
+  maxFieldChars: 50,
+  maxTotalChars: 2800,
+};
 
 // 未入力時の fallback（現行 renderActivity と同一文字列）。
 const EMPTY_FALLBACK = '- （活動・経験は未入力）';
