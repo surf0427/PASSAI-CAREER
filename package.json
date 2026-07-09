@@ -25,6 +25,7 @@
     "qa:careerMemoryInterview": "npx tsx scripts/career-memory-interview-byte-qa.ts",
     "qa:careerMemoryConsultation": "npx tsx scripts/career-memory-consultation-byte-qa.ts",
     "qa:careerMemoryPromptGolden": "npx tsx scripts/career-memory-prompt-golden-qa.ts",
+    "qa:careerPersonaSpotcheck": "npx tsx scripts/career-persona-spotcheck-qa.ts",
     "qa:careerMatchingEsRender": "npx tsx scripts/career-matching-es-render-golden-qa.ts",
     "qa:careerMatchingEsBody": "npx tsx scripts/career-matching-es-body-qa.ts",
     "qa:careerInterviewEsRender": "npx tsx scripts/career-interview-es-render-golden-qa.ts",
