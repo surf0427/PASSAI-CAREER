@@ -152,13 +152,15 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: 'P3-C で Orchestrator 移行済み。AI 生成ではなく本人一次メモの添削・本人整合。',
   },
   matching: {
-    profile: 'include',
+    // P6-C: PII 除外 pilot。profile を minimal に通電し、orchestrator が氏名(構造化PII)を prompt から落とす。
+    //   request body は不変（生 profile は route まで届く）。prompt byte のみ matching で意図的に変更。
+    profile: 'minimal',
     activity: 'compact',
     values: 'include',
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 3500,
-    notes: 'P3-B で Orchestrator 移行済み。総合スコア・順位は決定的エンジンが別計算。',
+    notes: 'P3-B で Orchestrator 移行済み。P6-C で profile:minimal を通電し氏名を prompt から除外（PII pilot）。総合スコア・順位は決定的エンジンが別計算。',
   },
   self_analysis: {
     profile: 'include',

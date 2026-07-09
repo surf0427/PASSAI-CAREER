@@ -11,13 +11,23 @@
 //   - purpose 別の section 削減（policy の実適用）・DB/Memory 読込は P3-B 以降。
 //   - route 側の cross-feature block（自己分析 / ES / 企業研究 等）は引き続き route の責務（本層は触らない）。
 
-import type { CareerAiContext } from '@/lib/careerAi/types';
+import type { CareerAiContext, CareerProfileContext } from '@/lib/careerAi/types';
 import { buildCareerSystemPrompt } from '@/lib/careerAi';
 import {
   getCareerContextPolicy,
   type CareerContextPolicy,
   type CareerContextPurpose,
 } from './purpose';
+
+// P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
+//   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
+//   profile object そのもの・request body は変えず、prompt 生成用の context コピーからのみ除去する。
+function stripProfilePiiForPrompt(
+  profile: CareerProfileContext,
+): { profile: CareerProfileContext; omitted: string[] } {
+  if (profile.name.trim() === '') return { profile, omitted: [] };
+  return { profile: { ...profile, name: '' }, omitted: ['profile.name'] };
+}
 
 export type CareerPurposeContext = {
   purpose: CareerContextPurpose;
@@ -37,16 +47,32 @@ export type CareerPurposeContext = {
 
 /**
  * purpose 別に base career system prompt を返す。
- * P3-B も buildCareerSystemPrompt へ委譲する identity-preserving wrapper（出力は現行と byte 一致）。
+ * P3-B までは buildCareerSystemPrompt へ委譲する identity-preserving wrapper（byte 一致）だったが、
+ * P6-C から policy 通電を開始: profile:minimal の purpose（現状 matching pilot のみ）は氏名(PII)を
+ * prompt から除外し omitted に積む。include の purpose は従来どおり byte 一致（挙動不変）。
  * context が空（未入力）でも buildCareerSystemPrompt 側の fallback で落ちない純関数（非 throw）。
- * estimatedChars / isOverPolicyBudget / warnings は「観測用」であり、削減は P3-C 以降で実適用する。
+ * profile object・request body は変えず、prompt 生成用 context のコピーからのみ PII を落とす。
  */
 export function buildCareerContextForPurpose(
   purpose: CareerContextPurpose,
   context: CareerAiContext,
 ): CareerPurposeContext {
   const policy = getCareerContextPolicy(purpose);
-  const systemPrompt = buildCareerSystemPrompt(context);
+
+  // P6-C: policy 通電（第一段）。profile:minimal の purpose は構造化 PII（氏名）を prompt から除外する。
+  //   現状 minimal は matching のみ base prompt を描画する（es_review は静的 SYSTEM_PROMPT・mypage 未実装で
+  //   本 builder を通らない）ため、実効は matching pilot に限定される。include の他 purpose は不変。
+  let effectiveContext = context;
+  let omitted: string[] = [];
+  if (policy.profile === 'minimal') {
+    const stripped = stripProfilePiiForPrompt(context.profile);
+    if (stripped.omitted.length > 0) {
+      effectiveContext = { ...context, profile: stripped.profile };
+      omitted = stripped.omitted;
+    }
+  }
+
+  const systemPrompt = buildCareerSystemPrompt(effectiveContext);
   const estimatedChars = systemPrompt.length;
   const isOverPolicyBudget = estimatedChars > policy.maxContextChars;
   return {
@@ -55,7 +81,7 @@ export function buildCareerContextForPurpose(
     policy,
     estimatedChars,
     isOverPolicyBudget,
-    omitted: [],
+    omitted,
     warnings: isOverPolicyBudget ? ['over_policy_budget'] : [],
   };
 }

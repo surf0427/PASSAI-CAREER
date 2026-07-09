@@ -465,3 +465,52 @@ P6-B harness は purpose × case ごとに prompt 全体 / profile / activity / 
 
 原則: **新 harness を byte 保存で先に立ててから**（step 1–2）byte-break（step 3 以降）に入る。
 最初の byte-break は base 削減 pilot（PII 除外）を **1 purpose 限定**で行い、golden 更新差分をレビューする。
+
+### J-9. P6-C pilot 結果 — matching profile PII 除外（orchestrator policy 通電・初回 byte-break）
+
+migration strategy step 3–5 を **matching 限定**で実施した記録。
+
+**通電箇所（最小差分）:**
+- [`purpose.ts`](../../lib/careerContext/purpose.ts): `CAREER_CONTEXT_REGISTRY.matching.profile` を `'include'` → **`'minimal'`**。
+- [`orchestrator.ts`](../../lib/careerContext/orchestrator.ts): `buildCareerContextForPurpose` に policy 通電を追加。
+  `policy.profile === 'minimal'` の purpose は、prompt 生成用 **context のコピー**から構造化 PII（氏名 = `profile.name`）を
+  除去し、`omitted` に `['profile.name']` を積む（`omitted: []` 固定を解除）。
+  `renderProfile` の `push('氏名', '')` が空値を捨てるため **`prompts.ts` は無変更**で氏名行が消える。
+  現状 `minimal` を実際に base 描画する purpose は matching のみ（es_review は静的 SYSTEM_PROMPT・mypage 未実装で
+  本 builder を通らない）ため、実効は **matching pilot に限定**される。include の他 purpose は byte 一致（挙動不変）。
+
+**変更しなかったもの（重要）:**
+- **request body byte は不変**。selector は生 profile（氏名含む）を carry し、route まで raw で届く。
+  除去は prompt 生成用 context のコピー内のみ（本体 object・fetch body・snapshot は不変）。
+  → 84 ケースの body-byte harness は **ALL_MATCH 継続**。
+- `BaseMemorySummary` は**未接続**（memory 層は使わず route/orchestrator 層で削減）。
+- activity / values の削減は**まだしない**（policy は宣言のまま）。備考等 **自由記述内の email pattern は baseline のまま**
+  （構造化 PII のみ除去）。
+
+**prompt golden（system prompt byte）:**
+- matching の 5 golden のみ意図的に更新（`matching__{normal,heavy,pii-profile,activity-multi-section,values-notes}.txt`）。
+  diff は各ファイル **`- 氏名: …` 1 行の削除のみ**。他 20 golden（consultation/interview/presentation）は**不変**。
+
+**PII assertion（P6-C で matching のみ strict 化）:**
+- harness に `PII_STRICT_PURPOSES = {'matching'}` を追加。matching は **氏名行 0 を要求（strict PASS）**、
+  他 purpose は **baseline（氏名行が残っても fail させない）**。exit code は golden 一致 + matching strict の両方で決まる。
+- 結果: matching 氏名行 **0/5（strict PASS ✅）** / others 氏名行 20/20（baseline・現状維持）。
+
+**prompt length before/after（文字数ベース / token 実測ではない）:**
+
+| matching case | total before→after | profile section before→after | 削減 |
+|---|---|---|---|
+| normal | 969 → 958 | 117 → 106 | −11 |
+| heavy | 1999 → 1988 | 290 → 279 | −11 |
+| pii-profile | 781 → 770 | 120 → 109 | −11 |
+| activity-multi-section | 1274 → 1264 | 41 → 31 | −10 |
+| values-notes | 955 → 943 | 42 → 30 | −12 |
+
+削減は氏名行（`- 氏名: {name}\n`）分のみで total と profile section が同幅で縮む。他 purpose の length は不変。
+`guardRawText` findings は **100 件のまま**（raw data 側は氏名を保持しているため。prompt 側だけ落とす設計）。
+
+**残課題 / 次工程の判断材料:**
+- 次は (a) matching の **activity/values 削減**へ進む（`activity:'compact'` / `values` policy 通電）か、
+  (b) **profile PII 除外を他 purpose へ展開**（consultation/interview/presentation を順次 minimal + PII_STRICT へ）か。
+  base の PII は全 purpose 共通の課題なので **(b) を先に横展開**して氏名除外を揃え、その後 (a) の block 削減へ進むのが
+  blast radius を段階化できて安全（各展開で該当 golden のみ更新）。
