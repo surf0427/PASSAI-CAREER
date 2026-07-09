@@ -40,8 +40,13 @@ import {
   buildLatestGdRoomSignals,
 } from '@/lib/careerGd/context';
 import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
-// P5-C: matching のみ snapshot→projection 経路へ pilot 接続（返り値 byte 不変・常設 harness で担保）。
-import { buildMatchingSnapshot, projectMatchingRequestContext } from './snapshot';
+// P5-C/P5-D: matching / presentation を snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
+import {
+  buildMatchingSnapshot,
+  projectMatchingRequestContext,
+  buildPresentationSnapshot,
+  projectPresentationRequestContext,
+} from './snapshot';
 
 // page が load* で読み出して渡す生データ（selector 自身は読まない）。
 // 各フィールドの型は対応する load* 関数の戻り値と一致する（page 側が cast 無しで渡せる）。
@@ -214,22 +219,33 @@ export type PresentationSelectorInput = {
 };
 
 // プレゼンAI API に渡す入力コンテキストを、contextSource が読み込んだ生データから組み立てる純関数。
-// 返す object の key 順・latest 選択（最新1件）・fallback は旧 buildPresentationContextPayload と byte 一致。
-// consultationInsights は interview と同一の collectConsultationInsights（最大5・dedup・新しい順）を共有する。
+// P5-D: 内部を additive snapshot→projection 経路へ接続した（P5-B で追加した
+//   buildPresentationSnapshot / projectPresentationRequestContext を経由）。返す object の
+//   key 順・latest 選択（最新1件）・fallback・consultationInsights の dedup は旧実装と byte 一致
+//   （常設 harness scripts/career-memory-presentation-byte-qa.ts で担保）。外部インターフェース
+//   （PresentationSelectorInput / 返り値形状）は不変で、contextSource 側 payload・route は変わらない。
+//   - presentation は externals 不要（gdResultId も選択ログも無い）。
+//   - base(profile/activity/values) は raw のまま carry（BaseMemorySummary は使わない）。
+//   - presentation 固有の config/mode/transcript/answer/question は selector 返り値の外のまま（本層は非関与）。
+//   - presentation が使わない companyResearch/gd/matching-history 系は空配列で渡す（snapshot は未参照）。
 export function buildPresentationRequestContext(
   input: PresentationSelectorInput,
 ): CareerPresentationContextPayload {
-  const { selfAnalysisLogs, esLogs, interviewResults, matchingLogs } = input;
-  return {
+  const snapshot = buildPresentationSnapshot({
     profile: input.profile,
     activity: input.activity,
     values: input.values,
-    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    interview: interviewResults.length > 0 ? interviewResults[0].result : null,
-    matching: matchingLogs.length > 0 ? matchingLogs[0].result : null,
-    consultationInsights: collectConsultationInsights(input.consultationThreads),
-  };
+    selfAnalysisLogs: input.selfAnalysisLogs,
+    esLogs: input.esLogs,
+    interviewResults: input.interviewResults,
+    presentationResults: [],
+    companyResearchLogs: [],
+    gdResults: [],
+    gdRoomLogs: [],
+    matchingLogs: input.matchingLogs,
+    consultationThreads: input.consultationThreads,
+  });
+  return projectPresentationRequestContext(snapshot);
 }
 
 // ── matching（P4-E2: app/career/matching/page.tsx の page-local proto-selector を抽出） ──────
