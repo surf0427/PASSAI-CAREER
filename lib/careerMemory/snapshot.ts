@@ -55,6 +55,8 @@ import type {
   CareerInterviewContextPayload,
   CareerPresentationContextPayload,
 } from './selector';
+// P7-B: matching purpose のみ ES を strict summary 化する（interview / presentation は full carry のまま）。
+import { buildMatchingEsSummary, type MatchingEsSummary } from './matchingEs';
 
 // ── raw input（4 selector 入力の superset。selector 自身は読まない生データ） ──────────────
 export type CareerMemorySnapshotInput = {
@@ -163,7 +165,9 @@ export type CareerMatchingRequestContext = {
   activity: CareerActivity | null;
   values: CareerValues | null;
   selfAnalysis: CareerSelfAnalysisLog['result'] | null;
-  es: CareerEsLog['result'] | null;
+  // P7-B: matching は ES を strict summary（headline/selfPr/motivation のみ・cap 済み）で carry する。
+  //   full CareerEsResult は使わない（gakuchika や未使用 field は body/prompt から除外）。
+  es: MatchingEsSummary | null;
   interviewResult: CareerInterviewResult['result'] | null;
   consultation: NonNullable<CareerConsultationThread['messages'][number]['result']> | null;
   gdSnapshot: ReturnType<typeof buildLatestGdMatchingSnapshot>;
@@ -294,7 +298,9 @@ export function buildMatchingSnapshot(
     purpose: 'matching',
     base: { profile: input.profile, activity: input.activity, values: input.values },
     selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
+    // P7-B: full result carry をやめ、matching-local strict summary に落とす（presence は従来どおり
+    //   esLogs.length で判定。空配列なら null）。interview/presentation snapshot は変更しない。
+    es: esLogs.length > 0 ? buildMatchingEsSummary(esLogs[0].result) : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
     consultation: latestConsultationResult(input.consultationThreads),
     gdSnapshot,

@@ -39,6 +39,12 @@ import {
   type RawTextGuardResult,
   type CareerContextPurpose,
 } from '../lib/careerContext';
+// P7-B: matching ES strict summary の before/after 実測（body-only ではなく render も縮んだことを可視化）。
+import type { CareerEsResult } from '../types/careerEs';
+import {
+  buildMatchingEsSummary,
+  renderMatchingEsSummary,
+} from '../lib/careerMemory/matchingEs';
 
 // ─────────────────────────────────────────────────────────────────────────
 // 0. self-check ハーネス
@@ -679,6 +685,60 @@ base の profile/activity（人格一貫性・P2-A で既に圧縮済み）。�
 // ─────────────────────────────────────────────────────────────────────────
 // main
 // ─────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+// P7-B: matching ES strict summary before/after 実測（文字数ベース）
+// ─────────────────────────────────────────────────────────────────────────
+function repChar(base: string, n: number): string {
+  return base.repeat(Math.ceil(n / base.length)).slice(0, n);
+}
+function makeEsFixture(gLen: number, sLen: number, mLen: number): CareerEsResult {
+  return {
+    headline: '一言でいうと挑戦を続ける人間です',
+    gakuchika: repChar('学生時代に力を入れたことは長期インターンでの新規事業開発であり', gLen),
+    selfPr: repChar('私の強みは課題を構造化し周囲を巻き込みながら実行する力です', sLen),
+    motivation: repChar('貴社を志望する理由は事業の社会的意義と成長環境に強く共感し', mLen),
+    appealPoints: ['論理的思考力', '実行力', 'リーダーシップ', '傾聴力'],
+    interviewQuestions: ['なぜその選択を?', '困難は?', '学びは?', '次にどう活かす?'],
+    improvements: ['数値を入れる', '一文を短く', '結論を先に'],
+    answer: repChar('設問への回答本文です', 300),
+    question: '学生時代に力を入れたことを教えてください（400字）',
+    charLimit: 400,
+    companyName: '株式会社サンプル',
+    selectionType: 'main',
+    industry: 'IT・通信',
+    jobType: 'エンジニア',
+  };
+}
+// 旧 matching renderEs（full result・truncate 無し）の再現（before の render size 比較用）。
+function renderEsFull(r: CareerEsResult): string {
+  const s = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const lines: string[] = [];
+  if (s(r.headline)) lines.push(`- キャッチコピー: ${s(r.headline)}`);
+  if (s(r.selfPr)) lines.push(`- 自己PR: ${s(r.selfPr)}`);
+  if (s(r.motivation)) lines.push(`- 志望動機: ${s(r.motivation)}`);
+  return lines.join('\n');
+}
+function printMatchingEsBeforeAfter(): void {
+  const pctDrop = (before: number, after: number) =>
+    before === 0 ? '0%' : `${(((before - after) / before) * 100).toFixed(1)}%`;
+  console.log('\n[P7-B matching ES strict summary before/after]');
+  console.log('  (before = full CareerEsResult carry / full render, after = matching strict summary)');
+  for (const [label, g, sp, mo] of [
+    ['typical', 250, 250, 250],
+    ['heavy', 420, 400, 380],
+  ] as const) {
+    const es = makeEsFixture(g, sp, mo);
+    const summary = buildMatchingEsSummary(es)!;
+    const fullBody = JSON.stringify(es).length;
+    const sumBody = JSON.stringify(summary).length;
+    const fullRender = renderEsFull(es).length;
+    const sumRender = renderMatchingEsSummary(summary).length;
+    console.log(`  ── ${label} (gakuchika=${g} selfPr=${sp} motivation=${mo}) ──`);
+    console.log(`     body   : full ${fullBody} → summary ${sumBody}  (−${pctDrop(fullBody, sumBody)})`);
+    console.log(`     render : full ${fullRender} → summary ${sumRender}  (−${pctDrop(fullRender, sumRender)})`);
+  }
+}
+
 function main(): void {
   const rows = measureAll();
 
@@ -690,6 +750,8 @@ function main(): void {
   }
 
   const guard = runGuardSelfChecks();
+
+  printMatchingEsBeforeAfter();
 
   const write = process.argv.includes('--write');
   if (write) {

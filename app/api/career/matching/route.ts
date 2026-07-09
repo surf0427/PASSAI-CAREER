@@ -19,7 +19,6 @@ import type {
   CareerValuesInput,
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
-import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerConsultationResult } from '@/types/careerConsultation';
 import {
@@ -50,6 +49,8 @@ import {
 } from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+// P7-B: matching-only ES latest summary。ES block の型・truncate・render を matching-local に集約。
+import { renderMatchingEsSummary, type MatchingEsSummary } from '@/lib/careerMemory/matchingEs';
 
 const FEATURE_KEY = 'career-company-matching' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -158,14 +159,8 @@ function renderSelfAnalysis(r: CareerSelfAnalysisResult | null | undefined): str
   return lines.join('\n');
 }
 
-function renderEs(r: CareerEsResult | null | undefined): string {
-  if (!r) return '';
-  const lines: string[] = [];
-  if (str(r.headline)) lines.push(`- キャッチコピー: ${str(r.headline)}`);
-  if (str(r.selfPr)) lines.push(`- 自己PR: ${str(r.selfPr)}`);
-  if (str(r.motivation)) lines.push(`- 志望動機: ${str(r.motivation)}`);
-  return lines.join('\n');
-}
+// P7-B: matching の ES block render は renderMatchingEsSummary（lib/careerMemory/matchingEs）へ移設。
+//   headline / selfPr(cap) / motivation(cap) のみを出す（gakuchika・未使用 field は出さない）。
 
 function renderInterview(r: CareerInterviewFinalResult | null | undefined): string {
   if (!r) return '';
@@ -269,7 +264,8 @@ export async function POST(req: Request) {
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
-    es?: CareerEsResult | null;
+    // P7-B: matching は ES strict summary（headline/selfPr/motivation のみ）を受け取る。
+    es?: MatchingEsSummary | null;
     interviewResult?: CareerInterviewFinalResult | null;
     consultation?: CareerConsultationResult | null;
     gdSnapshot?: unknown;
@@ -311,14 +307,16 @@ export async function POST(req: Request) {
     profile: b.profile ?? null,
     activity: b.activity ?? null,
     selfAnalysis: b.selfAnalysis ?? null,
-    es: b.es ?? null,
+    // P7-B: measured readiness は ES 本文を消費しない（gakuchika readiness は activity から算出）。
+    //   matching は ES を strict summary で受け取るため full result を engine に渡さない（挙動不変）。
+    es: null,
     interview: b.interviewResult ?? null,
     spi: null,
     presentation: null,
   });
 
   const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
-  const esBlock = renderEs(b.es);
+  const esBlock = renderMatchingEsSummary(b.es);
   const interviewBlock = renderInterview(b.interviewResult);
   const consultationBlock = renderConsultation(b.consultation);
   // GD は補助文脈（主情報は活動・自己分析・就活軸）。formatGdMatchingForPrompt が見出し・断定回避を含む。
