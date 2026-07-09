@@ -29,6 +29,7 @@
     "qa:careerMatchingEsBody": "npx tsx scripts/career-matching-es-body-qa.ts",
     "qa:careerInterviewEsRender": "npx tsx scripts/career-interview-es-render-golden-qa.ts",
     "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
+    "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"
   },
   "dependencies": {

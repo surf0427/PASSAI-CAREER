@@ -55,8 +55,10 @@ import type {
   CareerInterviewContextPayload,
   CareerPresentationContextPayload,
 } from './selector';
-// P7-B: matching purpose のみ ES を strict summary 化する（interview / presentation は full carry のまま）。
+// P7-B: matching purpose のみ ES を strict summary 化する（interview は full carry のまま）。
 import { buildMatchingEsSummary, type MatchingEsSummary } from './matchingEs';
+// P7-F: presentation purpose を presentation-local strict summary 化する（interview は不変）。
+import { buildPresentationEsSummary } from './presentationEs';
 
 // ── raw input（4 selector 入力の superset。selector 自身は読まない生データ） ──────────────
 export type CareerMemorySnapshotInput = {
@@ -279,7 +281,10 @@ export function buildPresentationSnapshot(
     purpose: 'presentation',
     base: { profile: input.profile, activity: input.activity, values: input.values },
     selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
+    // P7-F: full result carry をやめ、presentation-local strict summary（headline/gakuchika/
+    //   selfPr/motivation・cap 済み）に落とす。presence 判定は従来どおり esLogs.length（空配列なら
+    //   null）。gate（useCareerContext）は route 側で不変。interview snapshot は変更しない。
+    es: esLogs.length > 0 ? buildPresentationEsSummary(esLogs[0].result) : null,
     interview: interviewResults.length > 0 ? interviewResults[0].result : null,
     matching: matchingLogs.length > 0 ? matchingLogs[0].result : null,
     consultationInsights: collectConsultationInsights(input.consultationThreads),

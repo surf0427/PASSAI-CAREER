@@ -93,6 +93,10 @@ P7-B は matching **pilot**。他 purpose に同じ cap を機械的に流用し
 「その purpose が ES の何をどこまで使うか」を品質評価してから、purpose 別の summary 形状・cap を
 決める。
 
+**横展開の実績**: presentation は [P7-F](./p7f_presentation_es_summary.md) で purpose-local に
+summary 化（4 field / cap 300・`useCareerContext` gate 限定）。interview は P7-D 監査で
+横展開しない判定（gakuchika が面接深掘りの一次材料のため）。
+
 ## 7. regression guard（P7-B harness で固定済み）
 
 | 保証内容 | harness |

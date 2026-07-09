@@ -11,7 +11,8 @@ import type {
   CareerValuesInput,
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
-import type { CareerEsResult } from '@/types/careerEs';
+// P7-F: presentation は ES を presentation-local strict summary で受け取る（full CareerEsResult carry 廃止）。
+import type { PresentationEsSummary } from '@/lib/careerMemory/presentationEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
     selfAnalysis?: CareerSelfAnalysisResult | null;
-    es?: CareerEsResult | null;
+    es?: PresentationEsSummary | null;
     interview?: CareerInterviewFinalResult | null;
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;

@@ -14,7 +14,12 @@ import type {
   CareerValuesInput,
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
-import type { CareerEsResult } from '@/types/careerEs';
+// P7-F: presentation は ES を presentation-local strict summary で受け取り render する
+//   （full CareerEsResult carry をやめ、gakuchika/selfPr/motivation を 300 字 cap・headline 80 字 cap）。
+import {
+  renderPresentationEsSummary,
+  type PresentationEsSummary,
+} from '@/lib/careerMemory/presentationEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
@@ -148,18 +153,9 @@ function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | undefined)
   return lines.join('\n');
 }
 
-function renderEs(result: CareerEsResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  const push = (label: string, value: string) => {
-    if (value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
-  };
-  push('キャッチコピー', result.headline);
-  push('ガクチカ', result.gakuchika);
-  push('自己PR', result.selfPr);
-  push('志望動機', result.motivation);
-  return lines.join('\n');
-}
+// P7-F: presentation の ES block render は renderPresentationEsSummary（lib/careerMemory/presentationEs）
+//   へ移設。headline / gakuchika(cap) / selfPr(cap) / motivation(cap) の 4 field を出す（cap 済み・
+//   未使用 field は出さない）。useCareerContext gate は buildPresentationBaseSystem 側で不変。
 
 function renderInterview(result: CareerInterviewFinalResult | null | undefined): string {
   if (!result) return '';
@@ -196,7 +192,8 @@ export type CareerPresentationContextInput = {
   activity?: CareerActivityInput | null;
   values?: CareerValuesInput | null;
   selfAnalysis?: CareerSelfAnalysisResult | null;
-  es?: CareerEsResult | null;
+  // P7-F: presentation-local strict summary（cap 済み）。full CareerEsResult は受け取らない。
+  es?: PresentationEsSummary | null;
   interview?: CareerInterviewFinalResult | null;
   matching?: CareerMatchEngineResult | null;
   consultationInsights?: string[] | null;
@@ -227,7 +224,8 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
   // 主役は常に target 文脈・お題・発表内容。
   const useCtx = input.config?.useCareerContext === true;
   const selfAnalysisBlock = useCtx ? renderSelfAnalysis(input.selfAnalysis) : '';
-  const esBlock = useCtx ? renderEs(input.es) : '';
+  // P7-F: gate（useCtx）は不変。ON のときだけ summary を render（値は snapshot 時点で cap 済み）。
+  const esBlock = useCtx ? renderPresentationEsSummary(input.es) : '';
   const interviewBlock = useCtx ? renderInterview(input.interview) : '';
   const matchingBlock = useCtx ? renderMatching(input.matching) : '';
   const consultationBlock = useCtx ? renderConsultationInsights(input.consultationInsights) : '';

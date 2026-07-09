@@ -45,6 +45,11 @@ import {
   buildMatchingEsSummary,
   renderMatchingEsSummary,
 } from '../lib/careerMemory/matchingEs';
+// P7-F: presentation ES strict summary（4 field / cap 300）の before/after 実測。
+import {
+  buildPresentationEsSummary,
+  renderPresentationEsSummary,
+} from '../lib/careerMemory/presentationEs';
 
 // ─────────────────────────────────────────────────────────────────────────
 // 0. self-check ハーネス
@@ -747,6 +752,45 @@ function printMatchingEsBeforeAfter(): void {
   }
 }
 
+// 旧 presentation renderEs（full result・4 field・truncate 無し）の再現（before の render size 比較用）。
+//   matching の renderEsFull（3 field）と違い gakuchika も出す点が presentation の特徴。
+function renderPresentationEsFull(r: CareerEsResult): string {
+  const s = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const lines: string[] = [];
+  if (s(r.headline)) lines.push(`- キャッチコピー: ${s(r.headline)}`);
+  if (s(r.gakuchika)) lines.push(`- ガクチカ: ${s(r.gakuchika)}`);
+  if (s(r.selfPr)) lines.push(`- 自己PR: ${s(r.selfPr)}`);
+  if (s(r.motivation)) lines.push(`- 志望動機: ${s(r.motivation)}`);
+  return lines.join('\n');
+}
+// P7-F presentation ES strict summary の回帰検知用 readout（hard fail はしない — shape は
+// fixture golden で固定済み）。matching（3 field / 200 字）と違い presentation は gakuchika も
+// 残す 4 field・conservative cap 300。useCareerContext===true のときだけ prompt に出る削減で、
+// false のときは render/prompt は 0（body-only の未使用 drop は false でも効くが token 不変）。
+function printPresentationEsBeforeAfter(): void {
+  const pctDrop = (before: number, after: number) =>
+    before === 0 ? '0%' : `${(((before - after) / before) * 100).toFixed(1)}%`;
+  console.log('\n[P7-F presentation ES strict summary — regression readout (presentation-only)]');
+  console.log('  対象は useCareerContext===true のときだけ（false/undefined では ES block=render 0）');
+  console.log('  before = full CareerEsResult carry / full render(4 field), after = presentation strict summary(cap 300)');
+  console.log('  body shrink   = 未使用 field drop（prompt には出ない → token 不変）');
+  console.log('  render shrink = render 対象 field(gakuchika/selfPr/motivation)の cap 300（prompt/token も減る）');
+  for (const [label, g, sp, mo] of [
+    ['typical', 250, 250, 250],
+    ['heavy', 420, 400, 380],
+  ] as const) {
+    const es = makeEsFixture(g, sp, mo);
+    const summary = buildPresentationEsSummary(es)!;
+    const fullBody = JSON.stringify(es).length;
+    const sumBody = JSON.stringify(summary).length;
+    const fullRender = renderPresentationEsFull(es).length;
+    const sumRender = renderPresentationEsSummary(summary).length;
+    console.log(`  ── ${label} (gakuchika=${g} selfPr=${sp} motivation=${mo}) ──`);
+    console.log(`     body   shrink : full ${fullBody} → summary ${sumBody}  (−${pctDrop(fullBody, sumBody)})`);
+    console.log(`     render shrink : full ${fullRender} → summary ${sumRender}  (−${pctDrop(fullRender, sumRender)})`);
+  }
+}
+
 function main(): void {
   const rows = measureAll();
 
@@ -760,6 +804,7 @@ function main(): void {
   const guard = runGuardSelfChecks();
 
   printMatchingEsBeforeAfter();
+  printPresentationEsBeforeAfter();
 
   const write = process.argv.includes('--write');
   if (write) {

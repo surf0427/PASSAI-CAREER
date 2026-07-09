@@ -24,6 +24,8 @@ import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type { CareerConsultationThread } from '@/types/careerConsultation';
 import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
+// P7-F: presentation のみ ES を presentation-local strict summary で carry する（interview は full のまま）。
+import type { PresentationEsSummary } from './presentationEs';
 // P5-C〜F: 4 selector すべてを snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
 //   selector は snapshot builder + projection への薄い委譲層になり、build*/normalize* の直接呼び出しは
 //   lib/careerMemory/snapshot.ts 側へ集約した（本ファイルからの直接 import は不要になった）。
@@ -162,7 +164,9 @@ export type CareerPresentationContextPayload = {
   activity: CareerActivity | null;
   values: CareerValues | null;
   selfAnalysis: CareerSelfAnalysisResult | null;
-  es: CareerEsResult | null;
+  // P7-F: presentation は ES を presentation-local strict summary（headline/gakuchika/selfPr/
+  //   motivation・cap 済み）で carry する。full CareerEsResult は使わない（未使用 field は body から除外）。
+  es: PresentationEsSummary | null;
   // 任意の参考データ（存在しないユーザーでは null / 空配列。プロンプトに出さないだけで落ちない）。
   interview: CareerInterviewFinalResult | null;
   matching: CareerMatchEngineResult | null;
