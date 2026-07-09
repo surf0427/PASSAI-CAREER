@@ -31,7 +31,6 @@ import {
 } from '@/lib/careerConsultation/historySnapshots';
 import {
   buildCompanyResearchContext,
-  buildInterviewCompanyResearchContext,
   type InterviewCompanyResearchContext,
 } from '@/lib/careerCompanyResearch/context';
 import {
@@ -40,12 +39,14 @@ import {
   buildLatestGdRoomSignals,
 } from '@/lib/careerGd/context';
 import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
-// P5-C/P5-D: matching / presentation を snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
+// P5-C/D/E: matching / presentation / interview を snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
 import {
   buildMatchingSnapshot,
   projectMatchingRequestContext,
   buildPresentationSnapshot,
   projectPresentationRequestContext,
+  buildInterviewSnapshot,
+  projectInterviewRequestContext,
 } from './snapshot';
 
 // page が load* で読み出して渡す生データ（selector 自身は読まない）。
@@ -130,63 +131,39 @@ export type InterviewSelectorInput = {
   companyResearchLog: CareerCompanyResearchLog | null;
 };
 
-// 相談スレッドから最近の気づき（keyInsights）を最大 maxItems 件・新しい順に集める純関数。
-// （旧 contextSource.collectConsultationInsights の load を除いたロジックと 1:1）。
-function collectConsultationInsights(
-  threads: CareerConsultationThread[],
-  maxItems = 5,
-): string[] {
-  const sorted = [...threads].sort((a, b) =>
-    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-  );
-  const insights: string[] = [];
-  for (const thread of sorted) {
-    // 新しいメッセージから走査し、assistant の result.keyInsights を拾う。
-    for (let i = thread.messages.length - 1; i >= 0; i--) {
-      const msg = thread.messages[i];
-      const items = msg.role === 'assistant' ? msg.result?.keyInsights : undefined;
-      if (Array.isArray(items)) {
-        for (const it of items) {
-          const t = typeof it === 'string' ? it.trim() : '';
-          if (t && !insights.includes(t)) insights.push(t);
-          if (insights.length >= maxItems) return insights;
-        }
-      }
-    }
-  }
-  return insights;
-}
-
-// 選択された企業研究ログを面接用コンテキストへ変換（build 失敗時は null）。
-// （旧 contextSource.resolveCompanyResearch の build 部分と 1:1。id→log 解決は contextSource が担う）。
-function resolveInterviewCompanyResearch(
-  log: CareerCompanyResearchLog | null,
-): InterviewCompanyResearchContext | null {
-  if (!log) return null;
-  try {
-    return buildInterviewCompanyResearchContext(log);
-  } catch {
-    return null;
-  }
-}
-
 // 面接AI API に渡す入力コンテキストを、contextSource が読み込んだ生データから組み立てる純関数。
-// 返す object の key 順・latest 選択（最新1件）・fallback は旧 buildInterviewContextPayload と byte 一致。
+// P5-E: 内部を additive snapshot→projection 経路へ接続した（P5-B で追加した
+//   buildInterviewSnapshot / projectInterviewRequestContext を経由）。返す object の
+//   key 順・latest 選択（最新1件）・consultationInsights の dedup・companyResearch の
+//   成功/throw→null/未選択→null fallback は旧実装と byte 一致（常設 harness
+//   scripts/career-memory-interview-byte-qa.ts で担保）。外部インターフェース
+//   （InterviewSelectorInput / 返り値形状）は不変で、contextSource 側 payload・start/turn/complete
+//   の3 route は変わらない。
+//   - selected companyResearchLog は snapshot externals として渡す（selected は snapshot 外 input）。
+//   - base(profile/activity/values) は raw のまま carry（BaseMemorySummary は使わない）。
+//   - interview 固有の type/target/turn/answer は selector 返り値の外のまま（本層は非関与）。
+//   - interview が使わない presentation/companyResearch/gd/matching-history 系は空配列で渡す（snapshot は未参照）。
 export function buildInterviewRequestContext(
   input: InterviewSelectorInput,
 ): CareerInterviewContextPayload {
-  const { selfAnalysisLogs, esLogs, matchingLogs } = input;
-  const matching = matchingLogs.length > 0 ? matchingLogs[0].result : null;
-  return {
-    profile: input.profile,
-    activity: input.activity,
-    values: input.values,
-    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    matching,
-    consultationInsights: collectConsultationInsights(input.consultationThreads),
-    companyResearch: resolveInterviewCompanyResearch(input.companyResearchLog),
-  };
+  const snapshot = buildInterviewSnapshot(
+    {
+      profile: input.profile,
+      activity: input.activity,
+      values: input.values,
+      selfAnalysisLogs: input.selfAnalysisLogs,
+      esLogs: input.esLogs,
+      interviewResults: [],
+      presentationResults: [],
+      companyResearchLogs: [],
+      gdResults: [],
+      gdRoomLogs: [],
+      matchingLogs: input.matchingLogs,
+      consultationThreads: input.consultationThreads,
+    },
+    { companyResearchLog: input.companyResearchLog },
+  );
+  return projectInterviewRequestContext(snapshot);
 }
 
 // ── presentation（P4-E1: app/career/presentation/contextSource.ts の proto-selector を抽出） ──
