@@ -27,6 +27,8 @@ import {
   upsertCareerPresentationSessionsToSupabase,
   upsertCareerPresentationResultsToSupabase,
 } from '@/lib/supabase/careerPresentation';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
+import { toScoreBand } from '@/lib/careerEvents/sanitize';
 import type {
   CareerPresentationSession,
   CareerPresentationResult,
@@ -151,6 +153,26 @@ export default function CareerPresentationSessionPage() {
       if (userIdRef.current) {
         void upsertCareerPresentationSessionsToSupabase(userIdRef.current, [completed]);
         void upsertCareerPresentationResultsToSupabase(userIdRef.current, [resultLog]);
+        // Event Log（本文なし・fire-and-forget / member のみ）。プレゼン本文・お題本文・Q&A・
+        // feedback 本文は渡さない。生スコアは band 化する。config の enum のみ metadata に載せる。
+        const cfg = resultLog.config;
+        void recordCareerEvent(userIdRef.current, {
+          feature: 'presentation',
+          eventType: 'feature_completed',
+          completionStatus: 'completed',
+          clientEventId: resultLog.id,
+          scoreBand: toScoreBand(data.result.totalScore),
+          industry: cfg?.industry || null,
+          jobType: cfg?.jobType || null,
+          metadata: {
+            mode: resultLog.mode,
+            ...(cfg?.scenario && cfg.scenario !== 'unspecified'
+              ? { scenario: cfg.scenario }
+              : {}),
+            ...(cfg?.format && cfg.format !== 'unspecified' ? { format: cfg.format } : {}),
+            ...(cfg?.selectionType ? { selectionType: cfg.selectionType } : {}),
+          },
+        });
       }
       router.push('/career/presentation/result');
     } catch (e) {

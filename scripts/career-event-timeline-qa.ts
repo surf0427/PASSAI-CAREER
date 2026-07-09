@@ -51,8 +51,8 @@ function check(name: string, cond: boolean, detail?: string): void {
 const DISPLAY_KEYS = [
   'companyCount', 'industryCount', 'jobCount', 'threadCount', 'turnCount',
   'revisionCount', 'count', 'mode', 'interviewType',
-  'selectionType', 'format', 'participationMode', 'charLimit', 'timeLimitSec',
-  'durationSec',
+  'selectionType', 'scenario', 'sourceType', 'format', 'participationMode',
+  'charLimit', 'timeLimitSec', 'durationSec',
 ];
 
 // 危険 value（本文・PII を模した文字列）。UI 出力に絶対に現れてはならない。
@@ -245,6 +245,96 @@ console.log('[9] 異常入力の頑健性');
     row({ id: 'ok' }),
   ]);
   check('id 空行は drop', items.length === 1 && items[0].id === 'ok');
+}
+
+// ── 10. P9-C: presentation / company_research の実 event 形状 ──────────
+console.log('[10] P9-C presentation / company_research fixture');
+{
+  // presentation: 本文（transcript / theme / feedback）は event に載らない前提。
+  // metadata に本文が誤混入しても drop されることも併せて検査する。
+  const [pres] = toEventTimelineItems([
+    row({
+      id: 'pres-1',
+      feature: 'presentation',
+      event_type: 'feature_completed',
+      industry: 'IT・通信',
+      job_type: 'エンジニア',
+      score_band: 'A',
+      metadata: {
+        mode: 'voice',
+        scenario: 'main_selection',
+        format: 'individual',
+        selectionType: 'main',
+        // 誤混入を模した本文 key（drop されるべき）。
+        transcript: 'プレゼン発表の文字起こし本文長文…',
+        feedbackText: 'AIフィードバック本文…',
+      },
+    }),
+  ]);
+  check('presentation feature ラベル', pres.featureLabel === 'プレゼン');
+  check('presentation event ラベル', pres.eventTypeLabel === '完了');
+  check('presentation score band', pres.scoreBand === 'A');
+  check('presentation industry/jobType', pres.industry === 'IT・通信' && pres.jobType === 'エンジニア');
+  const presChips = Object.fromEntries(pres.metaChips.map((c) => [c.key, c.value]));
+  check('presentation scenario chip', presChips.scenario === 'main_selection');
+  check('presentation mode chip', presChips.mode === 'voice');
+  check('presentation format chip', presChips.format === 'individual');
+  check('presentation selectionType chip', presChips.selectionType === 'main');
+  check(
+    'presentation 本文 key は chip 化されない',
+    pres.metaChips.every((c) => DISPLAY_KEYS.includes(c.key)),
+  );
+  check('presentation 本文 value 非出力', !JSON.stringify(pres).includes('本文'));
+  check('presentation chip 数 = 4', pres.metaChips.length === 4);
+
+  // company_research: 企業名・研究本文・review/fitAnalysis 本文は event に載らない前提。
+  const [cr] = toEventTimelineItems([
+    row({
+      id: 'cr-1',
+      feature: 'company_research',
+      event_type: 'company_researched',
+      industry: 'メーカー',
+      score_band: null,
+      metadata: {
+        sourceType: 'file',
+        revisionCount: 3,
+        // 誤混入を模した本文/企業名 key（drop されるべき）。
+        companyName: '株式会社ヒミツ',
+        verifiedResearchText: '企業研究の確認済み本文…',
+        interviewContextSummary: '面接文脈の要約本文…',
+      },
+    }),
+  ]);
+  check('company_research feature ラベル', cr.featureLabel === '企業研究');
+  check('company_research event ラベル', cr.eventTypeLabel === '企業研究');
+  check('company_research industry', cr.industry === 'メーカー');
+  check('company_research score band なし', cr.scoreBand === null);
+  const crChips = Object.fromEntries(cr.metaChips.map((c) => [c.key, c.value]));
+  check('company_research sourceType chip', crChips.sourceType === 'file');
+  check('company_research revisionCount chip', crChips.revisionCount === '3');
+  check('company_research chip 数 = 2', cr.metaChips.length === 2);
+  check('企業名は非出力', !JSON.stringify(cr).includes('株式会社ヒミツ'));
+  check('研究本文は非出力', !JSON.stringify(cr).includes('本文'));
+  check(
+    'company_research 想定外 key は chip 化されない',
+    cr.metaChips.every((c) => DISPLAY_KEYS.includes(c.key)),
+  );
+
+  // sanitize 整合: 新 key（scenario / sourceType）が書き込み側 allowlist を通ること。
+  check('sanitize が scenario を保持', sanitizeMetadata({ scenario: 'main_selection' }).scenario === 'main_selection');
+  check('sanitize が sourceType を保持', sanitizeMetadata({ sourceType: 'file' }).sourceType === 'file');
+  // sanitize が本文/企業名 key を落とすこと（書き込み側の防御）。
+  const san = sanitizeMetadata({
+    scenario: 'main_selection',
+    companyName: '株式会社ヒミツ',
+    verifiedResearchText: '本文',
+    interviewContextSummary: '要約本文',
+    feedbackText: 'FB本文',
+  });
+  check('sanitize が companyName を drop', !('companyName' in san));
+  check('sanitize が verifiedResearchText を drop', !('verifiedResearchText' in san));
+  check('sanitize が interviewContextSummary を drop', !('interviewContextSummary' in san));
+  check('sanitize が feedbackText を drop', !('feedbackText' in san));
 }
 
 console.log('');

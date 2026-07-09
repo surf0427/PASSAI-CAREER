@@ -45,6 +45,7 @@ import {
 } from '../extraction';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerCompanyResearchLogsToSupabase } from '@/lib/supabase/careerCompanyResearch';
+import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -363,7 +364,26 @@ function CompanyResearchDoInner() {
       }
 
       // Supabase durable mirror（best-effort / member のみ）。
-      if (userId) void upsertCareerCompanyResearchLogsToSupabase(userId, [saved]);
+      if (userId) {
+        void upsertCareerCompanyResearchLogsToSupabase(userId, [saved]);
+        // Event Log（本文なし・fire-and-forget / member のみ）。企業名・OCR/研究本文・review /
+        // fitAnalysis / interviewContextSummary 本文は渡さない。company_id は無い（企業名は自由入力
+        // のため uuid 化不可）ので載せない。industry 短ラベルと安全な enum/カウントのみ。
+        const hasFiles = input.uploadedFiles.length > 0;
+        const hasPaste = input.pastedText.trim() !== '';
+        const sourceType = hasFiles && hasPaste ? 'mixed' : hasFiles ? 'file' : hasPaste ? 'paste' : 'manual';
+        void recordCareerEvent(userId, {
+          feature: 'company_research',
+          eventType: 'company_researched',
+          completionStatus: 'completed',
+          clientEventId: saved.id,
+          industry: input.industry || null,
+          metadata: {
+            sourceType,
+            revisionCount: saved.revisionHistory.length,
+          },
+        });
+      }
 
       router.push(`/career/company-research/view?id=${encodeURIComponent(saved.id)}`);
     } catch (e) {

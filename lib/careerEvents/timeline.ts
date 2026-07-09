@@ -93,6 +93,8 @@ const META_DISPLAY: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'mode', label: 'モード' },
   { key: 'interviewType', label: '面接種別' },
   { key: 'selectionType', label: '選考種別' },
+  { key: 'scenario', label: 'シーン' }, // P9-C: presentation の想定シーン
+  { key: 'sourceType', label: '情報源' }, // P9-C: company_research の情報源
   { key: 'format', label: '形式' },
   { key: 'participationMode', label: '参加形態' },
   { key: 'charLimit', label: '文字数上限' },
