@@ -23,24 +23,13 @@ import type { CareerGdResult, CareerGdRoomLog } from '@/types/careerGd';
 import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type { CareerConsultationThread } from '@/types/careerConsultation';
+import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
+// P5-C〜F: 4 selector すべてを snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
+//   selector は snapshot builder + projection への薄い委譲層になり、build*/normalize* の直接呼び出しは
+//   lib/careerMemory/snapshot.ts 側へ集約した（本ファイルからの直接 import は不要になった）。
 import {
-  buildSelfAnalysisHistory,
-  buildEsHistory,
-  buildInterviewHistory,
-  buildPresentationHistory,
-} from '@/lib/careerConsultation/historySnapshots';
-import {
-  buildCompanyResearchContext,
-  type InterviewCompanyResearchContext,
-} from '@/lib/careerCompanyResearch/context';
-import {
-  buildLatestGdConsultationSnapshots,
-  buildGdConsultationSnapshotById,
-  buildLatestGdRoomSignals,
-} from '@/lib/careerGd/context';
-import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
-// P5-C/D/E: matching / presentation / interview を snapshot→projection 経路へ接続（返り値 byte 不変・常設 harness で担保）。
-import {
+  buildConsultationSnapshot,
+  projectConsultationRequestContext,
   buildMatchingSnapshot,
   projectMatchingRequestContext,
   buildPresentationSnapshot,
@@ -67,37 +56,35 @@ export type ConsultationSelectorInput = {
   gdResultId?: string | null;
 };
 
-// gdResultId 指定時はその GD 結果を優先、無ければ最新2件（旧 page-local gdConsultationContext と同一）。
-function gdConsultationContext(results: CareerGdResult[], gdResultId?: string | null) {
-  if (gdResultId) {
-    const byId = buildGdConsultationSnapshotById(results, gdResultId);
-    if (byId) return [byId];
-  }
-  return buildLatestGdConsultationSnapshots(results, 2);
-}
-
-// 相談AIへ渡す横断 context（request body の message/history を除く部分）を組み立てる。
-// 返す object の key 順・件数上限は旧 buildConsultationContext と byte 一致。
+// 相談AIへ渡す横断 context（request body の message/history を除く部分）を組み立てる純関数。
+// P5-F: 内部を additive snapshot→projection 経路へ接続した（P5-B で追加した
+//   buildConsultationSnapshot / projectConsultationRequestContext を経由）。返す object の
+//   key 順・各 history 件数上限（3）・companyResearch(5)・GD id fallback・gdRoom(3)・matching(2)は
+//   旧実装と byte 一致（常設 harness scripts/career-memory-consultation-byte-qa.ts で担保）。外部
+//   インターフェース（ConsultationSelectorInput / 返り値形状）は不変で、page 側 body・route は変わらない。
+//   - gdResultId は snapshot externals として渡す（selected id は snapshot 外 input）。
+//   - userInput は従来どおり selector 返り値の外で page が body へ付与する（本層は非関与）。
+//   - base(profile/activity/values) は raw のまま carry（BaseMemorySummary は使わない）。
+//   - consultation snapshot が使わない consultationThreads は空配列で渡す（snapshot は未参照）。
 export function buildConsultationRequestContext(input: ConsultationSelectorInput) {
-  return {
-    profile: input.profile,
-    // activity は全量ではなく相談用ダイジェスト（route 側で圧縮）。生データを渡し、route が truncate する。
-    activity: input.activity,
-    values: input.values,
-    // STEP-CONSULT-06: 最新1件ではなく「軽量な複数件＋推移」を渡す（最新3件まで・圧縮済み）。
-    selfAnalysisHistory: buildSelfAnalysisHistory(input.selfAnalysisLogs, 3),
-    esHistory: buildEsHistory(input.esLogs, 3),
-    interviewHistory: buildInterviewHistory(input.interviewResults, 3),
-    presentationHistory: buildPresentationHistory(input.presentationResults, 3),
-    // 保存済み企業研究（最新更新順・最大5件の軽量スナップショット）。
-    companyResearch: buildCompanyResearchContext(input.companyResearchLogs, { limit: 5 }),
-    // GD練習結果。gdResultId があればその1件を優先、無い/見つからない場合は最新2件。
-    gd: gdConsultationContext(input.gdResults, input.gdResultId),
-    // STEP-GD-17: マルチGD の 6 軸評価を参考シグナルとして追加（最新3件・採点済みのみ）。
-    gdRoom: buildLatestGdRoomSignals(input.gdRoomLogs, 3),
-    // STEP-CONSULT-03: 企業マッチング結果（最新2件・軽量スナップショット）。
-    matching: buildLatestMatchingConsultationSnapshots(input.matchingLogs, 2),
-  };
+  const snapshot = buildConsultationSnapshot(
+    {
+      profile: input.profile,
+      activity: input.activity,
+      values: input.values,
+      selfAnalysisLogs: input.selfAnalysisLogs,
+      esLogs: input.esLogs,
+      interviewResults: input.interviewResults,
+      presentationResults: input.presentationResults,
+      companyResearchLogs: input.companyResearchLogs,
+      gdResults: input.gdResults,
+      gdRoomLogs: input.gdRoomLogs,
+      matchingLogs: input.matchingLogs,
+      consultationThreads: [],
+    },
+    { gdResultId: input.gdResultId },
+  );
+  return projectConsultationRequestContext(snapshot);
 }
 
 // ── interview（P4-D: app/career/interview/contextSource.ts の proto-selector を抽出） ──────
