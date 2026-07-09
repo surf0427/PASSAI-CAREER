@@ -22,7 +22,7 @@ import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import type { CareerGdResult, CareerGdRoomLog } from '@/types/careerGd';
 import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import type { CareerConsultationThread, CareerConsultationResult } from '@/types/careerConsultation';
+import type { CareerConsultationThread } from '@/types/careerConsultation';
 import {
   buildSelfAnalysisHistory,
   buildEsHistory,
@@ -38,10 +38,10 @@ import {
   buildLatestGdConsultationSnapshots,
   buildGdConsultationSnapshotById,
   buildLatestGdRoomSignals,
-  buildLatestGdMatchingSnapshot,
-  buildGdMatchingSnapshotById,
 } from '@/lib/careerGd/context';
 import { buildLatestMatchingConsultationSnapshots } from '@/lib/careerMatching/consultationContext';
+// P5-C: matching のみ snapshot→projection 経路へ pilot 接続（返り値 byte 不変・常設 harness で担保）。
+import { buildMatchingSnapshot, projectMatchingRequestContext } from './snapshot';
 
 // page が load* で読み出して渡す生データ（selector 自身は読まない）。
 // 各フィールドの型は対応する load* 関数の戻り値と一致する（page 側が cast 無しで渡せる）。
@@ -250,39 +250,32 @@ export type MatchingSelectorInput = {
   gdResultId?: string | null;
 };
 
-// 直近の就活相談（最新スレッドの最後の assistant 結果）を取り出す純関数。
-// （旧 page-local latestConsultationResult の load を除いたロジックと 1:1）。
-function latestConsultationResult(
-  threads: CareerConsultationThread[],
-): CareerConsultationResult | null {
-  if (threads.length === 0) return null;
-  const messages = threads[0].messages;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === 'assistant' && m.result) return m.result;
-  }
-  return null;
-}
-
 // マッチングAIに渡す統合コンテキストを、page が読み込んだ生データから組み立てる純関数。
-// 返す object の key 順・latest 選択・GD fallback・件数上限は旧 buildMatchingContext と byte 一致。
+// P5-C: 内部を additive snapshot→projection 経路へ pilot 接続した（P5-B で追加した
+//   buildMatchingSnapshot / projectMatchingRequestContext を経由）。返す object の
+//   key 順・latest 選択・GD id fallback・件数上限は旧実装と byte 一致（常設 harness
+//   scripts/career-memory-matching-byte-qa.ts で担保）。外部インターフェース
+//   （MatchingSelectorInput / 返り値形状）は不変で、page 側 body・route は変わらない。
+//   - gdResultId は snapshot externals として渡す（selected id は snapshot 外 input）。
+//   - base(profile/activity/values) は raw のまま carry（BaseMemorySummary は使わない）。
+//   - matching が使わない presentation/companyResearch/matching logs は空配列で渡す（snapshot は未参照）。
 export function buildMatchingRequestContext(input: MatchingSelectorInput) {
-  const { selfAnalysisLogs, esLogs, interviewResults, gdResults } = input;
-  const gdSnapshot =
-    (input.gdResultId ? buildGdMatchingSnapshotById(gdResults, input.gdResultId) : null) ??
-    buildLatestGdMatchingSnapshot(gdResults);
-  // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（最新3件・採点済みのみ・weight 低め）。
-  const gdRoomSignals = buildLatestGdRoomSignals(input.gdRoomLogs, 3);
-  return {
-    profile: input.profile,
-    activity: input.activity,
-    values: input.values,
-    selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
-    es: esLogs.length > 0 ? esLogs[0].result : null,
-    interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
-    consultation: latestConsultationResult(input.consultationThreads),
-    // GD 練習結果を補助文脈として渡す。主情報ではなく参考扱い。
-    gdSnapshot,
-    gdRoomSignals,
-  };
+  const snapshot = buildMatchingSnapshot(
+    {
+      profile: input.profile,
+      activity: input.activity,
+      values: input.values,
+      selfAnalysisLogs: input.selfAnalysisLogs,
+      esLogs: input.esLogs,
+      interviewResults: input.interviewResults,
+      presentationResults: [],
+      companyResearchLogs: [],
+      gdResults: input.gdResults,
+      gdRoomLogs: input.gdRoomLogs,
+      matchingLogs: [],
+      consultationThreads: input.consultationThreads,
+    },
+    { gdResultId: input.gdResultId },
+  );
+  return projectMatchingRequestContext(snapshot);
 }
