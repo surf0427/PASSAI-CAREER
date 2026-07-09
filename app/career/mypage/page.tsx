@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { LinkButton } from '@/components/ui/LinkButton';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard';
+import CareerEventTimelineSection from './CareerEventTimeline';
 import {
   buildMypageSummary,
   type MypageSummary,
@@ -107,6 +108,13 @@ export default function CareerMypagePage() {
           <ConsultationCta />
         </div>
       )}
+
+      {/* 8. 最近の利用履歴（P9-B: career_user_events の本人向け read path。
+          isEmpty 分岐の外に置き、guest/env なし/0 件でも適切なガイドを出す。
+          AI prompt / context / body には接続しない本人専用表示）。 */}
+      <div className="mt-8">
+        <CareerEventTimelineSection />
+      </div>
     </div>
   );
 }
