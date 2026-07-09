@@ -134,13 +134,15 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: 'GD 評価は transcript 主体。career base context は使わない。',
   },
   presentation_feedback: {
-    profile: 'include',
+    // P6-D: PII 除外 pilot 横展開。matching(P6-C) と同じく profile を minimal に通電し、氏名を prompt から落とす。
+    //   request body は不変。prompt byte のみ presentation で意図的に変更（evaluate/qa 共有 base builder 経由）。
+    profile: 'minimal',
     activity: 'compact',
     values: 'include',
     recentLogs: 'include',
     companyContext: 'exclude',
     maxContextChars: 3500,
-    notes: 'P3-C で Orchestrator 移行済み（evaluate/qa が共有する base builder 経由）。',
+    notes: 'P3-C で Orchestrator 移行済み（evaluate/qa が共有する base builder 経由）。P6-D で profile:minimal を通電し氏名を prompt から除外（PII pilot 横展開）。',
   },
   company_research_review: {
     profile: 'include',

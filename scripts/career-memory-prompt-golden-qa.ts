@@ -221,10 +221,11 @@ function extractSection(prompt: string, header: string): string | null {
 
 const PII_LABEL = '- 氏名:';
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
-// P6-C: 氏名(構造化PII)行が prompt に無いことを strict 検証する purpose。matching pilot のみ。
-//   他 purpose は baseline 扱い（氏名行が残っていても fail させない）。P6-D 以降で順次追加。
+// 氏名(構造化PII)行が prompt に無いことを strict 検証する purpose。
+//   P6-C: matching / P6-D: presentation_feedback を追加。consultation / interview は baseline のまま
+//   （氏名行が残っていても fail させない）。今後順次 strict へ寄せる。
 //   email pattern（備考等の自由記述由来）は今回 strict 対象外＝baseline のまま。
-const PII_STRICT_PURPOSES = new Set<CareerContextPurpose>(['matching']);
+const PII_STRICT_PURPOSES = new Set<CareerContextPurpose>(['matching', 'presentation_feedback']);
 
 function goldenPath(cfg: PurposeConfig, fx: CaseFixture): string {
   return join(GOLDEN_DIR, `${cfg.purpose}__${fx.name}.txt`);
@@ -310,11 +311,11 @@ for (const r of rows) {
 
 // ── PII / raw baseline + strict assertion ─────────────────────────────────────────
 console.log('');
-console.log('── PII / raw baseline & strict（matching:strict / others:baseline）──────────');
+console.log('── PII / raw baseline & strict（strict purpose:氏名行0 / others:baseline）────');
 const emailHits = rows.filter((r) => r.hasEmail).length;
 const guardTotal = rows.reduce((s, r) => s + r.guardFindings, 0);
 
-// matching は strict: 氏名行 0 を要求（違反したら piiStrictFailures を積む＝exit code に反映）。
+// strict purpose は氏名行 0 を要求（違反したら piiStrictFailures を積む＝exit code に反映）。
 const strictRows = rows.filter((r) => PII_STRICT_PURPOSES.has(r.purpose as CareerContextPurpose));
 const baselineRows = rows.filter((r) => !PII_STRICT_PURPOSES.has(r.purpose as CareerContextPurpose));
 let piiStrictFailures = 0;
@@ -324,17 +325,19 @@ for (const r of strictRows) {
     console.log(`❌ PII STRICT FAIL | ${r.purpose} / ${r.caseName} — "${PII_LABEL}" が残存`);
   }
 }
-const strictPiiHits = strictRows.filter((r) => r.hasPiiLabel).length;
+// strict purpose ごとに氏名行数を出す（各 0 期待）。
+for (const purpose of PII_STRICT_PURPOSES) {
+  const pr = strictRows.filter((r) => r.purpose === purpose);
+  const hits = pr.filter((r) => r.hasPiiLabel).length;
+  console.log(`[strict]   ${purpose.padEnd(21)} 氏名行: ${hits}/${pr.length}（期待 0）→ ${hits === 0 ? 'PASS ✅' : 'FAIL ❌'}`);
+}
 const baselinePiiHits = baselineRows.filter((r) => r.hasPiiLabel).length;
 console.log(
-  `[strict]   matching 氏名行: ${strictPiiHits}/${strictRows.length}（期待 0）→ ${piiStrictFailures === 0 ? 'PASS ✅' : 'FAIL ❌'}`,
-);
-console.log(
-  `[baseline] others 氏名行:   ${baselinePiiHits}/${baselineRows.length}（consultation/interview/presentation は現状維持・fail させない）`,
+  `[baseline] others (consultation/interview) 氏名行: ${baselinePiiHits}/${baselineRows.length}（現状維持・fail させない）`,
 );
 console.log(`[baseline] email パターン:   ${emailHits}/${rows.length} ケース（備考 等の自由記述由来・strict 対象外）`);
 console.log(`[baseline] guardRawText:     ${guardTotal} 件（base context の key ベース。raw data 側は不変）`);
-console.log('※ 他 purpose は P6-D 以降で順次 PII_STRICT_PURPOSES へ追加予定（docs §J）。');
+console.log('※ consultation / interview は今後順次 PII_STRICT_PURPOSES へ追加予定（docs §J）。');
 
 // ── 終了判定（golden 一致 + matching strict PII の両方で決まる） ───────────────────
 console.log('');

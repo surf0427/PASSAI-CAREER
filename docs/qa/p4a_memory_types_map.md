@@ -514,3 +514,50 @@ migration strategy step 3–5 を **matching 限定**で実施した記録。
   (b) **profile PII 除外を他 purpose へ展開**（consultation/interview/presentation を順次 minimal + PII_STRICT へ）か。
   base の PII は全 purpose 共通の課題なので **(b) を先に横展開**して氏名除外を揃え、その後 (a) の block 削減へ進むのが
   blast radius を段階化できて安全（各展開で該当 golden のみ更新）。
+
+### J-10. P6-D pilot 結果 — presentation profile PII 除外の横展開
+
+J-9 の判断材料 (b) に従い、P6-C の仕組みを **presentation_feedback** へ横展開した記録。**presentation のみ**対象で、
+matching(P6-C) の state は維持し、consultation / interview は未変更。
+
+**policy 変更箇所（orchestrator は無変更）:**
+- [`purpose.ts`](../../lib/careerContext/purpose.ts): `CAREER_CONTEXT_REGISTRY.presentation_feedback.profile` を
+  `'include'` → **`'minimal'`**。
+- **[`orchestrator.ts`](../../lib/careerContext/orchestrator.ts) は変更不要**。P6-C の `profile:minimal → 氏名 strip` は
+  purpose 非依存の汎用ロジックのため、policy を minimal にするだけで presentation にも自動適用される
+  （evaluate/theme/qa が共有する base builder 経由）。
+- [harness](../../scripts/career-memory-prompt-golden-qa.ts): `PII_STRICT_PURPOSES` に `presentation_feedback` を追加
+  （`{'matching','presentation_feedback'}`）。strict report を purpose 別内訳に変更。
+
+**変更しなかったもの:**
+- **request body byte 不変**（selector は生 profile を carry・presentation body-byte harness 16/16 ALL_MATCH）。
+- `prompts.ts`（renderProfile 等）無変更 / `BaseMemorySummary` 未接続 / activity・values 削減なし /
+  自由記述内 email pattern は baseline のまま。
+
+**prompt golden（system prompt byte）:**
+- presentation の 5 golden のみ更新。diff は各ファイル **`- 氏名: …` 1 行の削除のみ**。
+  matching golden（P6-C 済）・consultation・interview の golden は**不変**。
+
+**PII assertion 結果:**
+- matching 氏名行 **0/5（strict PASS ✅）**（P6-C 維持）。
+- presentation_feedback 氏名行 **0/5（strict PASS ✅）**（P6-D 新規）。
+- others（consultation + interview_practice + interview_complete）氏名行 **15/15（baseline・fail させない）**。
+
+**prompt length before(P6-B)/after（文字数ベース / token 実測ではない）:**
+
+| presentation case | total before→after | profile section before→after | 削減 |
+|---|---|---|---|
+| normal | 999 → 988 | 117 → 106 | −11 |
+| heavy | 2029 → 2018 | 290 → 279 | −11 |
+| pii-profile | 811 → 800 | 120 → 109 | −11 |
+| activity-multi-section | 1304 → 1294 | 41 → 31 | −10 |
+| values-notes | 985 → 973 | 42 → 30 | −12 |
+
+matching は P6-C 後の値を維持、consultation / interview は不変。`guardRawText` findings は **100 件のまま**。
+
+**次工程の判断:**
+- 横展開は残り **interview**（`interview_practice` / `interview_complete` は base builder 共有なので
+  policy 1 箇所で両方に効く）。次は **interview の profile PII 除外**へ進む。
+- **consultation は最後に回す**：compressCareerActivityForConsultation・全機能集約で base 描画の影響面が最大のため、
+  他 3 系統（matching/presentation/interview）を揃えてから最後に strict 化する。
+- 全 purpose の PII 除外が揃った後に、block 削減（activity/values policy 通電・strict `*MemorySummary` 化）へ進む。
