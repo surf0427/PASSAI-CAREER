@@ -27,6 +27,8 @@
     "qa:careerMemoryPromptGolden": "npx tsx scripts/career-memory-prompt-golden-qa.ts",
     "qa:careerMatchingEsRender": "npx tsx scripts/career-matching-es-render-golden-qa.ts",
     "qa:careerMatchingEsBody": "npx tsx scripts/career-matching-es-body-qa.ts",
+    "qa:careerInterviewEsRender": "npx tsx scripts/career-interview-es-render-golden-qa.ts",
+    "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"
   },
   "dependencies": {
