@@ -24,6 +24,7 @@
     "qa:careerMemoryPresentation": "npx tsx scripts/career-memory-presentation-byte-qa.ts",
     "qa:careerMemoryInterview": "npx tsx scripts/career-memory-interview-byte-qa.ts",
     "qa:careerMemoryConsultation": "npx tsx scripts/career-memory-consultation-byte-qa.ts",
+    "qa:careerMemoryPromptGolden": "npx tsx scripts/career-memory-prompt-golden-qa.ts",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"
   },
   "dependencies": {

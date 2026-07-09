@@ -366,3 +366,102 @@ snapshot object 内には**計算結果のみ**を保持する。
 
 > P6 は §H-5 の通り mechanical refactor ではなく **byte-breaking フェーズ**として扱う。P6-A で strict memory
 > summary / `BaseMemorySummary` の設計監査を先に行い、fresh byte harness とセットで段階導入する。
+
+---
+
+## J. P6 byte-breaking memory summary phase（P6-A 監査結論 + P6-B 基盤 / 2026-07-09）
+
+> P6-A の read-only 設計監査結論と、P6-B で追加した prompt-level golden 基盤の記録。
+> P6-B 時点では **production route / prompt / selector / snapshot / AI schema / DB は不変**（harness・fixtures・
+> docs・package script のみ追加）。secret / env / token / Supabase URL / service_role / API key は非参照・非出力。
+
+### J-1. P6-A の結論 — base 削減は memory 層ではなく route/orchestrator 層で行う
+
+監査で判明した決定的事実:
+
+- **base（profile/activity/values）の prompt 化は route 層で起きている**。selector は生 profile/activity/values を
+  request body に carry するだけで、prompt は route が
+  `buildCareerAiContext` → `buildCareerContextForPurpose` → `buildCareerSystemPrompt` →
+  `renderProfile/renderActivity/renderValues` で組む。
+- `buildCareerContextForPurpose` は **byte 恒等 wrapper**で、[`orchestrator.ts`](../../lib/careerContext/orchestrator.ts) の
+  `omitted: []` はハードコード。`CAREER_CONTEXT_REGISTRY` の `profile:minimal` 等の policy は**宣言のみで未強制**。
+- cross-feature block は orchestrator ではなく **route-local / shared-builder-local の render 関数**が組む。
+
+→ 結論: **base 削減（PII 除外・activity 圧縮）は memory 層の `BaseMemorySummary` ではなく、
+route/orchestrator 層で行う**。`BaseMemorySummary` 型（[`types.ts`](../../lib/careerMemory/types.ts)）は
+**型として温存し、既存 prompt には接続しない**。実削減は orchestrator policy の**通電**（`omitted` を実装し
+`renderProfile` を policy 駆動にする）で行い、新しい base prompt builder は並立させない。
+
+### J-2. 2 つの byte 面 — P5 harness と P6 harness の守備範囲
+
+| byte 面 | 実体 | 守る harness | 効くもの |
+|---|---|---|---|
+| **request body byte** | selector 出力の `JSON.stringify` | P5: `qa:careerMemory{Matching,Presentation,Interview,Consultation}`（84 ケース） | ネットワーク payload / body 形状の回帰 |
+| **system prompt byte** | `render*` 出力 = 実 system prompt string | **P6-B 新設: `qa:careerMemoryPromptGolden`** | **AI 挙動 / token / cache / PII** |
+
+P5 harness は body byte しか守らない。P6 の PII 除外・token 削減は **prompt byte 面**で発生するため、
+P6-B で prompt golden harness を新設した。
+
+### J-3. P6-B で追加した prompt golden harness
+
+[`scripts/career-memory-prompt-golden-qa.ts`](../../scripts/career-memory-prompt-golden-qa.ts)（`npm run qa:careerMemoryPromptGolden`）:
+
+- **対象 purpose（live `CareerContextPurpose` 単位）**: `consultation` / `matching` / `interview_practice` /
+  `interview_complete` / `presentation_feedback`。consultation のみ route と同じ
+  `compressCareerActivityForConsultation` を通す。`interview_complete` の base は `interview_practice` と同一
+  （base builder 共有）であることを golden で確認。
+- **経路**: `buildCareerAiContext` → `buildCareerContextForPurpose` → `buildCareerSystemPrompt` →
+  `renderProfile/renderActivity/renderValues` を通した base system prompt string を golden 比較。
+- **fixtures**: `scripts/fixtures/prompt-golden/{purpose}__{case}.txt`（1 prompt 1 ファイル・diff 容易）。
+  case は `normal` / `heavy` / `pii-profile` / `activity-multi-section` / `values-notes` の 5 種 × 5 purpose = 25 golden。
+- **golden 更新**: `--update`（または `UPDATE=1`）で現在の出力を golden に上書き。P6-C 以降で prompt を
+  意図的に変える際は `--update` で golden を更新し、diff をレビューする運用。
+- **初回**: current output = golden として bootstrap 済み。`ALL_MATCH`。
+
+### J-4. PII / raw baseline（P6-B は検出のみ・fail させない）
+
+- 現状 `renderProfile` は system prompt に **`- 氏名:` 行を出力**している（25/25 ケースで検出）。
+  `備考`（notes）経由でメール等 PII が載るケースもある（pii-profile 等 5/25）。
+- P6-B では **fail させず baseline 報告**に留める（現状の prompt 出力を壊さない）。
+  harness は `guardRawText` を base context の key ベースで通し、findings 数も baseline として出す。
+- rawTextGuard の既存 self-check（budget-qa 側）は **findings 不増**を確認済み（production 未変更のため）。
+- **P6-C 以降**: `expectNoProfilePii`（氏名行 = 0）のような **strict assertion** に切り替える。
+  それまでは golden がそのまま「PII が載っている現状」を固定する。
+
+### J-5. prompt length baseline（文字数ベース / token 実測ではない）
+
+P6-B harness は purpose × case ごとに prompt 全体 / profile / activity / values の**文字数**を出力する
+（token 実測ではない旨を明記）。P6-C 以降の base 削減の効果測定の起点とする。目安:
+
+- profile section: normal ≈ 117 字 / heavy ≈ 290 字 / pii-profile ≈ 120 字。
+- activity section: heavy ≈ 802 字（consultation の圧縮は fixture の各 field が 160 字閾値未満のため本 fixture では identity）。
+- values section: values-notes ≈ 233 字。
+
+### J-6. strict `*MemorySummary` 化の優先順（P6-C 以降）
+
+- **優先**: `es` / `interview` / `presentation` の latest full result → summary 化（本文派生が重く要約耐性が高い）。
+- **後回し**: `companyResearch` / `gd`（既に signal 化済みで削減余地が小さい）。
+- **最後**: `consultation`（司令塔の現在地 signal が薄まる品質リスクが高い）。
+- 注意: snapshot が full result を carry していても、prompt に何が出るかは `render*` が field 選択する。
+  **「body だけ縮んで token が変わらない」罠**を避けるため、各 block で `render*` 出力サイズを先に測ってから型を確定する。
+
+### J-7. self-analysis summary 二重化（§H-3 の P6 版）
+
+- `buildSelfAnalysisHistory`（consultation）× `buildSelfAnalysisPastSummaries`（deep-dive）の共通コア化は、
+  **新 expected fixture（consultation 用 / deep-dive 用の期待 JSON）を先に置いてから**行う。
+- P6 は byte-break 許容のため、truncate 差（160 / 140）は**統一**してよい。共通 `SelfAnalysisLatest` を実体に採用し、
+  consumer 別 field（consultation: `gakuchikaIdeas` / deep-dive: `valueKeywords` `strengthKeywords` `nextActions`）は
+  projection で出し分ける。
+
+### J-8. migration strategy（P6 推奨順序）
+
+1. **prompt golden harness**（P6-B 完了）。
+2. **baseline PII/raw report**（P6-B 完了・fail させない）。
+3. **orchestrator policy pilot**（P6-C）— `omitted` を実装し 1 purpose で policy を通電。golden を意図更新。
+4. **base 削減 pilot**（P6-C）— `renderProfile` から PII（氏名）を除外。`expectNoProfilePii` へ strict 化。
+5. **budget 差分測定**（文字数ベース）で削減効果を確認。
+6. **strict `*MemorySummary` 展開**（es → interview → presentation → companyResearch/gd → consultation の順）。
+7. **self-analysis 共通コア化**（新 expected fixture 先行）。
+
+原則: **新 harness を byte 保存で先に立ててから**（step 1–2）byte-break（step 3 以降）に入る。
+最初の byte-break は base 削減 pilot（PII 除外）を **1 purpose 限定**で行い、golden 更新差分をレビューする。
