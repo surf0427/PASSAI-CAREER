@@ -119,13 +119,15 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: '面接最終評価。base は interview_practice の共有 builder 経由で移行済み。interview_complete purpose 自体は現状未使用（将来 complete 専用 policy 用に予約）。P6-E で profile:minimal に整合。',
   },
   consultation: {
-    profile: 'include',
+    // P6-F: PII 除外 pilot 最終横展開。matching/presentation/interview と揃えて profile を minimal に通電し氏名を prompt から落とす。
+    //   request body は不変。activity 圧縮（compressCareerActivityForConsultation）は route 側の別処理で影響なし。prompt byte のみ変更。
+    profile: 'minimal',
     activity: 'compact', // route 側で compressCareerActivityForConsultation 済みを渡す
     values: 'include',
     recentLogs: 'include', // 司令塔: 自己分析/ES/面接/プレゼン/GD/マッチング等を route が手組みで付与
     companyContext: 'include', // 保存済み企業研究スナップショット（最大5件）
     maxContextChars: 3500,
-    notes: '司令塔。手組みアグリゲートは route の責務（P3-C は base のみ Orchestrator 経由）。',
+    notes: '司令塔。手組みアグリゲートは route の責務（P3-C は base のみ Orchestrator 経由）。P6-F で profile:minimal を通電し氏名を prompt から除外（PII pilot 完了）。',
   },
   gd_feedback: {
     profile: 'exclude',

@@ -607,3 +607,58 @@ matching / presentation は既存削減後の値を維持、consultation は不�
   最後に P6-F として `consultation.profile` を minimal 通電 + strict 化する（consultation golden 5 件のみ更新）。
 - consultation まで揃えば **全 purpose の profile PII（氏名）除外が完了**し、次の block 削減フェーズ
   （activity/values policy 通電・strict `*MemorySummary` 化：ES→interview→presentation の順）へ移行できる。
+
+### J-12. P6-F 結果 — consultation profile PII 除外（横展開完了 / profile PII フェーズ終了）
+
+J-11 の方針どおり、最後の consultation へ横展開し、**golden 対象の全 live purpose の profile 氏名 PII 除外を完了**した記録。
+
+**policy 変更箇所（orchestrator は無変更）:**
+- [`purpose.ts`](../../lib/careerContext/purpose.ts): `CAREER_CONTEXT_REGISTRY.consultation.profile` を
+  `'include'` → **`'minimal'`**。
+- **[`orchestrator.ts`](../../lib/careerContext/orchestrator.ts) は変更不要**（P6-C の汎用 `minimal → 氏名 strip` を再利用）。
+- consultation の `activity: 'compact'`（route 側 `compressCareerActivityForConsultation`）は **base の別処理**であり、
+  PII strip とは独立。activity 圧縮挙動には影響しない（heavy golden でも diff は氏名行のみ = 0 added / 1 deleted）。
+- [harness](../../scripts/career-memory-prompt-golden-qa.ts): `PII_STRICT_PURPOSES` に `consultation` を追加（計 **5 purpose**）。
+  baseline purpose が無くなったため report を「PII baseline purpose なし」に分岐。
+
+**変更しなかったもの:**
+- **request body byte 不変**（selector は生 profile を carry・consultation body-byte harness 32/32 ALL_MATCH）。
+- `prompts.ts` 無変更 / **`BaseMemorySummary` 未接続のまま** / activity・values 削減なし /
+  自由記述内 email pattern は baseline のまま（5/25 ケース残存）。
+
+**prompt golden（system prompt byte）:**
+- consultation の 5 golden のみ更新。各ファイル **0 added / 1 deleted = `- 氏名: …` 1 行削除のみ**（heavy 含む）。
+  matching / presentation / interview の golden は**不変**。
+
+**PII assertion 結果（golden 対象の全 live purpose が strict・baseline なし）:**
+- matching **0/5 ✅** / presentation_feedback **0/5 ✅** / interview_practice **0/5 ✅** /
+  interview_complete **0/5 ✅** / consultation **0/5 ✅**。
+- **baseline purpose: なし**（氏名行 total 0/25）。
+
+**prompt length before(P6-B)/after（文字数ベース / token 実測ではない）:**
+
+| consultation case | total before→after | profile section before→after | 削減 |
+|---|---|---|---|
+| normal | 837 → 826 | 117 → 106 | −11 |
+| heavy | 1867 → 1856 | 290 → 279 | −11 |
+| pii-profile | 649 → 638 | 120 → 109 | −11 |
+| activity-multi-section | 1142 → 1132 | 41 → 31 | −10 |
+| values-notes | 823 → 811 | 42 → 30 | −12 |
+
+matching / presentation / interview は既存削減後の値を維持。`guardRawText` findings は **100 件のまま**
+（raw data 側は氏名を保持し prompt 側だけ落とす設計）。
+
+**profile PII 除外フェーズ 完了サマリ（P6-C〜P6-F）:**
+- 5 live purpose（matching / presentation_feedback / interview_practice / interview_complete / consultation）すべてで
+  system prompt から氏名行を除去。**request body byte は全期間で不変**（body-byte harness 84/84 継続 ALL_MATCH）。
+- 実装は `orchestrator.ts` の汎用 `profile:minimal → 氏名 strip`（P6-C の 1 箇所）+ 各 purpose の policy flip のみ。
+  `prompts.ts` は最後まで無変更。`BaseMemorySummary` は未接続のまま。
+
+**次フェーズ（P7 想定・block 削減）の候補と順序:**
+- profile PII は完了。次は **block 削減**へ:
+  1. **strict `*MemorySummary` 化**（byte-break の本命。ES → interview → presentation の順。full result → 要約型で token 削減）。
+  2. **activity policy 通電**（`activity:'compact'`/`'exclude'` の実適用。現在 route 側圧縮に依存している部分を policy 化）。
+  3. **values 削減**（notes 短縮等）。
+- いずれも該当 purpose の golden 更新を伴う byte-break。**まず strict `*MemorySummary`（block 単位）から**入るのが、
+  render\* 出力サイズの実測（§J-6 の「body だけ縮んで token 不変」の罠回避）とセットで効果が大きい。
+- 自由記述内 PII（備考の email 等・現状 5/25）の strict 化は、activity/values 削減の際に併せて設計する。
