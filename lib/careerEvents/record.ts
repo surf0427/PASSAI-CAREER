@@ -18,6 +18,7 @@ import {
   CAREER_EVENT_FEATURES,
   CAREER_SCORE_BANDS,
   type CareerEventInput,
+  type CareerEventMetadata,
   type CareerScoreBand,
 } from '@/types/careerEvents';
 import { sanitizeLabel, sanitizeMetadata } from './sanitize';
@@ -37,42 +38,84 @@ function asScoreBandOrNull(value: unknown): CareerScoreBand | null {
     : null;
 }
 
+// career_user_events へ insert する snake_case row。occurred_at / created_at は
+// クライアントから送らず DB 側 default now()（サーバ時刻）に委ねる（列に含めない）。
+export type CareerEventInsertRow = {
+  user_id: string;
+  event_type: string;
+  feature: string;
+  client_event_id: string | null;
+  company_id: string | null;
+  industry: string | null;
+  job_type: string | null;
+  selection_phase: string | null;
+  score_band: CareerScoreBand | null;
+  weakness_category: string | null;
+  next_action: string | null;
+  completion_status: string | null;
+  metadata: CareerEventMetadata;
+};
+
+// 実際に row を書き込む adapter。既定は browser Supabase client。QA では stub を注入して
+// row 構築（純関数）と error isolation（never throw）を DB 非依存で検査する。
+export type CareerEventInsert = (row: CareerEventInsertRow) => Promise<void>;
+
+/**
+ * (userId, input) から insert row を構築する **純関数**（DB / env / secret 非依存）。
+ *   - guest（userId 空）/ 非 object / 未知 feature / 未知 event_type は `null`（＝記録しない）。
+ *   - client_event_id / 各ラベルは sanitize（長文・改行・本文混入を drop）。
+ *   - company_id は uuid のみ採用、score_band は S/A/B/C/D のみ、metadata は allowlist scalar のみ。
+ *   - user_id は引数（＝認証 user）からのみ設定。occurred_at / created_at は含めない。
+ * この純関数化により writer の row 契約を決定論的 QA で回帰固定する（P9-G）。
+ */
+export function buildCareerEventInsertRow(
+  userId: string | null | undefined,
+  input: CareerEventInput,
+): CareerEventInsertRow | null {
+  if (!userId) return null; // guest は Event Log を持たない（localStorage 専用）
+  if (!input || typeof input !== 'object') return null;
+  if (!(CAREER_EVENT_FEATURES as readonly string[]).includes(input.feature)) return null;
+  if (!(CAREER_EVENT_TYPES as readonly string[]).includes(input.eventType)) return null;
+
+  return {
+    user_id: userId,
+    event_type: input.eventType,
+    feature: input.feature,
+    client_event_id: sanitizeLabel(input.clientEventId, 128),
+    company_id: asUuidOrNull(input.companyId),
+    industry: sanitizeLabel(input.industry),
+    job_type: sanitizeLabel(input.jobType),
+    selection_phase: sanitizeLabel(input.selectionPhase),
+    score_band: asScoreBandOrNull(input.scoreBand),
+    weakness_category: sanitizeLabel(input.weaknessCategory),
+    next_action: sanitizeLabel(input.nextAction),
+    completion_status: sanitizeLabel(input.completionStatus),
+    metadata: sanitizeMetadata(input.metadata),
+  };
+}
+
+// 既定の insert adapter（browser Supabase client 経由）。env 未設定なら no-op。
+async function insertViaBrowserClient(row: CareerEventInsertRow): Promise<void> {
+  const supabase = getBrowserSupabaseClient();
+  if (!supabase) return; // env 未設定 = mirror 無効 = no-op
+  const { error } = await supabase.from(TABLE).insert(row);
+  if (error) devWarn('[careerEvents] insert error', error);
+}
+
 /**
  * イベントを 1 件記録する（best-effort / never throw / await 不要）。
  * event_type / feature が未知なら no-op。guest / env 未設定でも no-op。
+ * 第 3 引数 `insert` は QA 用の注入 seam（本番呼び出しは 2 引数で既定 adapter を使う）。
  */
 export async function recordCareerEvent(
   userId: string | null | undefined,
   input: CareerEventInput,
+  insert: CareerEventInsert = insertViaBrowserClient,
 ): Promise<void> {
   try {
-    if (!userId) return; // guest は Event Log を持たない（localStorage 専用）
-    if (!input || typeof input !== 'object') return;
-    if (!(CAREER_EVENT_FEATURES as readonly string[]).includes(input.feature)) return;
-    if (!(CAREER_EVENT_TYPES as readonly string[]).includes(input.eventType)) return;
-
-    const supabase = getBrowserSupabaseClient();
-    if (!supabase) return; // env 未設定 = mirror 無効 = no-op
-
-    // occurred_at / created_at は DB 側 default now()（サーバ時刻）に委ねる。
-    const row = {
-      user_id: userId,
-      event_type: input.eventType,
-      feature: input.feature,
-      client_event_id: sanitizeLabel(input.clientEventId, 128),
-      company_id: asUuidOrNull(input.companyId),
-      industry: sanitizeLabel(input.industry),
-      job_type: sanitizeLabel(input.jobType),
-      selection_phase: sanitizeLabel(input.selectionPhase),
-      score_band: asScoreBandOrNull(input.scoreBand),
-      weakness_category: sanitizeLabel(input.weaknessCategory),
-      next_action: sanitizeLabel(input.nextAction),
-      completion_status: sanitizeLabel(input.completionStatus),
-      metadata: sanitizeMetadata(input.metadata),
-    };
-
-    const { error } = await supabase.from(TABLE).insert(row);
-    if (error) devWarn('[careerEvents] insert error', error);
+    const row = buildCareerEventInsertRow(userId, input);
+    if (!row) return; // guest / 未知 feature / 未知 event_type / 非 object は記録しない
+    await insert(row);
   } catch (err) {
     devWarn('[careerEvents] record threw', err);
   }

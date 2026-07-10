@@ -221,10 +221,16 @@ function CareerConsultationInner() {
         const t = afterAssistant.find((x) => x.id === threadId);
         if (t) void upsertCareerConsultationThreadsToSupabase(userId, [t]);
         // Event Log（本文なし・fire-and-forget / member のみ）。相談本文・回答本文は渡さない。
+        // clientEventId = 直前に append した assistant message の安定 id（localStorage / Supabase
+        // mirror と共通・イベント記録用の新規 UUID は発行しない）。retry / 再レンダー / 二重実行で
+        // 同一応答なら同じ id → (user_id, client_event_id) unique index が二重 INSERT を冪等吸収する。
+        // 別の相談応答は別 message id なので衝突しない。取得不能時のみ null（従来どおり非冪等）。
+        const assistantMessageId = t?.messages[t.messages.length - 1]?.id ?? null;
         void recordCareerEvent(userId, {
           feature: 'consultation',
           eventType: 'consultation_asked',
           completionStatus: 'completed',
+          clientEventId: assistantMessageId,
         });
       }
     } catch (e) {
