@@ -81,7 +81,7 @@ void (async () => {
     const routeSrc = readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8');
     check('route が空ブロックを filter', /\.filter\(\(s\) => s !== ''\)/.test(routeSrc));
     check('eventSignalsBlock は matching の後・OUTPUT の前', routeSrc.indexOf('eventSignalsBlock,') > routeSrc.indexOf('matchingBlock,') && routeSrc.indexOf('eventSignalsBlock,') < routeSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
-    check('route は renderer 経由（raw summary の serialize なし）', /renderCareerEventSignalsCompact\(b\.eventSignals\)/.test(routeSrc) && !/JSON\.stringify\(b\.eventSignals\)/.test(routeSrc));
+    check('route は guard 経由 renderer（raw summary の serialize なし）', /resolveConsultationEventSignalsBlock\(/.test(routeSrc) && /b\.eventSignals/.test(routeSrc) && !/JSON\.stringify\(b\.eventSignals\)/.test(routeSrc));
     // signal なし → 空ブロック（route が filter で除去 → prompt 不変）。
     check('undefined → 空ブロック', renderCareerEventSignalsCompact(undefined) === '');
     check('null → 空ブロック', renderCareerEventSignalsCompact(null) === '');
@@ -235,7 +235,7 @@ void (async () => {
     ];
     for (const rel of otherRoutes) {
       const src = readFileSync(join(ROOT, rel), 'utf8');
-      check(`${rel} に signals 非混入`, !/renderCareerEventSignalsCompact|eventSignals|loadCareerEventSignalSummary/.test(src));
+      check(`${rel} に signals 非混入`, !/renderCareerEventSignalsCompact|resolveConsultationEventSignalsBlock|eventSignals|loadCareerEventSignalSummary/.test(src));
     }
     const pages = ['app/career/matching/page.tsx', 'app/career/es/run/page.tsx', 'app/career/interview/session/page.tsx', 'app/career/presentation/session/page.tsx', 'app/career/gd/session/page.tsx', 'app/career/self-analysis/run/page.tsx'];
     for (const rel of pages) {
@@ -244,7 +244,7 @@ void (async () => {
     }
     // consultation のみが loader/renderer を使う。
     check('consultation page が loader を呼ぶ', /loadCareerEventSignalSummary/.test(readFileSync(join(ROOT, 'app/career/consultation/page.tsx'), 'utf8')));
-    check('consultation route が renderer を使う', /renderCareerEventSignalsCompact/.test(readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8')));
+    check('consultation route が guard 経由 renderer を使う', /resolveConsultationEventSignalsBlock/.test(readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8')));
   }
 
   console.log('');

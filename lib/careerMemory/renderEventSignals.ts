@@ -156,3 +156,14 @@ export function renderCareerEventSignalsCompact(summary: unknown): string {
   }
   return out;
 }
+
+/**
+ * consultation route の **server-authoritative** な Signal block 解決（P10-F guard）。
+ * pilot guard が無効なら、client が request body に eventSignals を強制付与していても
+ * **完全に無視**して空文字を返す（renderer を呼ばない＝malicious client の迂回不可）。
+ * 有効なら通常どおり compact render する（空文字は route の filter で除去される）。
+ */
+export function resolveConsultationEventSignalsBlock(enabled: boolean, eventSignals: unknown): string {
+  if (!enabled) return '';
+  return renderCareerEventSignalsCompact(eventSignals);
+}

@@ -210,7 +210,7 @@ void (async () => {
   {
     const root = process.cwd();
     const consultationRoute = readFileSync(join(root, 'app/api/career/consultation/route.ts'), 'utf8');
-    check('consultation route が renderer を使う', /renderCareerEventSignalsCompact/.test(consultationRoute) && /eventSignals/.test(consultationRoute));
+    check('consultation route が guard 経由 renderer を使う', /resolveConsultationEventSignalsBlock/.test(consultationRoute) && /b\.eventSignals/.test(consultationRoute) && /isConsultationEventSignalPilotEnabled/.test(consultationRoute));
 
     // 他の career API route に renderer / eventSignals が混入していないこと。
     const otherRoutes = [
@@ -226,7 +226,7 @@ void (async () => {
     ];
     for (const rel of otherRoutes) {
       const src = readFileSync(join(root, rel), 'utf8');
-      check(`${rel} に signals 非混入`, !/renderCareerEventSignalsCompact|eventSignals|loadCareerEventSignalSummary/.test(src));
+      check(`${rel} に signals 非混入`, !/renderCareerEventSignalsCompact|resolveConsultationEventSignalsBlock|eventSignals|loadCareerEventSignalSummary/.test(src));
     }
     // loader の production call site は consultation page のみ。
     const consultPage = readFileSync(join(root, 'app/career/consultation/page.tsx'), 'utf8');

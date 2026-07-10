@@ -53,6 +53,10 @@ import {
 } from '@/lib/supabase/careerConsultation';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { loadCareerEventSignalSummary } from '@/lib/careerMemory/loadEventSignals';
+import {
+  isConsultationEventSignalPilotEnabled,
+  shouldLoadConsultationEventSignals,
+} from '@/lib/careerMemory/eventSignalPilotGuard';
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
@@ -202,7 +206,9 @@ function CareerConsultationInner() {
     // guest では reader を呼ばない。取得失敗 / 0件 / timeout（soft 1000ms）は undefined で、その場合は
     // Signal なしで従来どおり相談を続行する（相談本体・thread 保存・event 記録を一切止めない）。
     // 現在処理中の consultation_asked は AI 応答成功後に記録されるため、この request には含まれない。
-    const eventSignals = userId
+    // P10-F: Operational Guard（Deployment guard・fail-closed）。無効なら loader を呼ばず reader 0 回・
+    // 1000ms 待ちなし・body へ eventSignals を付与しない（従来 request body と完全一致）。
+    const eventSignals = shouldLoadConsultationEventSignals(userId, isConsultationEventSignalPilotEnabled())
       ? await loadCareerEventSignalSummary({ userId, now: Date.now() })
       : undefined;
     try {

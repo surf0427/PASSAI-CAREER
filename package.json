@@ -40,6 +40,7 @@
     "qa:careerEventSignalReader": "npx tsx scripts/career-event-signal-reader-qa.ts",
     "qa:careerEventSignalConsultation": "npx tsx scripts/career-event-signal-consultation-qa.ts",
     "qa:careerEventSignalAftercare": "npx tsx scripts/career-event-signal-aftercare-qa.ts",
+    "qa:careerEventSignalOperationalGuard": "npx tsx scripts/career-event-signal-operational-guard-qa.ts",
     "qa:careerContextCore": "npm run qa:careerPersonaSpotcheck && npm run qa:careerMemoryPromptGolden && npm run qa:careerMemoryMatching && npm run qa:careerMatchingEsRender && npm run qa:careerMatchingEsBody",
     "qa:careerMemoryAll": "npm run qa:careerContextCore && npm run qa:careerMemoryPresentation && npm run qa:careerMemoryInterview && npm run qa:careerMemoryConsultation && npm run qa:careerInterviewEsRender && npm run qa:careerPresentationEsRender && npm run qa:careerPresentationEsBody",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"

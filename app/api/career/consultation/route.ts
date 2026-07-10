@@ -56,7 +56,9 @@ import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 // P10-D: L2 Event Signal を「最近の準備状況を踏まえた次アクション提案の補助」としてのみ描画する。
 //   構造化 summary（bucket/band のみ）を server 側で固定ラベルへ render する（生 JSON は prompt に出さない）。
-import { renderCareerEventSignalsCompact } from '@/lib/careerMemory/renderEventSignals';
+// P10-F: server-authoritative な guard で解決する（無効なら client 強制 body を無視して空文字）。
+import { resolveConsultationEventSignalsBlock } from '@/lib/careerMemory/renderEventSignals';
+import { isConsultationEventSignalPilotEnabled } from '@/lib/careerMemory/eventSignalPilotGuard';
 // P4-B: str を共通 util へ集約（strArray は route 固有のため local 維持・内部で共通 str を使用）。
 import { str } from '@/lib/careerMemory/summaryUtils';
 
@@ -479,10 +481,14 @@ export async function POST(req: Request) {
         .slice(0, 2)
     : [];
   const matchingBlock = formatMatchingConsultationForPrompt(matchingSnapshots);
-  // P10-D: L2 Event Signal（最下位・補助ブロック）。summary が無い / 不正 / 描画不能なら空文字 →
-  //   filter で除去され Signal なし prompt は完全不変（既存 golden 維持）。renderer が固定ラベル・
-  //   固定 note・byte cap を担保し、能力/意欲/適性の断定や生 JSON・本文・PII を出さない。
-  const eventSignalsBlock = renderCareerEventSignalsCompact(b.eventSignals);
+  // P10-D/F: L2 Event Signal（最下位・補助ブロック）。P10-F guard が無効なら client が eventSignals を
+  //   強制付与していても server 側で無視して空文字（renderer 非実行・迂回不可）。有効時のみ render し、
+  //   summary が無い / 不正 / 描画不能なら空文字。空文字は下の filter で除去され Signal なし prompt は
+  //   完全不変（既存 golden 維持）。renderer が固定ラベル・固定 note・byte cap を担保する。
+  const eventSignalsBlock = resolveConsultationEventSignalsBlock(
+    isConsultationEventSignalPilotEnabled(),
+    b.eventSignals,
+  );
 
   const systemPrompt = [
     COMMANDER_PERSONA,
