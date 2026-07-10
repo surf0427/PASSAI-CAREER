@@ -33,7 +33,9 @@
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",
     "qa:careerEventsWriter": "npx tsx scripts/career-event-writer-qa.ts",
-    "qa:careerEvents": "npm run qa:careerEventsTimeline && npm run qa:careerEventsWriter",
+    "qa:careerEventsSql": "npx tsx scripts/career-event-sql-contract-qa.ts",
+    "qa:careerEventsCallsites": "npx tsx scripts/career-event-callsite-contract-qa.ts",
+    "qa:careerEvents": "npm run qa:careerEventsTimeline && npm run qa:careerEventsWriter && npm run qa:careerEventsSql && npm run qa:careerEventsCallsites",
     "qa:careerContextCore": "npm run qa:careerPersonaSpotcheck && npm run qa:careerMemoryPromptGolden && npm run qa:careerMemoryMatching && npm run qa:careerMatchingEsRender && npm run qa:careerMatchingEsBody",
     "qa:careerMemoryAll": "npm run qa:careerContextCore && npm run qa:careerMemoryPresentation && npm run qa:careerMemoryInterview && npm run qa:careerMemoryConsultation && npm run qa:careerInterviewEsRender && npm run qa:careerPresentationEsRender && npm run qa:careerPresentationEsBody",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"
