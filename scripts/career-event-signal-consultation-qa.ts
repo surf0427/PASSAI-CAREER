@@ -119,12 +119,12 @@ void (async () => {
     check('直近利用行（日本語ラベル）', full.includes('・直近利用：面接、ES、企業研究'));
     check('利用量行（bucket）', full.includes('・利用量の目安：面接 2-3、ES 1、企業研究 1'));
     check('最新評価帯行（band+recency）', full.includes('・最新評価帯（練習時点）：プレゼン A（7日以内）、GD B（30日以内）'));
-    check('固定 note を含む', full.includes('※利用量や評価帯は能力・意欲・適性を示しません'));
-    check('note に本人入力優先', full.includes('本人の入力を優先'));
+    check('固定 note を含む', full.includes('※参考情報です。利用量・未利用・評価帯は能力・意欲・適性・合否・弱みを意味しません'));
+    check('note に本人入力優先', full.includes('本人の入力を最優先'));
     check('note に次の準備提案の補助', full.includes('次の準備提案の補助'));
     check('最大5行', full.split('\n').length <= 5);
     check('heading は1回', (full.match(/【参考/g) ?? []).length === 1);
-    check('note は1回', (full.match(/※利用量/g) ?? []).length === 1);
+    check('note は1回', (full.match(/※参考情報/g) ?? []).length === 1);
     check('exact timestamp なし', !/\d{4}-\d{2}-\d{2}T/.test(full));
     check('生 JSON なし', !/[{}\[\]]/.test(full));
 
@@ -132,7 +132,7 @@ void (async () => {
     const one = renderCareerEventSignalsCompact(summaryFixture({ recentFeatures: ['es'], featureUsage: { es: '1' }, latestBands: undefined }));
     check('1 feature: 直近利用 ES', one.includes('・直近利用：ES'));
     check('1 feature: latestBands 行なし', !one.includes('最新評価帯'));
-    check('1 feature: note は残る', one.includes('※利用量'));
+    check('1 feature: note は残る', one.includes('※参考情報'));
 
     // latestBands なし。
     const noBands = renderCareerEventSignalsCompact(summaryFixture({ latestBands: undefined }));
@@ -202,7 +202,7 @@ void (async () => {
     for (const m of ['山田太郎', 'a@b.com', '東京大学', '秘密社', 'ES本文', 'prompt本文', 'GD発言', 'ABC123', USER, 'evt-1', 'cid', 'coid']) {
       check(`PII/本文 非出力: ${m.slice(0, 6)}`, !out.includes(m));
     }
-    check('render は正常 field のみ出力', out.includes('面接') && out.includes('※利用量'));
+    check('render は正常 field のみ出力', out.includes('面接') && out.includes('※参考情報'));
   }
 
   // ── D. Purpose isolation（静的） ───────────────────────────────
@@ -255,11 +255,11 @@ void (async () => {
   {
     const out = renderCareerEventSignalsCompact(summaryFixture());
     check('Signal block が 1 回だけ表示', (out.match(/【参考/g) ?? []).length === 1);
-    check('note が 1 回', (out.match(/※利用量/g) ?? []).length === 1);
+    check('note が 1 回', (out.match(/※参考情報/g) ?? []).length === 1);
     check('exact count なし（数値は bucket/band のみ）', !/：\d+回|\b\d{2,}\b/.test(out.replace(/30日|24|7日/g, '')));
     check('exact timestamp なし', !/\d{4}-\d{2}-\d{2}/.test(out));
     check('能力/意欲を断定する語がない', !/能力が高い|意欲が高い|苦手|得意です/.test(out));
-    check('本人入力優先が明示', out.includes('本人の入力を優先'));
+    check('本人入力優先が明示', out.includes('本人の入力を最優先'));
     check('次アクション補助に限定', out.includes('次の準備提案の補助'));
     check('render cap 以内（<=700B）', Buffer.byteLength(out, 'utf8') <= 700);
   }

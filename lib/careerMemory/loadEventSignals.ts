@@ -56,11 +56,16 @@ export async function loadCareerEventSignalSummary(
     })();
 
     // soft timeout: 超過しても相談を止めず undefined を返す（work は放置・結果は捨てる）。
+    // timer は race 解決後に必ず clear する（fast path で 1000ms の残存 timer を残さない）。
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<undefined>((resolve) => {
-      setTimeout(() => resolve(undefined), SIGNAL_SOFT_TIMEOUT_MS);
+      timer = setTimeout(() => resolve(undefined), SIGNAL_SOFT_TIMEOUT_MS);
     });
-
-    return await Promise.race([work, timeout]);
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   } catch {
     devWarn('[eventSignals] load skipped'); // userId / rows / summary は出さない
     return undefined;
