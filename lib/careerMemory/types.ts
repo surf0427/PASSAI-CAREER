@@ -346,19 +346,11 @@ export type ConsultationMemorySummary = {
   recentActions: string[];
 };
 
-// career_user_events: 本文なし metadata signal の集約（member-only。guest は空）。
-export type CareerEventSignalSummary = {
-  // member 判定（guest は false で全 signal 空）。
-  memberScoped: boolean;
-  // 機能別の完了状況（feature → 完了イベント有無/回数の要約）。
-  completionByFeature: Array<{ feature: CareerMemoryFeature; count: number }>;
-  // 繰り返し観測された弱みカテゴリ。
-  weaknessCategories: string[];
-  // 直近の次アクション ラベル。
-  nextActions: string[];
-  // スコア band 分布（生スコアは持たない）。
-  scoreBands: string[];
-};
+// career_user_events 由来の L2 Personal Event Signal（P10-B で安全な v1 schema へ置換）。
+// 実体・builder は lib/careerMemory/eventSignals.ts（本文なし・bucket/band のみ）。snapshot の
+// `signals?` 用に型を import（local 束縛）+ re-export する。type-only のため runtime 不変・循環なし。
+import type { CareerEventSignalSummary } from './eventSignals';
+export type { CareerEventSignalSummary };
 
 // ── Career Memory Snapshot（route 横断の中央メモリ。全 block optional） ─────────────
 // selector は purpose に応じて「必要 block のみ」を埋める。空 block は undefined のまま。
