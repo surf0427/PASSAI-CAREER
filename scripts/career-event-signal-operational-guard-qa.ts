@@ -214,7 +214,7 @@ void (async () => {
     check('Signal block: heavy <=700B（prompt delta）', bytes(heavyBlock) <= 700);
     check('request body eventSignals JSON <=700B', bytes(heavyBodyJson) <= 700);
     check('guard OFF → body/prompt delta 0（従来一致）', resolveConsultationEventSignalsBlock(false, heavySummary) === '' && !shouldLoadConsultationEventSignals(USER, false));
-    console.log(`  info  budget: prompt block no-signal=0B heavy=${bytes(heavyBlock)}B / body JSON delta heavy=${bytes(heavyBodyJson)}B (base body 9196B は career-context-budget-qa で不変確認済み)`);
+    console.log(`  info  budget: prompt block no-signal=0B heavy=${bytes(heavyBlock)}B / body JSON delta heavy=${bytes(heavyBodyJson)}B (consultation の full request body / system prompt 絶対 byte は career-event-signal-consolidation-qa で実測)`);
   }
 
   // ── 8. Guard OFF neutrality ───────────────────────────────────
