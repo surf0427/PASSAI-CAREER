@@ -54,6 +54,9 @@ import {
 } from '@/lib/careerConsultation/historySnapshots';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
+// P10-D: L2 Event Signal を「最近の準備状況を踏まえた次アクション提案の補助」としてのみ描画する。
+//   構造化 summary（bucket/band のみ）を server 側で固定ラベルへ render する（生 JSON は prompt に出さない）。
+import { renderCareerEventSignalsCompact } from '@/lib/careerMemory/renderEventSignals';
 // P4-B: str を共通 util へ集約（strArray は route 固有のため local 維持・内部で共通 str を使用）。
 import { str } from '@/lib/careerMemory/summaryUtils';
 
@@ -393,6 +396,8 @@ export async function POST(req: Request) {
     gd?: unknown;
     gdRoom?: unknown;
     matching?: unknown;
+    // P10-D: L2 Event Signal（構造化 summary。client の member 時のみ付与・supplemental）。
+    eventSignals?: unknown;
   };
 
   const message = str(b.message);
@@ -474,6 +479,10 @@ export async function POST(req: Request) {
         .slice(0, 2)
     : [];
   const matchingBlock = formatMatchingConsultationForPrompt(matchingSnapshots);
+  // P10-D: L2 Event Signal（最下位・補助ブロック）。summary が無い / 不正 / 描画不能なら空文字 →
+  //   filter で除去され Signal なし prompt は完全不変（既存 golden 維持）。renderer が固定ラベル・
+  //   固定 note・byte cap を担保し、能力/意欲/適性の断定や生 JSON・本文・PII を出さない。
+  const eventSignalsBlock = renderCareerEventSignalsCompact(b.eventSignals);
 
   const systemPrompt = [
     COMMANDER_PERSONA,
@@ -487,6 +496,8 @@ export async function POST(req: Request) {
     gdBlock,
     gdRoomBlock,
     matchingBlock,
+    // Event Signal は最も優先度の低い補助情報として主要 memory の後に置く。
+    eventSignalsBlock,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')

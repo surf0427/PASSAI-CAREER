@@ -52,6 +52,7 @@ import {
   deleteCareerConsultationThreadFromSupabase,
 } from '@/lib/supabase/careerConsultation';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
+import { loadCareerEventSignalSummary } from '@/lib/careerMemory/loadEventSignals';
 import type {
   CareerConsultationThread,
   CareerConsultationMessage,
@@ -197,11 +198,23 @@ function CareerConsultationInner() {
     }
 
     const ctx = buildConsultationContext(gdResultId);
+    // L2 Event Signal（member のみ・完全に supplemental）。認証 session 由来の userId のみ使用し、
+    // guest では reader を呼ばない。取得失敗 / 0件 / timeout（soft 1000ms）は undefined で、その場合は
+    // Signal なしで従来どおり相談を続行する（相談本体・thread 保存・event 記録を一切止めない）。
+    // 現在処理中の consultation_asked は AI 応答成功後に記録されるため、この request には含まれない。
+    const eventSignals = userId
+      ? await loadCareerEventSignalSummary({ userId, now: Date.now() })
+      : undefined;
     try {
       const res = await fetch('/api/career/consultation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, history, ...ctx }),
+        body: JSON.stringify({
+          message: trimmed,
+          history,
+          ...ctx,
+          ...(eventSignals ? { eventSignals } : {}),
+        }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
