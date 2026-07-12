@@ -26,6 +26,11 @@ import {
   buildPresentationCrossFeatureContext,
   type PresentationCrossFeatureInput,
 } from '@/lib/careerMemory/renderers/presentationCrossFeature';
+// P15-B: interview_practice の機能横断 context も orchestrator 経由で組む（byte-identical）。
+import {
+  buildInterviewCrossFeatureContext,
+  type InterviewCrossFeatureInput,
+} from '@/lib/careerMemory/renderers/interviewCrossFeature';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -42,14 +47,17 @@ function stripProfilePiiForPrompt(
 export type CareerContextExtras = {
   // presentation_feedback のときだけ意味を持つ機能横断 snapshot。
   presentation?: PresentationCrossFeatureInput;
+  // P15-B: interview_practice のときだけ意味を持つ機能横断 snapshot。
+  interview?: InterviewCrossFeatureInput;
 };
 
 export type CareerPurposeContext = {
   purpose: CareerContextPurpose;
   // base career system prompt（P3-A/P3-B では buildCareerSystemPrompt と同一文字列）。
   systemPrompt: string;
-  // P15-A: purpose 別の機能横断 context block（決定的）。extras が無い / 対象外 purpose では ''。
-  //   現状 presentation_feedback のみ通電（自己分析 / ES / 面接 / マッチング / 相談AI の参考ブロック）。
+  // P15-A/B: purpose 別の機能横断 context block（決定的）。extras が無い / 対象外 purpose では ''。
+  //   presentation_feedback（P15-A）/ interview_practice（P15-B）で通電。purpose ごとに専用 renderer を呼ぶ
+  //   （混在しない）。base system prompt はこの block を含まない（route が base と別に受け取る）。
   crossFeatureContext: string;
   // 適用された purpose policy（宣言。実際の section 削減は P3-C 以降）。
   policy: CareerContextPolicy;
@@ -99,13 +107,15 @@ export function buildCareerContextForPurpose(
 
   const systemPrompt = buildCareerSystemPrompt(effectiveContext, { activityLimits });
 
-  // P15-A: purpose を確認し、presentation_feedback かつ cross-feature 入力があるときだけ
-  //   canonical renderer で機能横断 block を決定的に組む（他 purpose へは投入しない）。
+  // P15-A/B: purpose を確認し、対象 purpose かつ cross-feature 入力があるときだけ canonical renderer で
+  //   機能横断 block を決定的に組む（purpose ごとに専用 renderer。混在させず、他 purpose へは投入しない）。
   //   base（systemPrompt）の byte・意味は不変。route はこの block を base とは別に受け取る。
-  const crossFeatureContext =
-    purpose === 'presentation_feedback' && extras?.presentation
-      ? buildPresentationCrossFeatureContext(extras.presentation)
-      : '';
+  let crossFeatureContext = '';
+  if (purpose === 'presentation_feedback' && extras?.presentation) {
+    crossFeatureContext = buildPresentationCrossFeatureContext(extras.presentation);
+  } else if (purpose === 'interview_practice' && extras?.interview) {
+    crossFeatureContext = buildInterviewCrossFeatureContext(extras.interview);
+  }
 
   const estimatedChars = systemPrompt.length;
   const isOverPolicyBudget = estimatedChars > policy.maxContextChars;

@@ -21,10 +21,9 @@ import type {
   CareerInterviewTarget,
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import {
-  type InterviewCompanyResearchContext,
-  formatInterviewCompanyResearchForPrompt,
-} from '@/lib/careerCompanyResearch/context';
+// P15-B: 企業研究ブロックの render は orchestrator 経由の interview canonical renderer が担うため、
+//   本ファイルでは型のみ参照する（formatInterviewCompanyResearchForPrompt の呼び出しは renderer 側）。
+import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import {
   getInterviewModeConfig,
   SHARED_INTERVIEWER_RULES,
@@ -152,71 +151,11 @@ function buildPersonaBlock(interviewType: CareerInterviewType | undefined): stri
   ].join('\n');
 }
 
-// 直近の自己分析結果を可読テキストに整形（未提供なら空文字）。
-function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  // v2 フィールドは旧ログで undefined になり得るため、空・非配列は無視して防御する。
-  const push = (label: string, value: string | undefined) => {
-    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
-  };
-  const pushList = (label: string, values: string[] | undefined) => {
-    if (values && values.length > 0) lines.push(`- ${label}: ${values.join('、')}`);
-  };
-  push('全体所感', result.summary);
-  push('キャリアの方向性', result.careerDirection);
-  pushList('強み', result.strengths);
-  pushList('弱み', result.weaknesses);
-  pushList('今後伸ばすべき点', result.developmentPoints);
-  pushList('ガクチカ候補', result.gakuchikaIdeas);
-  pushList('自己PR候補', result.selfPrIdeas);
-  return lines.join('\n');
-}
-
-// 直近の ES 結果を可読テキストに整形（未提供なら空文字）。
-function renderEs(result: CareerEsResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  const push = (label: string, value: string) => {
-    if (value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
-  };
-  push('キャッチコピー', result.headline);
-  push('ガクチカ', result.gakuchika);
-  push('自己PR', result.selfPr);
-  push('志望動機', result.motivation);
-  return lines.join('\n');
-}
-
-// 就活マッチング結果を可読テキストに整形（未提供なら空文字）。
-// 「想定企業との相性」を語るための材料として参照する（断定はしない）。
-function renderMatching(result: CareerMatchEngineResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  const push = (label: string, value: string | undefined) => {
-    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
-  };
-  const pushList = (label: string, values: string[] | undefined, max: number) => {
-    if (values && values.length > 0) {
-      lines.push(`- ${label}: ${values.slice(0, max).join('、')}`);
-    }
-  };
-  push('適性タイプ', result.careerType);
-  pushList('相性の良い業界', result.recommendedIndustries, 5);
-  pushList('相性の良い職種', result.recommendedJobs, 5);
-  pushList('今後の伸ばしどころ', result.developmentAreas, 4);
-  return lines.join('\n');
-}
-
-// 相談AIでの最近の気づきを可読テキストに整形（参考程度・未提供なら空文字）。
-function renderConsultationInsights(insights: string[] | null | undefined): string {
-  if (!insights || insights.length === 0) return '';
-  return insights
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
-    .slice(0, 5)
-    .map((s) => `- ${s}`)
-    .join('\n');
-}
+// P15-B: 機能横断（自己分析 / ES / マッチング / 相談AI / 企業研究）の render は Context Orchestrator 経由の
+//   canonical renderer（lib/careerMemory/renderers/interviewCrossFeature）へ移設した。
+//   builder 側は同じ横断情報を再 render しない（byte 出力は移設前と 1 byte も変えない）。
+//   Interview 固有 contract（自己分析の developmentPoints / ES cap なし / マッチングの developmentAreas）は
+//   canonical 実装側で維持する（presentation renderer へは寄せない）。
 
 export type CareerInterviewContextInput = {
   profile?: CareerProfileInput | null;
@@ -247,15 +186,20 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
   });
   // P3-A: base system prompt を Context Orchestrator（purpose=interview_practice）経由で取得する。
   //   start/turn/complete が共有する builder。委譲のため出力は現行と byte 単位で同一。
-  const orchestrated = buildCareerContextForPurpose('interview_practice', context);
+  // P15-B: 機能横断 context（自己分析/ES/マッチング/相談AI/企業研究）の組み立ても orchestrator へ移設。
+  //   builder 側は手組みせず、orchestrated.crossFeatureContext を targetBlock と面接の狙いの間に置く
+  //   （挿入位置・順序・見出しは移設前と同一）。output byte は不変（byte parity harness で担保）。
+  const orchestrated = buildCareerContextForPurpose('interview_practice', context, {
+    interview: {
+      selfAnalysis: input.selfAnalysis ?? null,
+      es: input.es ?? null,
+      matching: input.matching ?? null,
+      consultationInsights: input.consultationInsights ?? null,
+      companyResearch: input.companyResearch ?? null,
+    },
+  });
 
   const config = getInterviewModeConfig(input.interviewType);
-  const selfAnalysisBlock = renderSelfAnalysis(input.selfAnalysis);
-  const esBlock = renderEs(input.es);
-  const matchingBlock = renderMatching(input.matching);
-  const consultationBlock = renderConsultationInsights(input.consultationInsights);
-  // 企業研究ログが選択されているときのみブロックを出す（未選択なら従来どおり）。
-  const companyResearchBlock = formatInterviewCompanyResearchForPrompt(input.companyResearch);
   // 前段で入力した受験先・選考の想定（任意）。企業名があるときのみ出す。
   const targetBlock = buildTargetBlock(input.target);
 
@@ -265,11 +209,8 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     //   同一 system message 内の二重 append を削除（schema・評価指示は不変の純粋な重複除去）。
     orchestrated.systemPrompt,
     targetBlock,
-    selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
-    esBlock ? `# 直近の ES ドラフト\n${esBlock}` : '',
-    matchingBlock ? `# 就活マッチング結果（参考・断定しない）\n${matchingBlock}` : '',
-    consultationBlock ? `# 相談AIでの最近の気づき（参考程度）\n${consultationBlock}` : '',
-    companyResearchBlock,
+    // P15-B: 自己分析/ES/マッチング/相談AI/企業研究の各ブロックは crossFeatureContext に決定的に集約済み。
+    orchestrated.crossFeatureContext,
     `# この面接の狙い（${config.label}）\n${config.guidance}`,
     `# 深掘りで扱える観点（毎回この中から最も価値が高い1点を選ぶ）\n${CAREER_INTERVIEW_TOPICS.map((t) => `- ${t}`).join('\n')}`,
   ]
