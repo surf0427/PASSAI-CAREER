@@ -2,16 +2,18 @@
 
 // 就活版（CAREER）メール OTP ログインページ。
 //
-// フロー:
+// フロー（受験版 app/login/page.tsx と同型）:
 //   1. メール入力 → OTP 送信（sendCareerEmailOtp）。
 //   2. メールに届いたコードを入力 → verifyCareerEmailOtp で検証しセッション確立。
-//   3. 成功後の遷移先:
-//      - display_user_id 未設定 → /career/onboarding/profile（redirect を引き継ぐ）
-//      - 設定済み             → redirect クエリ（相対パスのみ）or /career/home
-//      いずれも window.location で **フル遷移** し、CareerAuthProvider を再マウントさせて
-//      新セッションを読み直す。
+//   3. 成功後は redirect クエリ（相対パスのみ）or /career/home へ window.location で
+//      **フル遷移**し、CareerAuthProvider を再マウントさせて新セッションを読み直す。
+//      表示ID（display_user_id）の有無で遷移先を分岐しない（受験版と整合）。
 //
-// 原則: identity は auth.users.id。display_user_id は表示用で認証に使わない。
+// 原則: identity は auth.users.id。display_user_id は表示用で認証・遷移判定に使わない。
+//   - career_accounts 行は CareerAuthProvider.load() が member 確定時に lazy 作成する
+//     （受験版 AuthProvider の ensureProfile と同型）。ログインページは行作成をしない。
+//   - 表示ID未設定を理由に /career/onboarding/profile へ強制遷移しない（旧フロー廃止）。
+//     表示IDは任意のプロフィール設定として CareerLoginStatusCard から後で設定できる。
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -27,49 +29,29 @@ import {
   sendCareerEmailOtp,
   verifyCareerEmailOtp,
 } from '@/lib/careerSupabase/auth';
-import { ensureCareerAccount } from '@/lib/careerSupabase/account';
 import { useCareerAuth } from '@/app/career/components/CareerAuthProvider';
-
-const DEFAULT_REDIRECT = '/career/home';
-const ONBOARDING_PATH = '/career/onboarding/profile';
-
-/**
- * open-redirect 防止: redirect は **同一オリジンの相対パス** のみ許可する。
- * 先頭が "/" で、"//" / "/\" のような protocol-relative を弾く。
- */
-function sanitizeRedirect(raw: string | null): string {
-  if (!raw) return DEFAULT_REDIRECT;
-  if (!raw.startsWith('/')) return DEFAULT_REDIRECT;
-  if (raw.startsWith('//') || raw.startsWith('/\\')) return DEFAULT_REDIRECT;
-  return raw;
-}
+import { sanitizeCareerRedirect } from './careerLoginRedirect';
 
 type Step = { kind: 'email' } | { kind: 'code'; email: string };
 
 function CareerLoginForm() {
   const searchParams = useSearchParams();
   const safeRedirect = useMemo(
-    () => sanitizeRedirect(searchParams.get('redirect')),
+    () => sanitizeCareerRedirect(searchParams.get('redirect')),
     [searchParams],
   );
 
   const router = useRouter();
-  const { status, account } = useCareerAuth();
+  const { status } = useCareerAuth();
 
-  // 既にログイン済み（member）なら OTP を要求せず遷移する。
-  // display_user_id 未設定なら onboarding、設定済みなら redirect 先へ。
+  // 既にログイン済み（member）なら OTP を要求せず redirect 先へ（受験版と同型）。
+  // display_user_id の有無では分岐しない（表示ID未設定でも member として利用可能）。
   const alreadyLoggedIn = status === 'member';
   useEffect(() => {
-    if (!alreadyLoggedIn) return;
-    // 行が無い（account=null）/ display_user_id 未設定なら onboarding、設定済みなら redirect 先へ。
-    if (!account || !account.displayUserId) {
-      router.replace(
-        `${ONBOARDING_PATH}?redirect=${encodeURIComponent(safeRedirect)}`,
-      );
-    } else {
+    if (alreadyLoggedIn) {
       router.replace(safeRedirect);
     }
-  }, [alreadyLoggedIn, account, router, safeRedirect]);
+  }, [alreadyLoggedIn, router, safeRedirect]);
 
   const [step, setStep] = useState<Step>({ kind: 'email' });
 
@@ -130,20 +112,11 @@ function CareerLoginForm() {
       return;
     }
 
-    // セッション確立済み。career_accounts 行を確保（初回ログインは display_user_id=null で
-    // 作成）してから、display_user_id の有無で遷移先を分岐する。
-    const ensured = await ensureCareerAccount(result.userId, result.email);
-    const needsOnboarding =
-      ensured.kind !== 'ok' || !ensured.account.displayUserId;
-
-    // フル遷移で CareerAuthProvider を再マウントし、新セッションを読み直す。
-    if (needsOnboarding) {
-      window.location.assign(
-        `${ONBOARDING_PATH}?redirect=${encodeURIComponent(safeRedirect)}`,
-      );
-    } else {
-      window.location.assign(safeRedirect);
-    }
+    // セッション確立済み（result.kind === 'ok'）。受験版 app/login と同型で、表示IDの
+    // 有無に関わらず safeRedirect へフル遷移する。career_accounts 行の lazy 作成は
+    // 遷移先で再マウントされる CareerAuthProvider.load()（ensureCareerAccount）に委ねる。
+    // フル遷移により provider が再マウントし、新セッション（永続ユーザー）を読み直す。
+    window.location.assign(safeRedirect);
   }
 
   async function handleResend() {
