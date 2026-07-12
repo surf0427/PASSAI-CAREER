@@ -34,6 +34,7 @@ import {
   loadCareerValuesFromSupabase,
   saveCareerValuesToSupabase,
 } from '@/lib/supabase/careerValues';
+import { shadowWriteBaseMemory } from '@/app/career/personalMemoryShadowWrite';
 import type {
   CareerValues,
   CareerValuesCategoryKey,
@@ -148,6 +149,8 @@ function ValuesForm({ initial }: { initial: CareerValues | null }) {
     // Supabase durable mirror（best-effort / member のみ）。失敗しても保存成功表示は維持する。
     if (currentUserId) {
       void saveCareerValuesToSupabase(currentUserId, saved);
+      // P16-D: Personal Memory base shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+      void shadowWriteBaseMemory();
     }
   }, [values, currentUserId]);
 

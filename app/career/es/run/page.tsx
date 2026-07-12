@@ -33,6 +33,7 @@ import {
 } from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
+import { shadowWriteEsMemory } from '@/app/career/personalMemoryShadowWrite';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
@@ -197,6 +198,8 @@ export default function CareerEsRunPage() {
       appendEsLog(log);
       // Supabase durable mirror（best-effort / member のみ）。
       if (userId) void upsertCareerEsLogsToSupabase(userId, [log]);
+      // P16-D: Personal Memory shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+      void shadowWriteEsMemory();
       // Event Log（本文なし・fire-and-forget / member のみ）。設問本文・生成本文は渡さない。
       void recordCareerEvent(userId, {
         feature: 'es',

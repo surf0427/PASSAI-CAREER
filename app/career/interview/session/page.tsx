@@ -25,6 +25,7 @@ import {
   upsertCareerInterviewSessionsToSupabase,
   upsertCareerInterviewResultsToSupabase,
 } from '@/lib/supabase/careerInterview';
+import { shadowWriteInterviewMemory } from '@/app/career/personalMemoryShadowWrite';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
 import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
@@ -254,6 +255,8 @@ export default function CareerInterviewSessionPage() {
       if (userIdRef.current) {
         void upsertCareerInterviewSessionsToSupabase(userIdRef.current, [completed]);
         void upsertCareerInterviewResultsToSupabase(userIdRef.current, [resultLog]);
+        // P16-D: Personal Memory shadow write（完成 result のみ・flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+        void shadowWriteInterviewMemory();
         // Event Log（本文なし・fire-and-forget / member のみ）。面接回答本文は渡さない。
         void recordCareerEvent(userIdRef.current, {
           feature: 'interview',

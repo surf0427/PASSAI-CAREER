@@ -29,6 +29,7 @@ import {
 import { appendSelfAnalysisLog, loadSelfAnalysisLogs } from '../selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerSelfAnalysisResultsToSupabase } from '@/lib/supabase/careerSelfAnalysis';
+import { shadowWriteSelfAnalysisMemory } from '@/app/career/personalMemoryShadowWrite';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import type { BasicInfo } from '@/types/basicInfo';
@@ -271,6 +272,8 @@ export default function CareerSelfAnalysisRunPage() {
       // Supabase durable mirror（best-effort / member のみ）。
       if (userId) {
         void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
+        // P16-D: Personal Memory shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+        void shadowWriteSelfAnalysisMemory();
         // Event Log（本文なし・fire-and-forget / member のみ）。自己分析本文・AI出力本文・
         // 強み弱み本文・深掘り質問/回答本文・userInput は渡さない。深掘り回数のみ turnCount で記録。
         // event_type は ai_generated（AI生成物である点で ES と同方針）。

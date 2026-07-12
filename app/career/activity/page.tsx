@@ -77,6 +77,7 @@ import {
   loadCareerActivityFromSupabase,
   saveCareerActivityToSupabase,
 } from '@/lib/supabase/careerActivity';
+import { shadowWriteBaseMemory } from '@/app/career/personalMemoryShadowWrite';
 
 // SSR-stable mount flag（home/values と同形）。
 const subscribeMount = () => () => {};
@@ -148,6 +149,8 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
         mirrorTimerRef.current = null;
         if (pending && userIdRef.current) {
           void saveCareerActivityToSupabase(userIdRef.current, pending);
+          // P16-D: Personal Memory base shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+          void shadowWriteBaseMemory();
         }
       }, 1500);
     }

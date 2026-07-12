@@ -9,6 +9,7 @@ import {
   loadCareerProfileFromSupabase,
   saveCareerProfileToSupabase,
 } from '@/lib/supabase/careerProfile';
+import { shadowWriteBaseMemory } from '@/app/career/personalMemoryShadowWrite';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { FormField } from '@/components/ui/FormField';
@@ -194,6 +195,8 @@ export default function ProfileClient() {
     saveBasicInfo(profile);
     // Supabase durable mirror（best-effort / member のみ）。失敗しても遷移は止めない。
     if (userId) void saveCareerProfileToSupabase(userId, profile);
+    // P16-D: Personal Memory base shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
+    void shadowWriteBaseMemory();
     router.push('/career/home');
   }
 
