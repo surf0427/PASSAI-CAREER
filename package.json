@@ -31,6 +31,7 @@
     "qa:careerInterviewEsRender": "npx tsx scripts/career-interview-es-render-golden-qa.ts",
     "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
+    "qa:careerPresentationOrchestratorParity": "npx tsx scripts/career-presentation-orchestrator-parity-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",
     "qa:careerEventsWriter": "npx tsx scripts/career-event-writer-qa.ts",
     "qa:careerEventsSql": "npx tsx scripts/career-event-sql-contract-qa.ts",

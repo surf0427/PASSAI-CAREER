@@ -16,10 +16,8 @@ import type {
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 // P7-F: presentation は ES を presentation-local strict summary で受け取り render する
 //   （full CareerEsResult carry をやめ、gakuchika/selfPr/motivation を 300 字 cap・headline 80 字 cap）。
-import {
-  renderPresentationEsSummary,
-  type PresentationEsSummary,
-} from '@/lib/careerMemory/presentationEs';
+// P15-A: render 自体は orchestrator 経由の canonical renderer が担うため、型のみ参照する。
+import type { PresentationEsSummary } from '@/lib/careerMemory/presentationEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
@@ -135,57 +133,10 @@ function buildEvaluatorPersona(ctx: CareerPresentationPromptContext): string {
   ].join('\n');
 }
 
-function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  const push = (label: string, value: string | undefined) => {
-    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
-  };
-  const pushList = (label: string, values: string[] | undefined) => {
-    if (values && values.length > 0) lines.push(`- ${label}: ${values.join('、')}`);
-  };
-  push('全体所感', result.summary);
-  push('キャリアの方向性', result.careerDirection);
-  pushList('強み', result.strengths);
-  pushList('弱み', result.weaknesses);
-  pushList('ガクチカ候補', result.gakuchikaIdeas);
-  pushList('自己PR候補', result.selfPrIdeas);
-  return lines.join('\n');
-}
-
-// P7-F: presentation の ES block render は renderPresentationEsSummary（lib/careerMemory/presentationEs）
-//   へ移設。headline / gakuchika(cap) / selfPr(cap) / motivation(cap) の 4 field を出す（cap 済み・
-//   未使用 field は出さない）。useCareerContext gate は buildPresentationBaseSystem 側で不変。
-
-function renderInterview(result: CareerInterviewFinalResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  if (result.overallComment?.trim()) lines.push(`- 面接の総評: ${result.overallComment.trim()}`);
-  if (result.strengths?.length) lines.push(`- 面接での良かった点: ${result.strengths.join('、')}`);
-  if (result.improvements?.length) lines.push(`- 面接での改善点: ${result.improvements.join('、')}`);
-  return lines.join('\n');
-}
-
-function renderMatching(result: CareerMatchEngineResult | null | undefined): string {
-  if (!result) return '';
-  const lines: string[] = [];
-  if (result.careerType?.trim()) lines.push(`- 適性タイプ: ${result.careerType.trim()}`);
-  if (result.recommendedIndustries?.length)
-    lines.push(`- 相性の良い業界: ${result.recommendedIndustries.slice(0, 5).join('、')}`);
-  if (result.recommendedJobs?.length)
-    lines.push(`- 相性の良い職種: ${result.recommendedJobs.slice(0, 5).join('、')}`);
-  return lines.join('\n');
-}
-
-function renderConsultationInsights(insights: string[] | null | undefined): string {
-  if (!insights || insights.length === 0) return '';
-  return insights
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
-    .slice(0, 5)
-    .map((s) => `- ${s}`)
-    .join('\n');
-}
+// P15-A: 機能横断（自己分析 / ES / 面接 / マッチング / 相談AI）の render は Context Orchestrator 経由の
+//   canonical renderer（lib/careerMemory/renderers/presentationCrossFeature）へ移設した。
+//   route 側は同じ横断情報を再 render しない（byte 出力は移設前と 1 byte も変えない）。
+//   ES の 4 field / cap / useCareerContext gate も canonical 実装側で不変（P7-F 由来）。
 
 export type CareerPresentationContextInput = {
   profile?: CareerProfileInput | null;
@@ -217,18 +168,19 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
   });
   // P3-C: base system prompt を Context Orchestrator（purpose=presentation_feedback）経由で取得する。
   //   委譲のため出力は現行と同一（evaluate/qa の response・schema・P0.5 予算は不変）。
-  const orchestrated = buildCareerContextForPurpose('presentation_feedback', context);
-
-  // 他PASSAI機能データ（自己分析/ES/面接/マッチング/相談AI）は useCareerContext が
-  // true のときだけ「参考程度」に注入する。既定（undefined/false）は注入しない。
-  // 主役は常に target 文脈・お題・発表内容。
-  const useCtx = input.config?.useCareerContext === true;
-  const selfAnalysisBlock = useCtx ? renderSelfAnalysis(input.selfAnalysis) : '';
-  // P7-F: gate（useCtx）は不変。ON のときだけ summary を render（値は snapshot 時点で cap 済み）。
-  const esBlock = useCtx ? renderPresentationEsSummary(input.es) : '';
-  const interviewBlock = useCtx ? renderInterview(input.interview) : '';
-  const matchingBlock = useCtx ? renderMatching(input.matching) : '';
-  const consultationBlock = useCtx ? renderConsultationInsights(input.consultationInsights) : '';
+  // P15-A: 機能横断 context（自己分析/ES/面接/マッチング/相談AI）の組み立ても orchestrator へ移設。
+  //   route 側は手組みせず、orchestrated.crossFeatureContext を受け取る。useCareerContext gate は
+  //   canonical renderer 側で不変。output byte は移設前と同一（byte parity harness で担保）。
+  const orchestrated = buildCareerContextForPurpose('presentation_feedback', context, {
+    presentation: {
+      useCareerContext: input.config?.useCareerContext === true,
+      selfAnalysis: input.selfAnalysis ?? null,
+      es: input.es ?? null,
+      interview: input.interview ?? null,
+      matching: input.matching ?? null,
+      consultationInsights: input.consultationInsights ?? null,
+    },
+  });
 
   const ctx: CareerPresentationPromptContext = {
     theme: input.theme,
@@ -236,27 +188,13 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     presentationType: input.presentationType,
   };
 
-  // 参考データを注入する場合の注意書き（お題への回答度を優先し、発表に無い情報で加減点しない）。
-  const refGuard =
-    useCtx && (selfAnalysisBlock || esBlock || interviewBlock || matchingBlock || consultationBlock)
-      ? [
-          '# 参考情報の扱い（重要）',
-          '以下の登録済み情報は補助的な参考に留める。発表対象は「お題への回答（発表内容）」であり、登録情報そのものを発表対象として扱わない。',
-          '登録情報との整合性より「お題への回答度」を優先し、発表内容に出ていない情報をもとに過度な加点・減点をしない。',
-        ].join('\n')
-      : '';
-
   return [
     buildEvaluatorPersona(ctx),
     // P3-C: 機能別指示は orchestrated.systemPrompt 内に既に含まれるため、同一 system 内の
     //   二重 append を削除（純粋な重複除去）。
     orchestrated.systemPrompt,
-    refGuard,
-    selfAnalysisBlock ? `# 参考: 直近の自己分析結果（発表の主役ではない）\n${selfAnalysisBlock}` : '',
-    esBlock ? `# 参考: 直近の ES ドラフト（発表の主役ではない）\n${esBlock}` : '',
-    interviewBlock ? `# 参考: 直近のAI面接フィードバック\n${interviewBlock}` : '',
-    matchingBlock ? `# 参考: 就活マッチング結果（断定しない）\n${matchingBlock}` : '',
-    consultationBlock ? `# 参考: 相談AIでの最近の気づき\n${consultationBlock}` : '',
+    // P15-A: refGuard + 各参考ブロックは orchestrated.crossFeatureContext に決定的に集約済み。
+    orchestrated.crossFeatureContext,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
