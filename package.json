@@ -35,6 +35,7 @@
     "qa:careerInterviewOrchestratorParity": "npx tsx scripts/career-interview-orchestrator-parity-qa.ts",
     "qa:careerEsOrchestratorParity": "npx tsx scripts/career-es-orchestrator-parity-qa.ts",
     "qa:careerConsultationOrchestratorParity": "npx tsx scripts/career-consultation-orchestrator-parity-qa.ts",
+    "qa:careerPersonalMemorySchema": "npx tsx scripts/career-personal-memory-schema-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",
     "qa:careerEventsWriter": "npx tsx scripts/career-event-writer-qa.ts",
     "qa:careerEventsSql": "npx tsx scripts/career-event-sql-contract-qa.ts",
