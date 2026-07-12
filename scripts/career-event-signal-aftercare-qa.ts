@@ -79,8 +79,12 @@ void (async () => {
   console.log('[A] prompt composition');
   {
     const routeSrc = readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8');
-    check('route が空ブロックを filter', /\.filter\(\(s\) => s !== ''\)/.test(routeSrc));
-    check('eventSignalsBlock は matching の後・OUTPUT の前', routeSrc.indexOf('eventSignalsBlock,') > routeSrc.indexOf('matchingBlock,') && routeSrc.indexOf('eventSignalsBlock,') < routeSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
+    // P15-D: system prompt 組み立ては pure builder（consultationPrompt.ts）へ抽出。Personal Memory 由来の
+    //   横断ブロック（matching 等）は Orchestrator の crossFeatureContext に集約。Event Signal の resolve は
+    //   route が現行どおり（guard 経由）で、builder が現行位置へ挿入する（behavior・production code 不変）。
+    const builderSrc = readFileSync(join(ROOT, 'app/api/career/consultation/consultationPrompt.ts'), 'utf8');
+    check('builder が空ブロックを filter', /\.filter\(\(s\) => s !== ''\)/.test(builderSrc));
+    check('eventSignalsBlock は Personal Memory(crossFeatureContext)の後・OUTPUT の前', builderSrc.indexOf('input.eventSignalsBlock,') > builderSrc.indexOf('orchestrated.crossFeatureContext,') && builderSrc.indexOf('input.eventSignalsBlock,') < builderSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
     check('route は guard 経由 renderer（raw summary の serialize なし）', /resolveConsultationEventSignalsBlock\(/.test(routeSrc) && /b\.eventSignals/.test(routeSrc) && !/JSON\.stringify\(b\.eventSignals\)/.test(routeSrc));
     // signal なし → 空ブロック（route が filter で除去 → prompt 不変）。
     check('undefined → 空ブロック', renderCareerEventSignalsCompact(undefined) === '');

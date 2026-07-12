@@ -36,6 +36,12 @@ import {
   buildEsGenerationCrossFeatureContext,
   type EsGenerationCrossFeatureInput,
 } from '@/lib/careerMemory/renderers/esGenerationCrossFeature';
+// P15-D: consultation の Personal Memory 由来横断 context も orchestrator 経由で組む（byte-identical）。
+//   ★ Event Signal は本層に一切入れない（route 側で独立処理）。consultation renderer も Event Signal 非依存。
+import {
+  buildConsultationCrossFeatureContext,
+  type ConsultationCrossFeatureInput,
+} from '@/lib/careerMemory/renderers/consultationCrossFeature';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -56,6 +62,8 @@ export type CareerContextExtras = {
   interview?: InterviewCrossFeatureInput;
   // P15-C: es_generation のときだけ意味を持つ機能横断 snapshot。
   esGeneration?: EsGenerationCrossFeatureInput;
+  // P15-D: consultation のときだけ意味を持つ Personal Memory 由来 snapshot（Event Signal は含まない）。
+  consultation?: ConsultationCrossFeatureInput;
 };
 
 export type CareerPurposeContext = {
@@ -63,7 +71,7 @@ export type CareerPurposeContext = {
   // base career system prompt（P3-A/P3-B では buildCareerSystemPrompt と同一文字列）。
   systemPrompt: string;
   // P15-A/B/C: purpose 別の機能横断 context block（決定的）。extras が無い / 対象外 purpose では ''。
-  //   presentation_feedback（P15-A）/ interview_practice（P15-B）/ es_generation（P15-C）で通電。
+  //   presentation_feedback（P15-A）/ interview_practice（P15-B）/ es_generation（P15-C）/ consultation（P15-D）で通電。
   //   purpose ごとに専用 renderer を呼ぶ（混在しない）。base system prompt はこの block を含まない
   //   （route が base と別に受け取る）。
   crossFeatureContext: string;
@@ -125,6 +133,9 @@ export function buildCareerContextForPurpose(
     crossFeatureContext = buildInterviewCrossFeatureContext(extras.interview);
   } else if (purpose === 'es_generation' && extras?.esGeneration) {
     crossFeatureContext = buildEsGenerationCrossFeatureContext(extras.esGeneration);
+  } else if (purpose === 'consultation' && extras?.consultation) {
+    // P15-D: Personal Memory 由来のみ。Event Signal は route 側で別途 render・挿入（本層非関与）。
+    crossFeatureContext = buildConsultationCrossFeatureContext(extras.consultation);
   }
 
   const estimatedChars = systemPrompt.length;

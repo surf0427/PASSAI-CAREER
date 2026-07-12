@@ -245,9 +245,16 @@ void (async () => {
     check('null → 空', renderCareerEventSignalsCompact(null) === '');
     check('空 summary → 空', renderCareerEventSignalsCompact(summaryFixture({ recentFeatures: [], featureUsage: {}, latestBands: undefined })) === '');
     // route が b.eventSignals 未指定時に空文字ブロックを生む（既存 prompt golden 不変の根拠）。
+    // P15-D: system prompt の組み立ては pure builder（consultationPrompt.ts）へ抽出され、Personal Memory
+    //   由来の横断ブロック（matching 等）は Orchestrator 経由の crossFeatureContext に集約された。
+    //   Event Signal の resolve は route が現行どおり行い（guard 経由）、builder が現行位置へ挿入する。
+    //   → 空ブロック filter と「eventSignalsBlock は Personal Memory の後・OUTPUT の前」の不変条件は
+    //     builder 側で検証する（Event Signal の behavior・production code は不変）。
     const routeSrc = readFileSync(join(process.cwd(), 'app/api/career/consultation/route.ts'), 'utf8');
-    check('route が空ブロックを filter する', /\.filter\(\(s\) => s !== ''\)/.test(routeSrc));
-    check('eventSignalsBlock は matching の後・OUTPUT の前（最下位補助）', routeSrc.indexOf('eventSignalsBlock,') > routeSrc.indexOf('matchingBlock,') && routeSrc.indexOf('eventSignalsBlock,') < routeSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
+    const builderSrc = readFileSync(join(process.cwd(), 'app/api/career/consultation/consultationPrompt.ts'), 'utf8');
+    check('route が guard 経由で eventSignalsBlock を resolve する', /resolveConsultationEventSignalsBlock\(/.test(routeSrc) && /isConsultationEventSignalPilotEnabled\(/.test(routeSrc));
+    check('builder が空ブロックを filter する', /\.filter\(\(s\) => s !== ''\)/.test(builderSrc));
+    check('eventSignalsBlock は Personal Memory(crossFeatureContext)の後・OUTPUT の前（最下位補助）', builderSrc.indexOf('input.eventSignalsBlock,') > builderSrc.indexOf('orchestrated.crossFeatureContext,') && builderSrc.indexOf('input.eventSignalsBlock,') < builderSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
   }
 
   // ── F. Consultation signal fixture ────────────────────────────

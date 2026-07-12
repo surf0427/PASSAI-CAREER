@@ -197,10 +197,12 @@ void (async () => {
     check('OFF block === "" ', offBlock === '');
     check('ON-none block === "" ', noneBlock === '');
     check('OFF と ON-none は byte 一致（0B）', bytes(offBlock) === bytes(noneBlock) && bytes(offBlock) === 0);
-    // route の filter は空 block を除去する（prompt 不変の根拠）。
-    const routeSrc = read('app/api/career/consultation/route.ts');
-    check('route が空 block を filter 除去', /\.filter\(\(s\) => s !== ''\)/.test(routeSrc));
-    check('eventSignalsBlock は matching 後・OUTPUT 前（最下位補助）', routeSrc.indexOf('eventSignalsBlock,') > routeSrc.indexOf('matchingBlock,') && routeSrc.indexOf('eventSignalsBlock,') < routeSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
+    // P15-D: system prompt 組み立ては pure builder（consultationPrompt.ts）へ抽出。Personal Memory 由来の
+    //   横断ブロック（matching 等）は Orchestrator の crossFeatureContext に集約。builder の filter が空 block を
+    //   除去し、eventSignalsBlock を現行位置（Personal Memory の後・OUTPUT の前）に置く（behavior 不変）。
+    const builderSrc = read('app/api/career/consultation/consultationPrompt.ts');
+    check('builder が空 block を filter 除去', /\.filter\(\(s\) => s !== ''\)/.test(builderSrc));
+    check('eventSignalsBlock は Personal Memory(crossFeatureContext)後・OUTPUT 前（最下位補助）', builderSrc.indexOf('input.eventSignalsBlock,') > builderSrc.indexOf('orchestrated.crossFeatureContext,') && builderSrc.indexOf('input.eventSignalsBlock,') < builderSrc.indexOf('OUTPUT_FORMAT_INSTRUCTION,'));
     // client の conditional spread（eventSignals は undefined 時に body へ付かない）。
     const pageSrc = read('app/career/consultation/page.tsx');
     check('client: eventSignals は truthy 時のみ spread', /\.\.\.\(eventSignals \? \{ eventSignals \} : \{\}\)/.test(pageSrc));

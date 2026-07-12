@@ -1,0 +1,14 @@
+{
+  "bytes": 13598,
+  "hash": "ef142d7720491bc00bc4e2f376f388aedf3cbedd7125f7870cbad24f7ac20a66",
+  "lines": 163,
+  "pii": {
+    "氏名": 0,
+    "大学": 0,
+    "学部": 0,
+    "メール": 0,
+    "電話": 0
+  },
+  "signalHeading": 0,
+  "signalPos": -1
+}
