@@ -1,22 +1,61 @@
 // 就活版（CAREER）ログインの遷移先解決ヘルパー（純関数・テスト可能に切り出し）。
 //
-// 受験版 `app/login/page.tsx` の `sanitizeNext` と同型の open-redirect ガード。
-// 受験版との差分は既定遷移先のみ（受験版 /home ↔ CAREER /career/home）。
+// 受験版 `app/login/page.tsx` とは「認証成功後の処理方式（session確立・フル遷移・
+// bootstrap委譲）」を揃えるが、**許可 namespace は CAREER 専用に絞る**。受験版の
+// sanitizeNext は単一 "/" 始まりの同一 origin path を全許可するため、CAREER で流用すると
+// 受験版 route（/home 等）や login self-redirect ループを許してしまう。ここでは pathname を
+// URL parser で正規化し、`/career` 名前空間内 かつ login 自身でない場合のみ許可する。
 //   - identity は auth.users.id。display_user_id は遷移先の判定に **使わない**。
 //   - 表示ID未設定を理由に /career/onboarding/profile へ強制遷移しない（受験版と整合）。
 
-/** redirect 未指定 / 不正時の CAREER 既定遷移先。未ログインは各画面側の導線に委ねる。 */
+/** redirect 未指定 / 不正 / CAREER 外時の既定遷移先。 */
 export const DEFAULT_CAREER_REDIRECT = '/career/home';
 
+// pathname 判定用のダミー同一 origin base（値は表示にも遷移にも使わない）。
+const INTERNAL_BASE = 'http://career.internal';
+
+/** login 画面自身（redirect ループ源）を弾く。/career/login と /career/login/... を対象。 */
+function isCareerLoginPath(pathname: string): boolean {
+  return pathname === '/career/login' || pathname.startsWith('/career/login/');
+}
+
+/** `/career` 名前空間の内部 path か。/careerish・/career-foo は境界外（false）。 */
+function isCareerNamespace(pathname: string): boolean {
+  return pathname === '/career' || pathname.startsWith('/career/');
+}
+
 /**
- * open-redirect 防止: redirect は **同一オリジンの相対パス** のみ許可する。
- * - 先頭が "/" で始まり、"//" や "/\" のような protocol-relative を弾く。
- * - 不正なら DEFAULT_CAREER_REDIRECT にフォールバック。
- * 受験版 sanitizeNext と同一ルール（既定先だけ CAREER 用）。
+ * 認証後の遷移先を **CAREER 内部 path のみ** に制限する。
+ *
+ * 許可: /career, /career/, /career/* （query / hash は保持）。
+ * 拒否 →（DEFAULT_CAREER_REDIRECT へ fallback）:
+ *   - null / undefined / 空文字
+ *   - 外部 / protocol-relative / scheme付き（http(s):, //, /\, javascript: 等）
+ *   - 非 CAREER 同一 origin path（/login, /home, /account, /pricing, /careerish 等）
+ *   - login self-redirect（/career/login, /career/login/, /career/login?..#..）
+ *   - URL 正規化後に CAREER 外/別 origin となる値（/career/../login 等）
+ *
+ * 単純な文字列 prefix だけでなく URL parser で pathname を正規化して判定する。
  */
 export function sanitizeCareerRedirect(raw: string | null | undefined): string {
   if (!raw) return DEFAULT_CAREER_REDIRECT;
+  // 同一 origin の絶対 path 参照のみ受け付ける（外部・protocol-relative・backslash を除外）。
   if (!raw.startsWith('/')) return DEFAULT_CAREER_REDIRECT;
   if (raw.startsWith('//') || raw.startsWith('/\\')) return DEFAULT_CAREER_REDIRECT;
-  return raw;
+
+  let url: URL;
+  try {
+    url = new URL(raw, INTERNAL_BASE);
+  } catch {
+    return DEFAULT_CAREER_REDIRECT;
+  }
+  // 正規化の結果 base origin を抜けた（backslash トリック等）→ 拒否。
+  if (url.origin !== INTERNAL_BASE) return DEFAULT_CAREER_REDIRECT;
+
+  const { pathname } = url;
+  if (!isCareerNamespace(pathname)) return DEFAULT_CAREER_REDIRECT;
+  if (isCareerLoginPath(pathname)) return DEFAULT_CAREER_REDIRECT;
+
+  // 正常な CAREER path は query / hash を保持して相対 path で返す。
+  return `${pathname}${url.search}${url.hash}`;
 }

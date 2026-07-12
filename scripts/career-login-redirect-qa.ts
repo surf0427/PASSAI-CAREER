@@ -42,29 +42,51 @@ check(sanitizeCareerRedirect(null) === '/career/home', 'null → /career/home');
 check(sanitizeCareerRedirect(undefined) === '/career/home', 'undefined → /career/home');
 check(sanitizeCareerRedirect('') === '/career/home', 'empty → /career/home');
 
-// 正当な CAREER 内部 URL → そのまま通す。
-check(sanitizeCareerRedirect('/career/profile') === '/career/profile', '/career/profile passthrough');
+// 正当な CAREER 内部 path → そのまま通す（query / hash 保持）。
+check(sanitizeCareerRedirect('/career') === '/career', '/career passthrough（namespace 境界そのもの）');
+check(sanitizeCareerRedirect('/career/') === '/career/', '/career/ passthrough');
 check(sanitizeCareerRedirect('/career/home') === '/career/home', '/career/home passthrough');
+check(sanitizeCareerRedirect('/career/profile') === '/career/profile', '/career/profile passthrough');
 check(
-  sanitizeCareerRedirect('/career/matching?tab=result') === '/career/matching?tab=result',
-  'query 付き CAREER 内部 URL を壊さず passthrough',
+  sanitizeCareerRedirect('/career/profile?tab=basic') === '/career/profile?tab=basic',
+  '/career/profile?tab=basic query 保持 passthrough',
 );
 check(
-  sanitizeCareerRedirect('/career/mypage#events') === '/career/mypage#events',
-  'hash 付き CAREER 内部 URL を壊さず passthrough',
+  sanitizeCareerRedirect('/career/mypage#latest') === '/career/mypage#latest',
+  '/career/mypage#latest hash 保持 passthrough',
+);
+check(
+  sanitizeCareerRedirect('/career/company-research/view?id=123') === '/career/company-research/view?id=123',
+  '/career/company-research/view?id=123 query 保持 passthrough',
 );
 
-// 危険な redirect（外部オリジンへの open-redirect）→ 既定先へフォールバック。
-check(sanitizeCareerRedirect('https://example.com') === '/career/home', 'https://example.com blocked → default');
+// 非 CAREER 同一 origin path → 既定先へフォールバック（受験版 namespace 遷移を禁止）。
+check(sanitizeCareerRedirect('/login') === '/career/home', '/login blocked → default');
+check(sanitizeCareerRedirect('/home') === '/career/home', '/home blocked → default');
+check(sanitizeCareerRedirect('/account') === '/career/home', '/account blocked → default');
+check(sanitizeCareerRedirect('/pricing') === '/career/home', '/pricing blocked → default');
+// namespace 境界の厳格性: prefix 一致だけで通してはならない。
+check(sanitizeCareerRedirect('/careerish') === '/career/home', '/careerish blocked → default（/career/ 境界厳格）');
+check(sanitizeCareerRedirect('/career-old/home') === '/career/home', '/career-old/home blocked → default');
+
+// login self-redirect（ループ源）→ 既定先へフォールバック。
+check(sanitizeCareerRedirect('/career/login') === '/career/home', '/career/login blocked → default（self-redirect 防止）');
+check(sanitizeCareerRedirect('/career/login/') === '/career/home', '/career/login/ blocked → default');
+check(
+  sanitizeCareerRedirect('/career/login?redirect=/career/profile') === '/career/home',
+  '/career/login?redirect=... blocked → default（query 付きでも pathname で判定）',
+);
+check(sanitizeCareerRedirect('/career/login#otp') === '/career/home', '/career/login#otp blocked → default');
+
+// 危険な redirect（外部オリジンへの open-redirect / scheme）→ 既定先へフォールバック。
+check(sanitizeCareerRedirect('https://example.com/career/home') === '/career/home', 'https://…/career/home blocked → default');
 check(sanitizeCareerRedirect('http://example.com') === '/career/home', 'http://example.com blocked → default');
-check(sanitizeCareerRedirect('//example.com') === '/career/home', 'protocol-relative //example.com blocked → default');
+check(sanitizeCareerRedirect('//example.com/career/home') === '/career/home', 'protocol-relative //…/career/home blocked → default');
 check(sanitizeCareerRedirect('/\\example.com') === '/career/home', 'backslash /\\ escape blocked → default');
 check(sanitizeCareerRedirect('javascript:alert(1)') === '/career/home', 'javascript: scheme blocked → default');
 
-// 受験版 sanitizeNext と同型: 単一 "/" 始まりの内部パスは同一オリジンなので許可する
-// （/login や非 CAREER 内部パスも許可。open-redirect ではなく、フル遷移で redirect
-//  クエリが引き継がれないため /career/login 指定でもループしない）。
-check(sanitizeCareerRedirect('/career/login') === '/career/login', '/career/login passthrough（フル遷移で param 非継承ゆえ非ループ）');
+// URL 正規化後に CAREER 外へ抜ける値 → 既定先へフォールバック。
+check(sanitizeCareerRedirect('/career/../login') === '/career/home', '/career/../login（正規化で /login）blocked → default');
 
 console.log('[2] login/page.tsx は表示ID未設定を理由に onboarding へ強制遷移しない');
 const LOGIN = readFileSync(join(ROOT, 'app/career/login/page.tsx'), 'utf8');
