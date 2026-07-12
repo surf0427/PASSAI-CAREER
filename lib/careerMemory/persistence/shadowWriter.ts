@@ -33,11 +33,13 @@ export type ShadowWriteParams = {
   built: SectionRebuildResult;
   // 直前 read で得た現在行メタ（無ければ null＝missing）。
   current: CurrentMemoryMeta;
-  // 生成時刻（generatedAt）。呼び出し側が注入する（Date.now を本層で呼ばない＝決定的・テスト容易）。
+  // 生成時刻（generatedAt として **記録のみ**。compare-and-set の権威には使わない）。呼び出し側が注入する
+  //   （Date.now を本層で呼ばない＝決定的・テスト容易）。
   now: string;
 };
 
-// 1 section を shadow write（compare-and-set・idempotent・stale overwrite / out-of-order 防止）。
+// 1 section を shadow write（compare-and-set・idempotent・stale overwrite 防止 best-effort）。
+//   順序判定は built.sourceUpdatedAt（Source データの新しさ）で行い、client 書込時刻は使わない。
 export async function shadowWriteSection(params: ShadowWriteParams): Promise<ShadowWriteResult> {
   const { store, userId, built, current, now } = params;
   const sectionKey = built.section.sectionKey;
@@ -45,8 +47,11 @@ export async function shadowWriteSection(params: ShadowWriteParams): Promise<Sha
   if (!store) return { sectionKey, status: 'skipped', reason: 'no_store' };
   if (!userId) return { sectionKey, status: 'skipped', reason: 'guest' };
 
-  // compare-and-set: 変化なし / より新しい write が既にある → 書かない。
-  const decision = decideWrite(current, built.sourceRevision, now);
+  // compare-and-set: 変化なし / 今回の Source が既存より古い → 書かない（client 時計は権威にしない）。
+  const decision = decideWrite(current, {
+    sourceRevision: built.sourceRevision,
+    sourceUpdatedAt: built.sourceUpdatedAt,
+  });
   if (!decision.write) return { sectionKey, status: 'skipped', reason: decision.reason };
 
   // repository が payload を再検証（rejected は書かない）+ best-effort upsert（never-throw）。

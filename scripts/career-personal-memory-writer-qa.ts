@@ -93,26 +93,40 @@ async function main() {
   check(buildSelfAnalysisMemorySection(latest).sourceRevision !== rBase, 'latest/createdAt change → revision changes');
   check(buildSelfAnalysisMemorySection([]).sourceRevision !== rBase, 'empty → different revision');
 
-  console.log('[4] compare-and-set (state)');
-  check(decideWrite(null, 'r1', NOW).write === true, 'missing → write');
-  check(decideWrite({ schemaVersion: 1, sourceRevision: 'r1', status: 'fresh', generatedAt: '2026-07-01' }, 'r1', NOW).write === false, 'fresh same revision → skip(unchanged)');
-  check(decideWrite({ schemaVersion: 1, sourceRevision: 'r1', status: 'fresh', generatedAt: '2026-07-01' }, 'r2', NOW).write === true, 'changed revision → write');
-  const staleWrite = decideWrite({ schemaVersion: 1, sourceRevision: 'r1', status: 'fresh', generatedAt: '2026-07-20' }, 'r2', NOW);
-  check(staleWrite.write === false && staleWrite.reason === 'stale_write', 'out-of-order (existing newer) → stale_write');
-  check(deriveMemoryState({ schemaVersion: 999, sourceRevision: 'r1', status: 'fresh', generatedAt: 'g' }, { sourceRevision: 'r1' }) === 'unsupported_version', 'version mismatch → unsupported_version');
-  check(deriveMemoryState({ schemaVersion: 1, sourceRevision: 'old', status: 'fresh', generatedAt: 'g' }, { sourceRevision: 'new' }) === 'stale', 'revision mismatch → stale');
+  console.log('[4] compare-and-set (state) — Source-recency authority, NOT client clock');
+  const cur = (over: Partial<NonNullable<import('@/lib/careerMemory/persistence/state').CurrentMemoryMeta>>) =>
+    ({ schemaVersion: 1, sourceRevision: 'r1', status: 'fresh' as const, sourceUpdatedAt: '2026-07-10', generatedAt: '2026-07-01', ...over });
+  const exp = (sourceRevision: string, sourceUpdatedAt: string | null) => ({ sourceRevision, sourceUpdatedAt });
+  check(decideWrite(null, exp('r1', '2026-07-10')).write === true, 'missing → write');
+  check(decideWrite(cur({}), exp('r1', '2026-07-10')).write === false, 'fresh same revision → skip(unchanged)');
+  check(decideWrite(cur({}), exp('r2', '2026-07-11')).write === true, 'changed revision + newer source → write');
+  // K の修正: 異なる revision・**古い Source**・（client 時刻は不問）→ stale_write skip
+  const kCase = decideWrite(cur({ sourceUpdatedAt: '2026-07-10' }), exp('r2', '2026-07-05'));
+  check(kCase.write === false && kCase.reason === 'stale_write', 'older Source (stale) → stale_write (K fixed)');
+  // client 時計を権威にしない: newer Source but earlier "client time" 相当（generatedAt は判定に不使用）→ write
+  check(decideWrite(cur({ sourceUpdatedAt: '2026-07-05', generatedAt: '2999-01-01' }), exp('r2', '2026-07-20')).write === true, 'newer Source overrides even if existing generatedAt is far-future (client clock ignored)');
+  // future/past-skewed client clock は判定に影響しない（generatedAt を変えても結論不変）
+  check(decideWrite(cur({ sourceUpdatedAt: '2026-07-10', generatedAt: '1999-01-01' }), exp('r2', '2026-07-05')).write === false, 'past-skewed generatedAt does not force write (still stale by Source)');
+  check(decideWrite(cur({ sourceUpdatedAt: '2026-07-10', generatedAt: '2999-01-01' }), exp('r2', '2026-07-20')).write === true, 'future-skewed generatedAt does not force skip (newer by Source)');
+  // sourceUpdatedAt が揃わない（base 等 null）→ 順序判定不能 → revision 差があれば write（read 時検証が担保）
+  check(decideWrite(cur({ sourceUpdatedAt: null }), exp('r2', null)).write === true, 'both sourceUpdatedAt null (base) → write if revision differs');
+  check(decideWrite(cur({ sourceUpdatedAt: '2026-07-10' }), exp('r2', null)).write === true, 'expected null sourceUpdatedAt → cannot order → write (read-time validation guards)');
+  check(deriveMemoryState(cur({ schemaVersion: 999 }), exp('r1', null)) === 'unsupported_version', 'version mismatch → unsupported_version');
+  check(deriveMemoryState(cur({ sourceRevision: 'old' }), exp('new', null)) === 'stale', 'revision mismatch → stale (read-time correctness authority)');
+  check(deriveMemoryState(null, exp('x', null)) === 'missing', 'no row → missing');
 
   console.log('[5] shadow writer: written / unchanged / stale_write / failed / guest / no_store');
   {
     const { store, upserts } = fakeStore();
     const w1 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: null, now: NOW });
     check(w1.status === 'written' && upserts.length === 1, 'missing → written');
-    const w2 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: { schemaVersion: 1, sourceRevision: s1.sourceRevision, status: 'fresh', generatedAt: '2026-07-01' }, now: NOW });
+    const w2 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: cur({ sourceRevision: s1.sourceRevision, sourceUpdatedAt: s1.sourceUpdatedAt }), now: NOW });
     check(w2.status === 'skipped' && w2.reason === 'unchanged', 'same revision → SKIPPED unchanged');
-    const w3 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: { schemaVersion: 1, sourceRevision: 'different', status: 'fresh', generatedAt: '2026-07-01' }, now: NOW });
-    check(w3.status === 'written', 'changed revision → WRITTEN');
-    const w4 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: { schemaVersion: 1, sourceRevision: 'different', status: 'fresh', generatedAt: '2026-07-20' }, now: NOW });
-    check(w4.status === 'skipped' && w4.reason === 'stale_write', 'out-of-order → SKIPPED stale_write');
+    const w3 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: cur({ sourceRevision: 'different', sourceUpdatedAt: '2026-01-01' }), now: NOW });
+    check(w3.status === 'written', 'changed revision + newer source → WRITTEN');
+    // 既存が新しい Source 由来 → 今回（古い Source）は上書きしない（client now 無関係）
+    const w4 = await shadowWriteSection({ store, userId: 'u1', built: s1, current: cur({ sourceRevision: 'different', sourceUpdatedAt: '2999-01-01' }), now: NOW });
+    check(w4.status === 'skipped' && w4.reason === 'stale_write', 'existing derived from newer Source → SKIPPED stale_write');
   }
   {
     const { store } = fakeStore({ writeError: { message: 'rls' } });
