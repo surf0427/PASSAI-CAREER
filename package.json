@@ -33,6 +33,7 @@
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "qa:careerPresentationOrchestratorParity": "npx tsx scripts/career-presentation-orchestrator-parity-qa.ts",
     "qa:careerInterviewOrchestratorParity": "npx tsx scripts/career-interview-orchestrator-parity-qa.ts",
+    "qa:careerEsOrchestratorParity": "npx tsx scripts/career-es-orchestrator-parity-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",
     "qa:careerEventsWriter": "npx tsx scripts/career-event-writer-qa.ts",
     "qa:careerEventsSql": "npx tsx scripts/career-event-sql-contract-qa.ts",

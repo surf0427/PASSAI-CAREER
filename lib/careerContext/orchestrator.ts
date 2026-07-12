@@ -31,6 +31,11 @@ import {
   buildInterviewCrossFeatureContext,
   type InterviewCrossFeatureInput,
 } from '@/lib/careerMemory/renderers/interviewCrossFeature';
+// P15-C: es_generation の機能横断 context も orchestrator 経由で組む（byte-identical）。
+import {
+  buildEsGenerationCrossFeatureContext,
+  type EsGenerationCrossFeatureInput,
+} from '@/lib/careerMemory/renderers/esGenerationCrossFeature';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -49,15 +54,18 @@ export type CareerContextExtras = {
   presentation?: PresentationCrossFeatureInput;
   // P15-B: interview_practice のときだけ意味を持つ機能横断 snapshot。
   interview?: InterviewCrossFeatureInput;
+  // P15-C: es_generation のときだけ意味を持つ機能横断 snapshot。
+  esGeneration?: EsGenerationCrossFeatureInput;
 };
 
 export type CareerPurposeContext = {
   purpose: CareerContextPurpose;
   // base career system prompt（P3-A/P3-B では buildCareerSystemPrompt と同一文字列）。
   systemPrompt: string;
-  // P15-A/B: purpose 別の機能横断 context block（決定的）。extras が無い / 対象外 purpose では ''。
-  //   presentation_feedback（P15-A）/ interview_practice（P15-B）で通電。purpose ごとに専用 renderer を呼ぶ
-  //   （混在しない）。base system prompt はこの block を含まない（route が base と別に受け取る）。
+  // P15-A/B/C: purpose 別の機能横断 context block（決定的）。extras が無い / 対象外 purpose では ''。
+  //   presentation_feedback（P15-A）/ interview_practice（P15-B）/ es_generation（P15-C）で通電。
+  //   purpose ごとに専用 renderer を呼ぶ（混在しない）。base system prompt はこの block を含まない
+  //   （route が base と別に受け取る）。
   crossFeatureContext: string;
   // 適用された purpose policy（宣言。実際の section 削減は P3-C 以降）。
   policy: CareerContextPolicy;
@@ -107,7 +115,7 @@ export function buildCareerContextForPurpose(
 
   const systemPrompt = buildCareerSystemPrompt(effectiveContext, { activityLimits });
 
-  // P15-A/B: purpose を確認し、対象 purpose かつ cross-feature 入力があるときだけ canonical renderer で
+  // P15-A/B/C: purpose を確認し、対象 purpose かつ cross-feature 入力があるときだけ canonical renderer で
   //   機能横断 block を決定的に組む（purpose ごとに専用 renderer。混在させず、他 purpose へは投入しない）。
   //   base（systemPrompt）の byte・意味は不変。route はこの block を base とは別に受け取る。
   let crossFeatureContext = '';
@@ -115,6 +123,8 @@ export function buildCareerContextForPurpose(
     crossFeatureContext = buildPresentationCrossFeatureContext(extras.presentation);
   } else if (purpose === 'interview_practice' && extras?.interview) {
     crossFeatureContext = buildInterviewCrossFeatureContext(extras.interview);
+  } else if (purpose === 'es_generation' && extras?.esGeneration) {
+    crossFeatureContext = buildEsGenerationCrossFeatureContext(extras.esGeneration);
   }
 
   const estimatedChars = systemPrompt.length;

@@ -1,0 +1,26 @@
+{
+  "systemBytes": 6106,
+  "systemHash": "f930a2918ca8317f90477c8de61bebe42662b4619c41389881c1d6ca57c2e6ee",
+  "systemLines": 96,
+  "userBytes": 455,
+  "userHash": "e988f1bf17d2e08aa6dbb6c4b56ac25a991613ba259ad4655872bd0689c72d71",
+  "pii": {
+    "氏名": 1,
+    "大学": 0,
+    "学部": 0,
+    "メール": 0,
+    "電話": 0
+  },
+  "positions": {
+    "charLimit_question": 1938,
+    "charLimit_answerfmt": 2215,
+    "question": 1901,
+    "selection_main": 824,
+    "selection_intern": -1,
+    "company_research": 1310,
+    "self_analysis": 1721,
+    "company": 664,
+    "industry": 1150,
+    "jobType": 1249
+  }
+}
