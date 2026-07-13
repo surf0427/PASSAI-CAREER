@@ -17,6 +17,13 @@ export function isAggregatedInsightConsultationEnabled(): boolean {
 export function aggregatedInsightCanaryAllowlist(): string {
   return process.env.CAREER_AGGREGATED_INSIGHT_CANARY_USER_IDS ?? '';
 }
+/**
+ * synthetic-only mode（P17-E）。**default TRUE**（明示 'false' でのみ解除）。
+ * ただし解除しても real mode は composition が有効化しない（本 series で real は BLOCKED）。
+ */
+export function isAggregatedInsightSyntheticOnly(): boolean {
+  return process.env.CAREER_AGGREGATED_INSIGHT_SYNTHETIC_ONLY !== 'false';
+}
 
 // ── Layer 5 ─────────────────────────────────────────────────────────
 export function isCompanyKnowledgeReadEnabled(): boolean {
@@ -34,6 +41,7 @@ export const DATA_SPINE_FLAG_NAMES: readonly string[] = [
   'CAREER_AGGREGATED_INSIGHT_READ_ENABLED',
   'CAREER_AGGREGATED_INSIGHT_CONSULTATION_ENABLED',
   'CAREER_AGGREGATED_INSIGHT_CANARY_USER_IDS',
+  'CAREER_AGGREGATED_INSIGHT_SYNTHETIC_ONLY',
   'CAREER_COMPANY_KNOWLEDGE_READ_ENABLED',
   'CAREER_COMPANY_KNOWLEDGE_RESEARCH_ENABLED',
   'CAREER_COMPANY_KNOWLEDGE_CANARY_USER_IDS',

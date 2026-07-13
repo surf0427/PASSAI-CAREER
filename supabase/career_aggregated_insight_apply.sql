@@ -3,20 +3,28 @@
 --
 -- NOT APPLIED
 -- DO NOT APPLY UNTIL DECISION REGISTER GATES ARE CLOSED
--- TARGET PROJECT UNDECIDED
+-- TARGET PROJECT: shared Supabase (P17-D Option A / P17-E)。CAREER 専用 project へは置かない。
 -- DEFAULT DENY
 -- SERVICE/BATCH WRITER POLICY UNDECIDED
 -- LEGAL/CONSENT VALUES NOT FINAL
+-- SCOPE (P17-E): Layer 4 synthetic round-trip までを対象。実ユーザーデータ集計・prompt 投入は許可しない。
 --
 -- migration header:
---   - これは未適用の草案。schema.sql へ統合しない。手動 review 後にのみ適用する。
+--   - これは未適用の草案。schema.sql へ統合しない。手動 review 後（Operator Packet）にのみ適用する。
 --   - RLS enabled + policy 無し（default deny）。anon/authenticated への GRANT は作らない。
 --   - service-role / batch writer policy は project 決定後に別途追加する（本ファイルでは作らない）。
+--     ※ Supabase の service_role は RLS を bypass するため、writer 用に permissive RLS policy を
+--        作る必要は無い（誤解防止）。writer 権限は server-only key 管理で担保する（本 SQL では扱わない）。
+--
+-- shared 配置の安全性（P17-D 監査で code-confirmed）:
+--   - auth.users FK なし / auth.uid() 参照なし / cross-project FK なし（配置先を問わず適用可能）。
+--   - Personal Memory（CAREER project）へ依存しない。career_user_events(shared) と同一 project に置ける。
 --
 -- privacy regime（table comment にも記載）:
 --   - raw event 本文・user_id 一覧・contributor identity・exact sensitive count を保存しない。
 --   - artifact は匿名集計の安全 payload のみ（sample size は bucket、生 count を持たない）。
 --   - incomplete / failed / invalidated batch の artifact は read 対象にしない（app / RLS 双方で担保予定）。
+--   - data_classification='synthetic' の row は synthetic round-trip 専用。'production' は本 series で作らない。
 -- ============================================================
 
 BEGIN;
@@ -44,6 +52,9 @@ CREATE TABLE IF NOT EXISTS career_aggregate_batches (
   suppressed_result_count  integer NOT NULL DEFAULT 0,
   rollback_reason          text,
   rollback_at              timestamptz,
+  -- synthetic round-trip 専用 row を明示分類する（非 PII）。production は本 series で作らない。
+  data_classification      text NOT NULL DEFAULT 'synthetic'
+                             CHECK (data_classification IN ('synthetic','production')),
   started_at               timestamptz NOT NULL DEFAULT now(),
   completed_at             timestamptz,
   created_at               timestamptz NOT NULL DEFAULT now(),
@@ -79,6 +90,9 @@ CREATE TABLE IF NOT EXISTS career_aggregate_artifacts (
   source_window_start   timestamptz NOT NULL,
   source_window_end     timestamptz NOT NULL,
   invalidated           boolean NOT NULL DEFAULT false,
+  -- synthetic round-trip 専用 row を明示分類する。'synthetic' 以外は実 AI prompt 利用不可（app 側で強制）。
+  data_classification   text NOT NULL DEFAULT 'synthetic'
+                          CHECK (data_classification IN ('synthetic','production')),
   generated_at          timestamptz NOT NULL,
   expires_at            timestamptz NOT NULL,
   created_at            timestamptz NOT NULL DEFAULT now(),

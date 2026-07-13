@@ -487,8 +487,13 @@ console.log('[J] Production isolation (static guard)');
     'lib/careerAggregate/supabaseBatchRepository.ts',
     'lib/careerAggregate/supabaseReadRepository.ts',
     'lib/careerAggregate/supabaseInvalidationRepository.ts',
+    // P17-E: shadow evidence / dispatcher（sanctioned な server 統合層）。
+    'lib/careerAggregate/shadowEvidence.ts',
+    'lib/careerAggregate/shadowDispatcher.server.ts',
   ].map((f) => join(ROOT, f));
-  const isNewModule = (f: string) => NEW_DIRS.some((p) => f.startsWith(p)) || NEW_AGG_FILES.includes(f);
+  // P17-E: server composition（careerAggregate/server/*）も sanctioned な統合層として除外。
+  const isNewModule = (f: string) =>
+    NEW_DIRS.some((p) => f.startsWith(p)) || NEW_AGG_FILES.includes(f) || f.includes('/careerAggregate/server/');
 
   const consumerFiles = [
     ...walk(join(ROOT, 'app')),

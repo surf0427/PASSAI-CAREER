@@ -50,6 +50,9 @@ import { createTimeoutSignal } from '@/lib/aiTimeout';
 // P10-F: server-authoritative な guard で解決する（無効なら client 強制 body を無視して空文字）。
 import { resolveConsultationEventSignalsBlock } from '@/lib/careerMemory/renderEventSignals';
 import { isConsultationEventSignalPilotEnabled } from '@/lib/careerMemory/eventSignalPilotGuard';
+// P17-E: Layer 4 Aggregated Insight の consultation shadow read（fire-and-forget・prompt/response 不変）。
+//   flag OFF（code default）では DB query 0。gate 通過時のみ synthetic shadow を実行し safe evidence を記録。
+import { dispatchAggregatedInsightConsultationShadow } from '@/lib/careerAggregate/shadowDispatcher.server';
 // P4-B: str を共通 util へ集約（strArray は route 固有のため local 維持・内部で共通 str を使用）。
 import { str } from '@/lib/careerMemory/summaryUtils';
 
@@ -271,6 +274,13 @@ export async function POST(req: Request) {
       matching: matchingSnapshots,
     },
     eventSignalsBlock,
+  });
+
+  // P17-E: shadow read（本処理と独立・fire-and-forget）。systemPrompt / messages / response は不変。
+  //   flag OFF では即 return（DB query 0）。shadow の失敗は consultation 本処理へ影響しない。
+  void dispatchAggregatedInsightConsultationShadow({
+    runId: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
   });
 
   try {

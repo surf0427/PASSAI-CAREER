@@ -79,10 +79,13 @@ console.log('[B] SQL static verification');
   const l5 = readFileSync(join(ROOT, 'supabase/career_company_knowledge_apply.sql'), 'utf8');
   const files: Array<[string, string]> = [['L4', l4], ['L5', l5]];
 
-  const HEADERS = ['NOT APPLIED', 'DO NOT APPLY UNTIL DECISION REGISTER GATES ARE CLOSED', 'TARGET PROJECT UNDECIDED', 'DEFAULT DENY', 'SERVICE/BATCH WRITER POLICY UNDECIDED', 'LEGAL/CONSENT VALUES NOT FINAL'];
+  // 共通 header（TARGET PROJECT 行は L4=finalized(shared) / L5=UNDECIDED で異なるため別扱い）。
+  const HEADERS = ['NOT APPLIED', 'DO NOT APPLY UNTIL DECISION REGISTER GATES ARE CLOSED', 'DEFAULT DENY', 'SERVICE/BATCH WRITER POLICY UNDECIDED', 'LEGAL/CONSENT VALUES NOT FINAL'];
 
   for (const [label, sql] of files) {
     check(`B ${label} header markers 全て存在`, HEADERS.every((h) => sql.includes(h)));
+    // TARGET PROJECT: L4 は P17-E で shared 確定、L5 は未決定のまま。
+    check(`B ${label} TARGET PROJECT header`, label === 'L4' ? /TARGET PROJECT: shared/i.test(sql) : sql.includes('TARGET PROJECT UNDECIDED'));
     const begins = (sql.match(/\bBEGIN;/g) ?? []).length;
     const commits = (sql.match(/\bCOMMIT;/g) ?? []).length;
     check(`B ${label} BEGIN/COMMIT 整合`, begins === 1 && commits === 1);
@@ -369,10 +372,15 @@ function isolationChecks(): void {
     'supabaseInvalidationRepository',
     'supabaseRepository',
   ];
-  // production consumer（新 module 自身は除外）。
+  // production consumer（新 module 自身 + P17-E composition/shadow 層は除外）。
+  //   P17-E の server composition（careerAggregate/server/*）・shadow dispatcher/evidence は、
+  //   scaffold を組み立てる sanctioned な server-only 統合層であり production consumer ではない。
   const isNewModuleFile = (f: string) =>
     f.includes('/careerDataSpineDb/') || f.includes('/careerDataSpinePolicy/') ||
     f.includes('/careerDataSpineGate/') || f.includes('/careerContextLoaders/server/') ||
+    f.includes('/careerAggregate/server/') ||
+    f.endsWith('/careerAggregate/shadowDispatcher.server.ts') ||
+    f.endsWith('/careerAggregate/shadowEvidence.ts') ||
     /supabase(Batch|Read|Invalidation)?Repository\.ts$/.test(f) || f.endsWith('/supabaseRepository.ts');
 
   const consumerFiles = [...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'components')), ...walk(join(ROOT, 'lib'))]
@@ -411,11 +419,18 @@ function isolationChecks(): void {
   check('G6 config/flags 以外は process.env を読まない', envOffenders.length === 0, envOffenders.join(','));
 
   // client 生成 / supabase import 制限（DB boundary + repos は supabase client を作らない）。
+  //   例外（P17-E §4 の sanctioned bridge）: sharedClientAdapter.server は既存 server client factory
+  //   （@/lib/supabase/serverClient）を **再利用** する（client 生成はしない）。この 1 ファイルのみ許可。
+  const clientImportAllowed = new Set([join(ROOT, 'lib/careerDataSpineDb/sharedClientAdapter.server.ts')]);
   const clientOffenders = newFiles.filter((f) => {
+    if (clientImportAllowed.has(f)) {
+      // 例外ファイルでも client を **生成** してはいけない（factory 再利用のみ）。
+      return /createClient\s*\(/.test(readFileSync(f, 'utf8'));
+    }
     const src = readFileSync(f, 'utf8');
     return /createClient\s*\(/.test(src) || /from\s+['"]@\/lib\/(careerSupabase|supabase)\//.test(src);
   });
-  check('G7 新 scaffold が supabase client を生成/直 import しない', clientOffenders.length === 0, clientOffenders.join(','));
+  check('G7 新 scaffold が supabase client を生成/直 import しない（adapter は factory 再利用のみ許可）', clientOffenders.length === 0, clientOffenders.join(','));
 }
 
 // ── run ───────────────────────────────────────────────────────────

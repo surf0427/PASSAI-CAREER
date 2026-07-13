@@ -113,14 +113,21 @@ console.log('[4] consumer capability boundary');
 console.log('[5] aggregate module が production consumer へ import されていない');
 {
   // consultation / mypage route・AI route・各機能 page から careerAggregate を import していないこと。
+  // 例外（P17-E で明示的に許可された唯一の production seam）:
+  //   consultation route → careerAggregate/shadowDispatcher.server（shadow read・fire-and-forget・
+  //   prompt/response 不変）。この dispatcher **のみ** を許可し、他の careerAggregate import は引き続き禁止。
+  const SANCTIONED_IMPORT = /from\s+['"][^'"]*careerAggregate\/shadowDispatcher\.server['"]/;
   const consumerDirs = ['app/career', 'app/api'].map((d) => join(ROOT, d));
   const consumerFiles = consumerDirs.flatMap(walk);
   const offenders: string[] = [];
   for (const f of consumerFiles) {
     const src = readFileSync(f, 'utf8');
-    if (/from\s+['"][^'"]*careerAggregate[^'"]*['"]/.test(src)) offenders.push(f);
+    // careerAggregate を指す import 行のうち、sanctioned dispatcher 以外があれば違反。
+    const importLines = src.split('\n').filter((l) => /from\s+['"][^'"]*careerAggregate[^'"]*['"]/.test(l));
+    const bad = importLines.filter((l) => !SANCTIONED_IMPORT.test(l));
+    if (bad.length > 0) offenders.push(f);
   }
-  check('production consumer が careerAggregate を import しない（未接続）', offenders.length === 0, offenders.join(','));
+  check('production consumer が careerAggregate を import しない（shadow dispatcher のみ許可）', offenders.length === 0, offenders.join(','));
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAIL`);
