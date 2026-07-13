@@ -140,3 +140,36 @@ Status 凡例:
 | I（AI 機能へ段階展開） | DEC-12,14,15 |
 
 **現時点で production dataflow は未接続。** 上記 gate が満たされるまで、Layer 4/5 の loader は disabled のまま維持する。
+
+---
+
+# P17-C Addendum — production scaffold での各 decision の影響
+
+P17-C で「SQL 草案 / project-neutral repository / readiness gate / server loader」を追加した。
+各 decision について、**production code 影響 / SQL 影響 / loader 影響 / operator action / blocking phase /
+推奨 / 未決定時 fail-closed 挙動** を追記する。値の最終決定はしない（BLOCKED 項目は据え置き）。
+
+共通の fail-closed 挙動: **readiness の該当 flag（`CAREER_DATA_SPINE_READY_*`）が未承認なら loader は blocked/legal**、
+feature flag 未設定なら disabled、canary allowlist が空なら disabled。→ 未決定は「通電しない」。
+
+| DEC | status | prod code 影響 | SQL 影響 | loader 影響 | operator action | blocking phase | 推奨(コード調査で可) | 未決定時 fail-closed |
+|---|---|---|---|---|---|---|---|---|
+| 01 project/identity | SUPABASE_DECISION_REQUIRED | client 注入先 | 適用先 project | readiness `target_project` | Phase 1 | shared 単一→将来分離 | blocked |
+| 02 L4 table 配置 | SUPABASE_DECISION_REQUIRED | — | 適用先 | `table_placement` | Phase 1/4 | feedstock と同一 project | blocked |
+| 03 L5 table 配置 | SUPABASE_DECISION_REQUIRED | — | 適用先 | `table_placement` | Phase 1/4 | CAREER project | blocked |
+| 04 cross-project join | SUPABASE_DECISION_REQUIRED | identity bridge | RLS 設計 | `identity_strategy` | Phase 1 | join 禁止 + opaque bridge | blocked |
+| 05 cohort threshold | BLOCKED_BY_LEGAL | policy 定数(PROVISIONAL) | — | `cohort_threshold` | Phase 0 | 実分布検証後確定 | blocked |
+| 06 retention | BLOCKED_BY_LEGAL | — | ON DELETE/retention job | `retention` | Phase 0 | — | blocked |
+| 07 revoke/delete SLA | BLOCKED_BY_LEGAL | propagation policy | invalidation table | `revoke_delete_sla` | Phase 0 | — | blocked |
+| 08 consent text | BLOCKED_BY_LEGAL | consent snapshot | consent table | `explicit_share_consent_version` | Phase 0 | 用途別 opt-in | blocked |
+| 09 commercial use | USER+LEGAL | permitted/prohibited uses | — | `commercial_use` | Phase 0 | commercial_resale は default deny | blocked(prohibited 維持) |
+| 10 未成年 | BLOCKED_BY_LEGAL | eligibility | — | (readiness 前提) | Phase 0 | — | blocked |
+| 11 confidentiality 定義 | BLOCKED_BY_LEGAL | PII scanner 下限 | moderation table | `confidentiality_policy_version` | Phase 0 | offline scanner を下限に法務拡張 | blocked/publish 不可 |
+| 12 takedown | OPEN+LEGAL | legal_hold flow | takedown table | `takedown_process` | Phase 0/H | 申立→legal_hold→審査 | legal_hold で read 除外 |
+| 13 moderation owner | USER_DECISION_REQUIRED | moderation flow | moderation table | `moderation_owner` | Phase 0 | 運営内部 + policy | pending=read 不可 |
+| 14 appeal | OPEN | lifecycle 経路 | — | (moderation 前提) | Phase I | 再審査キュー | — |
+| 15 official verification | OPEN | evidenceKind | — | `official_source_verification` | Phase 0/H | 未検証は user_experience 扱い | official 表示しない |
+
+**未決定を code で仮確定しない**: 上記の PROVISIONAL/BLOCKED 値はコードに最終値を持たせていない。
+readiness gate（server-authoritative・default NOT READY）が閉じている限り、loader は通電しない。
+

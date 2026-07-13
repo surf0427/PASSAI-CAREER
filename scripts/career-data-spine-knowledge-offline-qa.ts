@@ -483,6 +483,10 @@ console.log('[J] Production isolation (static guard)');
     'lib/careerAggregate/invalidation.ts',
     'lib/careerAggregate/batchRepository.ts',
     'lib/careerAggregate/inMemoryBatchRepository.ts',
+    // P17-C: lib/careerAggregate 内の supabase repo（governance / batch 型を import する offline scaffold）。
+    'lib/careerAggregate/supabaseBatchRepository.ts',
+    'lib/careerAggregate/supabaseReadRepository.ts',
+    'lib/careerAggregate/supabaseInvalidationRepository.ts',
   ].map((f) => join(ROOT, f));
   const isNewModule = (f: string) => NEW_DIRS.some((p) => f.startsWith(p)) || NEW_AGG_FILES.includes(f);
 
