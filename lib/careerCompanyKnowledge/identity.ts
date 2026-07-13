@@ -9,6 +9,7 @@
 import type {
   AliasCollision,
   CompanyCanonicalId,
+  CompanyIdentityAdjustment,
   CompanyIdentityResolution,
   CompanyMasterRecord,
 } from '@/types/careerCompanyKnowledge';
@@ -130,4 +131,64 @@ export function isResolvedIdentity(
   r: CompanyIdentityResolution,
 ): r is Extract<CompanyIdentityResolution, { status: 'resolved' }> {
   return r.status === 'resolved';
+}
+
+// ── P17-B 追加: master versioning / group / merge ──────────────────────
+
+/**
+ * 過去社名で master を引く（現在名で上書きしない・履歴照合のみ）。
+ * 現在名一致は resolveCompany が担当。ここは historicalNames のみを見る。
+ */
+export function matchHistoricalName(
+  rawName: string,
+  master: readonly CompanyMasterRecord[],
+): CompanyMasterRecord | null {
+  const norm = normalizeCompanyName(rawName);
+  if (norm === '') return null;
+  for (const m of master) {
+    const hist = (m.historicalNames ?? []).map(normalizeCompanyName);
+    if (hist.includes(norm)) return m;
+  }
+  return null;
+}
+
+/** corporate group 参照か（子法人を持つ / 親として参照される）。単一法人と混同しない。 */
+export function isCorporateGroupReference(
+  companyId: CompanyCanonicalId,
+  master: readonly CompanyMasterRecord[],
+): boolean {
+  const rec = master.find((m) => m.companyId === companyId);
+  if (!rec) return false;
+  if ((rec.subsidiaryIds ?? []).length > 0) return true;
+  return master.some((m) => (m.parentId ?? null) === companyId);
+}
+
+/** 現在の identity version（未設定は 1）。 */
+export function currentIdentityVersion(record: CompanyMasterRecord): number {
+  return typeof record.identityVersion === 'number' ? record.identityVersion : 1;
+}
+
+/**
+ * merge 候補を検出する（同一 normalizedName・別 companyId）。自動確定しない。
+ * 決定論順で返す。
+ */
+export function detectMergeCandidates(
+  master: readonly CompanyMasterRecord[],
+): CompanyIdentityAdjustment[] {
+  const byNorm = new Map<string, CompanyCanonicalId[]>();
+  for (const m of master) {
+    const norm = normalizeCompanyName(m.normalizedName || m.displayName);
+    const arr = byNorm.get(norm);
+    if (arr) arr.push(m.companyId);
+    else byNorm.set(norm, [m.companyId]);
+  }
+  const out: CompanyIdentityAdjustment[] = [];
+  for (const [norm, ids] of byNorm) {
+    const uniq = Array.from(new Set(ids)).sort();
+    if (uniq.length > 1) {
+      out.push({ kind: 'merge_candidate', companyIds: uniq, reason: `same normalized name: ${norm}` });
+    }
+  }
+  out.sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
+  return out;
 }

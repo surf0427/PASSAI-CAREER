@@ -27,7 +27,25 @@ export type CompanyMasterRecord = {
   aliases: readonly string[];
   /** 企業グループ参照（親会社 / グループ持株）。無ければ null。 */
   corporateGroupId: string | null;
+  // ── P17-B 追加（すべて optional・後方互換）─────────────────────────
+  /** 登記上の正式名称（display と別管理）。 */
+  legalName?: string;
+  /** 過去社名（現在名で上書きせず履歴保持）。 */
+  historicalNames?: readonly string[];
+  /** 親法人 / 子法人参照（corporate group と単一法人を混同しない）。 */
+  parentId?: CompanyCanonicalId | null;
+  subsidiaryIds?: readonly CompanyCanonicalId[];
+  /** identity version（社名変更・統合で増える）。 */
+  identityVersion?: number;
+  /** この identity version の有効期間（ISO・null は現行）。 */
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
 };
+
+/** identity の統合 / 分割候補（自動確定しない・人手 review 前提）。 */
+export type CompanyIdentityAdjustment =
+  | { kind: 'merge_candidate'; companyIds: readonly CompanyCanonicalId[]; reason: string }
+  | { kind: 'split_candidate'; companyId: CompanyCanonicalId; reason: string };
 
 /**
  * free-text 企業名 → identity 解決結果。
@@ -146,6 +164,15 @@ export type CompanyKnowledgeContribution = {
   moderation: ContributionModeration;
   provenanceNote: string | null;
   privacyClassification: 'shared_company_knowledge';
+  // ── P17-B 追加（すべて optional・後方互換）─────────────────────────
+  /** lifecycle 状態。設定時は published のみ read 対象（未設定は P17-A の gate に従う）。 */
+  lifecycleState?: ContributionLifecycleState;
+  /** legal hold（true は read 除外・invalidation 対象）。 */
+  legalHold?: boolean;
+  /** contribution version（改訂で増える）。 */
+  version?: number;
+  /** この contribution を supersede した後継 id（履歴 lineage）。 */
+  supersededBy?: string | null;
   /** 内部専用: 撤回 / dedup 用の匿名 opaque key。projection へ出さない。 */
   __contributorOpaqueKey: string;
   /** 内部専用: dedup 用の content fingerprint。projection へ出さない。 */
@@ -174,4 +201,167 @@ export type ConfidenceBasis = {
   freshness: FreshnessClassification;
   /** 単一投稿は general trend として扱わない（表示側の抑止フラグ）。 */
   singleReport: boolean;
+};
+
+// ════════════════════════════════════════════════════════════════════
+// P17-B additions — lifecycle / consent snapshot / PII / evidence / version
+// ════════════════════════════════════════════════════════════════════
+
+// ── Contribution lifecycle（offline state machine）─────────────────────
+export type ContributionLifecycleState =
+  | 'draft'
+  | 'consent_pending'
+  | 'submitted'
+  | 'privacy_review'
+  | 'moderation_pending'
+  | 'approved'
+  | 'published'
+  | 'rejected'
+  | 'revoked'
+  | 'blocked'
+  | 'legal_hold'
+  | 'expired';
+
+export type ContributionLifecycleAction =
+  | 'submit'
+  | 'grant_consent'
+  | 'withdraw'
+  | 'start_privacy_review'
+  | 'pass_privacy_review'
+  | 'fail_privacy_review'
+  | 'start_moderation'
+  | 'approve'
+  | 'reject'
+  | 'publish'
+  | 'revoke'
+  | 'block'
+  | 'legal_hold'
+  | 'release_legal_hold'
+  | 'expire';
+
+export type LifecycleTransitionResult =
+  | { ok: true; from: ContributionLifecycleState; to: ContributionLifecycleState }
+  | { ok: false; from: ContributionLifecycleState; reason: LifecycleRejectReason };
+
+export type LifecycleRejectReason =
+  | 'invalid_transition'
+  | 'consent_required'
+  | 'privacy_review_incomplete'
+  | 'moderation_incomplete'
+  | 'terminal_state';
+
+/** transition の audit（決定的・identity を持たない）。 */
+export type LifecycleAuditEntry = {
+  contributionId: string;
+  action: ContributionLifecycleAction;
+  from: ContributionLifecycleState;
+  to: ContributionLifecycleState;
+  at: string; // ISO
+  actorClass: ConsentActorClass;
+};
+
+// ── Explicit-share consent snapshot（Layer 5 専用・offline）─────────────
+export type ConsentActorClass = 'contributor' | 'moderator' | 'system' | 'legal';
+
+/** commercial 可否・consent text は仮決定せず PROVISIONAL/未確定として保持。 */
+export type CompanyKnowledgeConsentSnapshot = {
+  contributionId: string;
+  scope: 'company_knowledge_contribution';
+  policyVersion: number;
+  grantedAt: string | null; // ISO
+  revokedAt: string | null; // ISO
+  consentSource: 'explicit_ui' | 'imported_optin' | 'unknown';
+  actorClass: ConsentActorClass;
+  /** 許可された用途（PROVISIONAL）。 */
+  permittedUses: readonly string[];
+  /** 禁止された用途（commercial 等・確定していないものは含めない）。 */
+  prohibitedUses: readonly string[];
+  /** snapshot 版（revoke / 再取得で増える。lineage 追跡）。 */
+  snapshotVersion: number;
+};
+
+export type ConsentEffectiveState = 'granted' | 'revoked' | 'never_granted';
+
+// ── Offline PII / confidentiality（expanded・fail-closed）───────────────
+export type PiiScanStateExpanded =
+  | 'not_scanned'
+  | 'clean'
+  | 'suspected'
+  | 'confirmed'
+  | 'scan_failed';
+
+export type ConfidentialityLevel = 'unknown' | 'low' | 'medium' | 'high' | 'prohibited';
+
+export type PiiFindingKind =
+  | 'email'
+  | 'phone'
+  | 'url_identifier'
+  | 'application_id'
+  | 'name_label'
+  | 'university_plus_name'
+  | 'employee_name'
+  | 'interviewer_name'
+  | 'confidential_marker';
+
+export type PiiFinding = {
+  kind: PiiFindingKind;
+  /** 一致した箇所の粗い痕跡（raw 全文は保持しない・種別 + 位置のみ）。 */
+  excerptHint: string;
+  /** confirmed（確度高）か suspected（安全側で検出）か。 */
+  severity: 'suspected' | 'confirmed';
+};
+
+export type PiiScanResult = {
+  state: PiiScanStateExpanded;
+  confidentiality: ConfidentialityLevel;
+  findings: readonly PiiFinding[];
+  /** publish 可否（medium/high/prohibited / suspected/confirmed は不可）。 */
+  publishable: boolean;
+};
+
+// ── Evidence aggregation / trend eligibility ───────────────────────────
+export type CorroborationBucket = 'single' | 'few' | 'several' | 'many';
+
+export type EvidenceGroupKey = {
+  companyId: CompanyCanonicalId;
+  contentCategory: CompanyContentCategory;
+  selectionCategory: SelectionCategory;
+  roleCategory: RoleCategory;
+};
+
+export type TrendEligibility =
+  | { eligible: true; bucket: CorroborationBucket }
+  | { eligible: false; reason: 'single_report' | 'insufficient_independent' | 'conflicting' };
+
+export type AggregatedEvidenceGroup = {
+  key: EvidenceGroupKey;
+  /** 独立 contributor 数の bucket（生 count を出さない）。 */
+  corroboration: CorroborationBucket;
+  independentContributorCount: number; // 内部判定用（projection へは bucket のみ）
+  officialCount: number;
+  userExperienceCount: number;
+  hasConflict: boolean;
+  observedPeriods: readonly string[];
+  freshness: FreshnessClassification;
+  trend: TrendEligibility;
+  /** group 内の代表 contribution id（決定論）。 */
+  representativeId: string;
+  memberIds: readonly string[];
+};
+
+// ── Version / freshness / history ─────────────────────────────────────
+export type CompanyKnowledgeStaleReason =
+  | 'observed_period_old'
+  | 'superseded'
+  | 'policy_version_changed'
+  | 'revoked';
+
+export type ContributionRevision = {
+  contributionId: string;
+  version: number;
+  generatedAt: string; // ISO
+  observedPeriod: string;
+  supersedes: string | null;
+  supersededBy: string | null;
+  staleReason: CompanyKnowledgeStaleReason | null;
 };

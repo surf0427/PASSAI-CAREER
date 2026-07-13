@@ -12,9 +12,15 @@
  */
 
 import type {
+  AggregatedEvidenceGroup,
+  CompanyKnowledgeConsentSnapshot,
   CompanyKnowledgeContribution,
   CompanyMasterRecord,
+  ContributionLifecycleAction,
   ContributionModeration,
+  ContributionRevision,
+  LifecycleAuditEntry,
+  LifecycleTransitionResult,
 } from '@/types/careerCompanyKnowledge';
 import type {
   CompanyKnowledgeProjection,
@@ -43,6 +49,25 @@ export interface CompanyKnowledgeRepository {
   updateModeration(contributionId: string, moderation: ContributionModeration): boolean;
   /** revoke 相当の logical exclusion（物理削除しない。存在すれば true）。 */
   revoke(contributionId: string): boolean;
+
+  // ── P17-B 追加 ────────────────────────────────────────────────────
+  /** lifecycle 遷移を適用（不正遷移は拒否・audit を残す）。 */
+  transitionLifecycle(
+    contributionId: string,
+    action: ContributionLifecycleAction,
+    at: string,
+  ): LifecycleTransitionResult;
+  /** consent snapshot を保存（append-only 志向）。 */
+  putConsentSnapshot(snapshot: CompanyKnowledgeConsentSnapshot): void;
+  getConsentSnapshot(contributionId: string): CompanyKnowledgeConsentSnapshot | null;
+  /** legal hold の設定 / 解除（存在すれば true）。 */
+  setLegalHold(contributionId: string, hold: boolean): boolean;
+  /** lifecycle transition audit（決定論順）。 */
+  listLifecycleAudit(): readonly LifecycleAuditEntry[];
+  /** revision 履歴（削除せず履歴化・決定論順）。 */
+  listRevisions(nowIso: string): readonly ContributionRevision[];
+  /** evidence group（company 単位・purpose filter 前の集約）。 */
+  readEvidenceGroups(companyId: string, nowIso: string): readonly AggregatedEvidenceGroup[];
 
   /** purpose-specific な安全 read projection（fail-closed / provenance / freshness filtering 込み）。 */
   readProjection(

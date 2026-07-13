@@ -15,6 +15,7 @@ import type {
   CompanyKnowledgeContribution,
   CompanyMasterRecord,
   CompanySourceCategory,
+  ContributionLifecycleState,
   ContributionModeration,
   RoleCategory,
   SelectionCategory,
@@ -86,6 +87,11 @@ export type MkContributionOverrides = {
   moderation?: ContributionModeration;
   contributorKey?: string;
   excluded?: boolean;
+  // P17-B optional passthrough
+  lifecycleState?: ContributionLifecycleState;
+  legalHold?: boolean;
+  version?: number;
+  supersededBy?: string | null;
 };
 
 export function mkContribution(over: MkContributionOverrides): CompanyKnowledgeContribution {
@@ -122,6 +128,10 @@ export function mkContribution(over: MkContributionOverrides): CompanyKnowledgeC
     moderation: over.moderation ?? moderationApprovedClean(),
     provenanceNote: null,
     privacyClassification: 'shared_company_knowledge',
+    lifecycleState: over.lifecycleState,
+    legalHold: over.legalHold,
+    version: over.version,
+    supersededBy: over.supersededBy ?? null,
     __contributorOpaqueKey: over.contributorKey ?? 'k_default',
     __contentFingerprint: fingerprint,
     __excluded: over.excluded,

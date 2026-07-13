@@ -17,6 +17,7 @@
  */
 
 import { contributionCompanyKey, isShareConsentEligible } from './contribution';
+import { isReadExcludedLifecycle } from './lifecycle';
 import { evaluateModerationReadable } from './moderation';
 import { classifyFreshness, computeConfidenceBasis } from './provenance';
 import { groupContributions } from './dedup';
@@ -70,8 +71,11 @@ export function buildCompanyKnowledgeProjection(
     (c) => contributionCompanyKey(c) === input.companyId,
   );
 
-  // 2) gate: share consent 済 + moderation readable + non-stale + purpose category 許可。
+  // 2) gate: lifecycle(設定時は published のみ) + share consent 済 + moderation readable +
+  //    non-stale + purpose category 許可 + legal hold 除外。
   const readable = forCompany.filter((c) => {
+    if (c.legalHold === true) return false; // legal hold は公開継続と混同しない
+    if (isReadExcludedLifecycle(c.lifecycleState)) return false; // 設定時は published のみ
     if (!isShareConsentEligible(c)) return false;
     if (!evaluateModerationReadable(c.moderation).readable) return false;
     if (!(allowedCategories as readonly string[]).includes(c.contentCategory)) return false;

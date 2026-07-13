@@ -96,3 +96,22 @@ export const MODERATION_REJECTION_REASONS: readonly ModerationRejectionReason[] 
   'spam',
   'legal_hold',
 ];
+
+// ── P17-B 追加: corroboration / trend policy（PROVISIONAL）──────────────
+/** independent contributor 数 → bucket 境界（PROVISIONAL・法務/実データ未確認）。 */
+export type CorroborationPolicy = {
+  few: number; // >= few で 'few'
+  several: number; // >= several で 'several'
+  many: number; // >= many で 'many'
+  status: CompanyKnowledgePolicyStatus;
+};
+
+export const CORROBORATION_BUCKETS: CorroborationPolicy = {
+  few: 2,
+  several: 3,
+  many: 5,
+  status: 'PROVISIONAL',
+};
+
+/** publish を許可する confidentiality（low のみ。medium/high/prohibited/unknown は不可）。 */
+export const PUBLISHABLE_CONFIDENTIALITY: readonly string[] = ['low'];
