@@ -87,6 +87,7 @@
     "qa:careerConsentProtoWithdrawal": "npx tsx scripts/career-consent-proto-withdrawal-qa.ts",
     "qa:careerConsentProtoStaticGuard": "npx tsx scripts/career-consent-proto-static-guard-qa.ts",
     "qa:careerConsentProtoSeries": "npm run qa:careerConsentProtoSchema && npm run qa:careerConsentProtoModel && npm run qa:careerConsentProtoSequence && npm run qa:careerConsentProtoRls && npm run qa:careerConsentProtoWithdrawal && npm run qa:careerConsentProtoStaticGuard",
+    "qa:careerDataSpineOfflineFoundation": "npx tsx scripts/career-data-spine-offline-foundation-qa.ts",
     "career-context-budget-qa": "npx tsx scripts/career-context-budget-qa.ts",
     "qa:careerContextCore": "npm run qa:careerPersonaSpotcheck && npm run qa:careerMemoryPromptGolden && npm run qa:careerMemoryMatching && npm run qa:careerMatchingEsRender && npm run qa:careerMatchingEsBody",
     "qa:careerMemoryAll": "npm run qa:careerContextCore && npm run qa:careerMemoryPresentation && npm run qa:careerMemoryInterview && npm run qa:careerMemoryConsultation && npm run qa:careerInterviewEsRender && npm run qa:careerPresentationEsRender && npm run qa:careerPresentationEsBody",
