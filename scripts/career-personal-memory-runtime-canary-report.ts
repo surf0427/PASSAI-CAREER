@@ -42,7 +42,12 @@ export function generateReport(evidence: unknown): string {
   L.push('## 9. Phase F（read-back）'); row('executionStatus', yn(g(evidence, 'phaseF.executionStatus'))); row('adapterFresh', yn(g(evidence, 'phaseF.adapterFresh'))); row('adapterUsable', yn(g(evidence, 'phaseF.adapterUsable')));
   L.push('## 10. Phase G（shutdown）'); row('masterFlag', yn(g(evidence, 'phaseG.masterFlag'))); row('rollbackDeploymentCompleted', yn(g(evidence, 'phaseG.rollbackDeploymentCompleted'))); row('rowUpdatedAfterShutdown', yn(g(evidence, 'phaseG.rowUpdatedAfterShutdown')));
   L.push('## 11. row parity'); row('Phase C rowCount', yn(g(evidence, 'phaseC.rowCount'))); row('Phase D rowCount', yn(g(evidence, 'phaseD.rowCount'))); row('Phase E rowCount', yn(g(evidence, 'phaseE.rowCount')));
-  L.push('## 12. revision parity'); row('D unchanged→不変', yn(g(evidence, 'phaseD.revisionShortBefore') === g(evidence, 'phaseD.revisionShortAfter'))); row('E changed→変化', yn(g(evidence, 'phaseE.revisionShortBefore') !== g(evidence, 'phaseE.revisionShortAfter')));
+  L.push('## 12. revision parity');
+  {
+    const ce = g(evidence, 'phaseC.expectedRevisionShort'); const cs = g(evidence, 'phaseC.storedRevisionShort');
+    row('C expected==stored (prefix<=20)', ce !== undefined && ce !== null && cs !== undefined && cs !== null ? yn(ce === cs) : '—');
+  }
+  row('D unchanged→不変', yn(g(evidence, 'phaseD.revisionShortBefore') === g(evidence, 'phaseD.revisionShortAfter'))); row('E changed→変化', yn(g(evidence, 'phaseE.revisionShortBefore') !== g(evidence, 'phaseE.revisionShortAfter')));
   L.push('## 13. duplicate 確認'); row('C/D/E duplicateCount', `${yn(g(evidence, 'phaseC.duplicateCount'))}/${yn(g(evidence, 'phaseD.duplicateCount'))}/${yn(g(evidence, 'phaseE.duplicateCount'))}`);
   L.push('## 14. 他 section 非作成'); row('C/D/E otherSectionCount', `${yn(g(evidence, 'phaseC.otherSectionCount'))}/${yn(g(evidence, 'phaseD.otherSectionCount'))}/${yn(g(evidence, 'phaseE.otherSectionCount'))}`);
   L.push('## 15. UI / Source 非影響'); row('uiError (A/C/E/G)', `${yn(g(evidence, 'phaseA.uiError'))}/${yn(g(evidence, 'phaseC.uiError'))}/${yn(g(evidence, 'phaseE.uiError'))}/${yn(g(evidence, 'phaseG.postShutdownUiError'))}`);

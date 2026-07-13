@@ -70,7 +70,7 @@ export function computeExpectedRevision(input: unknown): ExpectedRevisionResult 
       section: 'base',
       builderSuccess: true,
       validationSuccess: v.ok,
-      expectedRevisionShort: built.sourceRevision.slice(0, 24),
+      expectedRevisionShort: built.sourceRevision.slice(0, 20),
       payloadByteSize: size,
       schemaVersion: built.section.schemaVersion,
       forbiddenFieldAbsent: v.ok,

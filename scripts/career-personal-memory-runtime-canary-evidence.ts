@@ -12,7 +12,17 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { CAREER_PERSONAL_MEMORY_SCHEMA_VERSION } from '@/lib/careerMemory/persistence/schema';
+import {
+  CAREER_PERSONAL_MEMORY_SCHEMA_VERSION,
+  CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES,
+  CAREER_PERSONAL_MEMORY_PERSISTED_STATUSES,
+} from '@/lib/careerMemory/persistence/schema';
+
+// runtime revision 比較に使う短縮 prefix 長（Operator Packet の left(source_revision, 20) と統一）。
+// 実 revision は 'v1:content:'+8hex = 19 文字なので 20 は上限 prefix（下限ではない）。
+export const CAREER_REVISION_SHORT_MAX = 20;
+// prompt に使える status（state.ts isUsableForPrompt は fresh のみ）。source of truth は production enum。
+const USABLE_STATUS = 'fresh';
 
 export type Verdict =
   | 'PASS — P16-I RUNTIME CANARY COMPLETED'
@@ -50,7 +60,7 @@ export function scanSensitive(obj: unknown, path = '$', out: string[] = []): str
     if (JWT_RE.test(obj)) out.push(`${path}: jwt-like value`);
     if (UUID_RE.test(obj)) out.push(`${path}: uuid-like value`);
     if (URL_RE.test(obj)) out.push(`${path}: url-like value`);
-    if (/revisionshort$/i.test(path) && obj.length > 24) out.push(`${path}: revisionShort too long (possible leak)`);
+    if (/revisionshort(before|after)?$/i.test(path) && obj.length > CAREER_REVISION_SHORT_MAX) out.push(`${path}: revisionShort too long (possible leak)`);
   }
   return out;
 }
@@ -81,7 +91,17 @@ export function validateEvidence(raw: unknown): ValidationResult {
 
   // 1) 明白な安全/正しさ失敗（値が入っていて悪い） → STOP（confirmation gate 前でも拾う）
   const g = (p: string) => get(raw, p);
-  if (g('phaseA.masterFlag') === 'OFF' && isNum(g('phaseA.rowCountBefore')) && isNum(g('phaseA.rowCountAfter')) && (g('phaseA.rowCountAfter') as number) > (g('phaseA.rowCountBefore') as number)) return stop('master OFF baseline で row 更新');
+  const bothPresentDiffer = (a: string, b: string) => present(g(a)) && present(g(b)) && g(a) !== g(b);
+  const bothPresentSame = (a: string, b: string) => present(g(a)) && present(g(b)) && g(a) === g(b);
+  // revision short の長さ不正（空 or 20 超）→ malformed（sanitized）。実 revision は 19 文字なので上限 20。
+  const badRevLen = (p: string): boolean => { const v = g(p); return typeof v === 'string' && (v.length === 0 || v.length > CAREER_REVISION_SHORT_MAX); };
+  for (const p of ['phaseC.revisionShort', 'phaseC.expectedRevisionShort', 'phaseC.storedRevisionShort', 'phaseD.revisionShortBefore', 'phaseD.revisionShortAfter', 'phaseE.revisionShortBefore', 'phaseE.revisionShortAfter', 'phaseA.revisionShortBefore', 'phaseA.revisionShortAfter']) if (badRevLen(p)) return stop(`revision short 長さ不正: ${p}`);
+  // Phase C: CLI 算出 expected と SQL stored の prefix 不一致 → STOP（Mission item 2: Source revision == row revision）。
+  if (bothPresentDiffer('phaseC.expectedRevisionShort', 'phaseC.storedRevisionShort')) return stop('Phase C revision mismatch (expected vs stored)');
+  // master OFF baseline は row 数・revision・timestamp が不変であること（既存 row があっても更新有無で評価）。
+  if (g('phaseA.masterFlag') === 'OFF' && isNum(g('phaseA.rowCountBefore')) && isNum(g('phaseA.rowCountAfter')) && (g('phaseA.rowCountAfter') as number) !== (g('phaseA.rowCountBefore') as number)) return stop('master OFF baseline で row 数変化');
+  if (g('phaseA.masterFlag') === 'OFF' && bothPresentDiffer('phaseA.revisionShortBefore', 'phaseA.revisionShortAfter')) return stop('master OFF baseline で revision 変化');
+  if (g('phaseA.masterFlag') === 'OFF' && bothPresentDiffer('phaseA.updatedAtBefore', 'phaseA.updatedAtAfter')) return stop('master OFF baseline で updated timestamp 変化');
   if (g('phaseA.uiError') === true || g('phaseC.uiError') === true || g('phaseE.uiError') === true || g('phaseG.postShutdownUiError') === true) return stop('UI error 検出');
   if (g('phaseC.sourceSaveSucceeded') === false || g('phaseE.sourceSaveSucceeded') === false) return stop('Source 保存失敗');
   if (present(g('phaseB.userAllowlistCount')) && g('phaseB.userAllowlistCount') !== 1) return stop('user allowlist count が 1 以外');
@@ -93,8 +113,9 @@ export function validateEvidence(raw: unknown): ValidationResult {
   for (const p of ['phaseC.duplicateCount', 'phaseD.duplicateCount', 'phaseE.duplicateCount']) if (isNum(g(p)) && (g(p) as number) > 0) return stop(`${p} > 0（duplicate）`);
   for (const p of ['phaseC.otherSectionCount', 'phaseD.otherSectionCount', 'phaseE.otherSectionCount']) if (isNum(g(p)) && (g(p) as number) > 0) return stop(`${p} > 0（他 section 作成）`);
   if (present(g('phaseC.schemaVersion')) && g('phaseC.schemaVersion') !== CAREER_PERSONAL_MEMORY_SCHEMA_VERSION) return stop('schema version 不一致');
-  if (present(g('phaseC.status')) && g('phaseC.status') !== 'fresh') return stop('Phase C status が fresh でない');
-  if (isNum(g('phaseC.payloadSizeBytes')) && isNum(g('phaseC.payloadSizeLimit')) && (g('phaseC.payloadSizeBytes') as number) >= (g('phaseC.payloadSizeLimit') as number)) return stop('payload size 上限超過');
+  if (present(g('phaseC.status')) && g('phaseC.status') !== USABLE_STATUS) return stop('Phase C status が usable(fresh) でない');
+  // payload size 上限は **production 定数** を source of truth にする（evidence の payloadSizeLimit は参考のみ）。
+  if (isNum(g('phaseC.payloadSizeBytes')) && (g('phaseC.payloadSizeBytes') as number) >= CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES) return stop('payload size 上限超過');
   if (g('phaseC.revisionPresent') === false) return stop('Phase C revision 欠損');
   // Phase D: unchanged replay で revision 変化 → STOP
   if (present(g('phaseD.revisionShortBefore')) && present(g('phaseD.revisionShortAfter')) && g('phaseD.revisionShortBefore') !== g('phaseD.revisionShortAfter')) return stop('unchanged replay で revision 変化');
@@ -199,6 +220,19 @@ function selfTest(): number {
   { const b = clone(good()); (b.phaseC as Record<string, unknown>).operatorEmail = 'a@b.com'; check(validateEvidence(b).verdict.startsWith('STOP'), 'email 値混入 → STOP (sensitive)'); }
   { const b = clone(good()); (b.phaseC as Record<string, unknown>).payload = { x: 1 }; check(validateEvidence(b).verdict.startsWith('STOP'), 'payload field 混入 → STOP (sensitive)'); }
   { const b = clone(good()); (b.phaseC as Record<string, unknown>).revisionShort = '0000aaaa-0000-4000-8000-000000000001'; check(validateEvidence(b).verdict.startsWith('STOP'), 'revisionShort に UUID → STOP (sensitive)'); }
+  // Phase A: 既存 row 1→1・revision/timestamp 不変 → 非 STOP（rowCountAfter=0 を必須にしない）
+  { const b = clone(good()); (b.phaseA as Record<string, unknown>) = { masterFlag: 'OFF', sourceSaveSucceeded: true, uiError: false, rowCountBefore: 1, rowCountAfter: 1, revisionShortBefore: 'v1:content:aaaa0001', revisionShortAfter: 'v1:content:aaaa0001', updatedAtBefore: '2026-07-11', updatedAtAfter: '2026-07-11' }; check(!validateEvidence(b).verdict.startsWith('STOP'), 'Phase A 既存 row 1→1 revision/timestamp 不変 → 非 STOP'); }
+  // Phase A: row 1→1 だが timestamp 変化 → STOP（master OFF で更新は不正）
+  { const b = clone(good()); (b.phaseA as Record<string, unknown>) = { masterFlag: 'OFF', sourceSaveSucceeded: true, uiError: false, rowCountBefore: 1, rowCountAfter: 1, updatedAtBefore: '2026-07-11', updatedAtAfter: '2026-07-12' }; check(validateEvidence(b).verdict.startsWith('STOP'), 'Phase A row 1→1 timestamp 変化 → STOP'); }
+  // revision parity: expected==stored（19文字）→ 非 STOP / expected!=stored → STOP / 空 → STOP
+  { const b = clone(good()); (b.phaseC as Record<string, unknown>).expectedRevisionShort = 'v1:content:aaaa0001'; (b.phaseC as Record<string, unknown>).storedRevisionShort = 'v1:content:aaaa0001'; check(!validateEvidence(b).verdict.startsWith('STOP'), 'revision expected==stored（19文字/prefix一致）→ 非 STOP'); }
+  { const b = clone(good()); (b.phaseC as Record<string, unknown>).expectedRevisionShort = 'v1:content:aaaa0001'; (b.phaseC as Record<string, unknown>).storedRevisionShort = 'v1:content:zzzz9999'; check(validateEvidence(b).verdict.startsWith('STOP'), 'revision expected!=stored（prefix 不一致）→ STOP'); }
+  { const b = clone(good()); (b.phaseC as Record<string, unknown>).revisionShort = ''; check(validateEvidence(b).verdict.startsWith('STOP'), '空 revision short（長さ不正）→ STOP'); }
+  { const b = clone(good()); (b.phaseC as Record<string, unknown>).revisionShort = 'x'.repeat(21); check(validateEvidence(b).verdict.startsWith('STOP'), '20超 revision short → STOP'); }
+  // source-of-truth: 本 validator の定数が production contract と一致（複製していない）
+  check(CAREER_PERSONAL_MEMORY_SCHEMA_VERSION === 1, 'schema version は production 定数=1');
+  check((CAREER_PERSONAL_MEMORY_PERSISTED_STATUSES as readonly string[]).includes(USABLE_STATUS), 'usable status(fresh) は production persisted statuses に含まれる');
+  check(CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES === 32 * 1024, 'payload size 上限は production 定数=32KB');
   // never-throw on garbage
   check(validateEvidence(null).verdict.startsWith('INCOMPLETE'), 'null → INCOMPLETE (never-throw)');
   check(validateEvidence('x').verdict.startsWith('INCOMPLETE'), 'string → INCOMPLETE (never-throw)');

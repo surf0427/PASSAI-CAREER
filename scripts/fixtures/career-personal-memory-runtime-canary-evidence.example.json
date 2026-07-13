@@ -40,6 +40,8 @@
     "status": null,
     "revisionPresent": null,
     "revisionShort": null,
+    "expectedRevisionShort": null,
+    "storedRevisionShort": null,
     "payloadSizeBytes": null,
     "payloadSizeLimit": 32768,
     "duplicateCount": null,
