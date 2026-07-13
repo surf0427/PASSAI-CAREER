@@ -1,0 +1,99 @@
+{
+  "_note": "P16-I runtime canary evidence — METADATA ONLY. Do NOT put UUID/email/payload/Source/token/URL/key here. revisionShort <= 20 chars.",
+  "general": {
+    "environmentLabel": "preview",
+    "deploymentLabel": "<PREVIEW_DEPLOYMENT_LABEL>",
+    "executionDate": "YYYY-MM-DD",
+    "operatorConfirmation": false,
+    "careerDedicatedSupabaseConfirmed": false,
+    "ddlPreflightPassed": false,
+    "rlsEnabled": false,
+    "ownerPoliciesPresent": false,
+    "anonPublicPolicyAbsent": false
+  },
+  "phaseA": {
+    "masterFlag": "OFF",
+    "userGateConfigured": false,
+    "sectionGateConfigured": false,
+    "sourceSaveSucceeded": null,
+    "uiError": null,
+    "rowCountBefore": null,
+    "rowCountAfter": null,
+    "revisionShortBefore": null,
+    "revisionShortAfter": null,
+    "updatedAtBefore": null,
+    "updatedAtAfter": null
+  },
+  "phaseB": {
+    "masterFlag": "ON",
+    "userAllowlistCount": null,
+    "sectionAllowlist": ["base"],
+    "deploymentCompleted": false,
+    "deploymentHealthy": false
+  },
+  "phaseC": {
+    "sourceSaveSucceeded": null,
+    "uiError": null,
+    "rowCount": null,
+    "sectionKey": "base",
+    "schemaVersion": null,
+    "status": null,
+    "revisionPresent": null,
+    "revisionShort": null,
+    "payloadSizeBytes": null,
+    "payloadSizeLimit": 32768,
+    "duplicateCount": null,
+    "otherSectionCount": null,
+    "createdAt": null,
+    "updatedAt": null
+  },
+  "phaseD": {
+    "sourceSaveSucceeded": null,
+    "uiError": null,
+    "rowCount": null,
+    "revisionShortBefore": null,
+    "revisionShortAfter": null,
+    "updatedAtBefore": null,
+    "updatedAtAfter": null,
+    "payloadSizeBefore": null,
+    "payloadSizeAfter": null,
+    "duplicateCount": null,
+    "otherSectionCount": null,
+    "repositoryUpsertCountObservable": false
+  },
+  "phaseE": {
+    "changedFieldCategory": "targetIndustries",
+    "piiFreeChangeConfirmed": false,
+    "sourceSaveSucceeded": null,
+    "uiError": null,
+    "rowCount": null,
+    "revisionShortBefore": null,
+    "revisionShortAfter": null,
+    "updatedAtBefore": null,
+    "updatedAtAfter": null,
+    "duplicateCount": null,
+    "otherSectionCount": null
+  },
+  "phaseF": {
+    "executionStatus": "RUNTIME_HOLD",
+    "adapterFresh": null,
+    "adapterUsable": null,
+    "schemaSupported": null,
+    "statusUsable": null,
+    "payloadRoundTripConfirmed": null,
+    "holdReason": "no safe operator runner for real-row adapter read"
+  },
+  "phaseG": {
+    "masterFlag": "OFF",
+    "userGateDisabled": false,
+    "sectionGateDisabled": false,
+    "rollbackDeploymentCompleted": false,
+    "deploymentHealthy": false,
+    "postShutdownSourceSaveSucceeded": null,
+    "postShutdownUiError": null,
+    "rowUpdatedAfterShutdown": null,
+    "productionReadStillDisconnected": true,
+    "promptStillDisconnected": true,
+    "orchestratorStillDisconnected": true
+  }
+}
