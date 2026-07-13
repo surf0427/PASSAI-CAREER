@@ -40,6 +40,7 @@
     "qa:careerPersonalMemoryWriter": "npx tsx scripts/career-personal-memory-writer-qa.ts",
     "qa:careerPersonalMemoryWiring": "npx tsx scripts/career-personal-memory-wiring-qa.ts",
     "qa:careerPersonalMemoryReadContract": "npx tsx scripts/career-personal-memory-read-contract-qa.ts",
+    "qa:careerPersonalMemoryCanaryRunbook": "npx tsx scripts/career-personal-memory-canary-runbook-qa.ts",
     "qa:careerSupabaseEnvInline": "npx tsx scripts/career-supabase-env-inline-qa.ts",
     "qa:careerLoginRedirect": "npx tsx scripts/career-login-redirect-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",
