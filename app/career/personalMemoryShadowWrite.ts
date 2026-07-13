@@ -16,11 +16,14 @@
 import { buildCareerAiContext } from '@/lib/careerAi';
 import { isCareerPersonalMemoryShadowWriteEnabled } from '@/lib/careerMemory/persistence/shadowWriteFlag';
 import { coordinateShadowWrite } from '@/lib/careerMemory/persistence/productionShadowWriter';
+import { resolveCanaryEligibility } from '@/lib/careerMemory/persistence/canaryEligibilityClient';
+import type { CareerPersonalMemorySectionKey } from '@/lib/careerMemory/persistence/schema';
 import {
   buildBaseMemorySection,
   buildSelfAnalysisMemorySection,
   buildEsMemorySection,
   buildInterviewMemorySection,
+  type SectionRebuildResult,
 } from '@/lib/careerMemory/persistence/rebuild';
 // localStorage canonical loaders（既存・guarded）。
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
@@ -38,65 +41,93 @@ function safe<T>(fn: () => T, fallback: T): T {
   }
 }
 
+// P16-G: shadow write の二重 gate 用の注入可能依存（QA では fake を差し替える）。
+//   write 条件 = master flag ON AND canary eligible（allowlisted member × allowed section）。
+//   ★ Source load（loadAndBuild）は eligibility allow の後でのみ呼ぶ（deny 時は load しない）。
+export type ShadowWriteGateDeps = {
+  isEnabled: () => boolean;
+  resolveEligibility: (section: CareerPersonalMemorySectionKey) => Promise<boolean>;
+  loadAndBuild: () => SectionRebuildResult;
+  coordinate: (built: SectionRebuildResult) => Promise<unknown>;
+};
+
+// gated pipeline（awaitable・never-throw）。順序: eligibility → Source load+build → compare-and-set。
+//   eligibility deny 時は loadAndBuild / coordinate を呼ばない（Source load ゼロ）。
+export async function runGatedShadowWrite(
+  section: CareerPersonalMemorySectionKey,
+  deps: ShadowWriteGateDeps,
+): Promise<void> {
+  try {
+    const eligible = await deps.resolveEligibility(section);
+    if (!eligible) return; // deny → Source load も write もしない
+    const built = deps.loadAndBuild();
+    await deps.coordinate(built);
+  } catch {
+    /* never-throw */
+  }
+}
+
+// ── 実依存（section 別。real coordinator / real eligibility / real loaders） ──
+const realBaseDeps: ShadowWriteGateDeps = {
+  isEnabled: isCareerPersonalMemoryShadowWriteEnabled,
+  resolveEligibility: resolveCanaryEligibility,
+  loadAndBuild: () => {
+    const profile = safe(() => loadBasicInfo(), null);
+    const activity = safe(() => loadActivityData(), null);
+    const values = safe(() => loadCareerValues(), null);
+    // 氏名等 PII を落とした CareerProfileContext を得るために共通基盤の normalizer を使う（.profile のみ利用）。
+    const ctx = buildCareerAiContext({
+      featureKey: 'career-consultation',
+      profile,
+      activity,
+      values,
+      userInput: '',
+    });
+    return buildBaseMemorySection(ctx.profile, activity, values);
+  },
+  coordinate: coordinateShadowWrite,
+};
+const realSelfAnalysisDeps: ShadowWriteGateDeps = {
+  isEnabled: isCareerPersonalMemoryShadowWriteEnabled,
+  resolveEligibility: resolveCanaryEligibility,
+  loadAndBuild: () => buildSelfAnalysisMemorySection(safe(() => loadSelfAnalysisLogs(), [])),
+  coordinate: coordinateShadowWrite,
+};
+const realEsDeps: ShadowWriteGateDeps = {
+  isEnabled: isCareerPersonalMemoryShadowWriteEnabled,
+  resolveEligibility: resolveCanaryEligibility,
+  loadAndBuild: () => buildEsMemorySection(safe(() => loadEsLogs(), [])),
+  coordinate: coordinateShadowWrite,
+};
+const realInterviewDeps: ShadowWriteGateDeps = {
+  isEnabled: isCareerPersonalMemoryShadowWriteEnabled,
+  resolveEligibility: resolveCanaryEligibility,
+  loadAndBuild: () => buildInterviewMemorySection(safe(() => loadInterviewResults(), [])),
+  coordinate: coordinateShadowWrite,
+};
+
+// master flag OFF なら **同期 return**（追加処理ゼロ＝eligibility API も呼ばない）。ON なら gated pipeline を fire-and-forget。
+function dispatchGated(section: CareerPersonalMemorySectionKey, deps: ShadowWriteGateDeps): void {
+  if (!deps.isEnabled()) return; // flag OFF → 追加処理ゼロ（resolver 0 回・Source load 0）
+  void runGatedShadowWrite(section, deps);
+}
+
 // base: profile / activity / values のいずれか保存後に、現在の 3 Source を再取得して再構築する。
-export function shadowWriteBaseMemory(): void {
-  if (!isCareerPersonalMemoryShadowWriteEnabled()) return; // flag OFF → 追加処理ゼロ
-  void (async () => {
-    try {
-      const profile = safe(() => loadBasicInfo(), null);
-      const activity = safe(() => loadActivityData(), null);
-      const values = safe(() => loadCareerValues(), null);
-      // 氏名等 PII を落とした CareerProfileContext を得るために共通基盤の normalizer を使う（.profile のみ利用）。
-      const ctx = buildCareerAiContext({
-        featureKey: 'career-consultation',
-        profile,
-        activity,
-        values,
-        userInput: '',
-      });
-      const built = buildBaseMemorySection(ctx.profile, activity, values);
-      await coordinateShadowWrite(built);
-    } catch {
-      /* never-throw */
-    }
-  })();
+export function shadowWriteBaseMemory(deps: ShadowWriteGateDeps = realBaseDeps): void {
+  dispatchGated('base', deps);
 }
 
 // self_analysis: 完成 result の canonical ログ保存後に、全 self-analysis ログから再構築する。
-export function shadowWriteSelfAnalysisMemory(): void {
-  if (!isCareerPersonalMemoryShadowWriteEnabled()) return;
-  void (async () => {
-    try {
-      const logs = safe(() => loadSelfAnalysisLogs(), []);
-      await coordinateShadowWrite(buildSelfAnalysisMemorySection(logs));
-    } catch {
-      /* never-throw */
-    }
-  })();
+export function shadowWriteSelfAnalysisMemory(deps: ShadowWriteGateDeps = realSelfAnalysisDeps): void {
+  dispatchGated('self_analysis', deps);
 }
 
 // es: canonical ES ログ保存後に、全 ES ログから再構築する。
-export function shadowWriteEsMemory(): void {
-  if (!isCareerPersonalMemoryShadowWriteEnabled()) return;
-  void (async () => {
-    try {
-      const logs = safe(() => loadEsLogs(), []);
-      await coordinateShadowWrite(buildEsMemorySection(logs));
-    } catch {
-      /* never-throw */
-    }
-  })();
+export function shadowWriteEsMemory(deps: ShadowWriteGateDeps = realEsDeps): void {
+  dispatchGated('es', deps);
 }
 
 // interview: 完成 result の canonical 保存後に、全 interview 結果から再構築する。
-export function shadowWriteInterviewMemory(): void {
-  if (!isCareerPersonalMemoryShadowWriteEnabled()) return;
-  void (async () => {
-    try {
-      const results = safe(() => loadInterviewResults(), []);
-      await coordinateShadowWrite(buildInterviewMemorySection(results));
-    } catch {
-      /* never-throw */
-    }
-  })();
+export function shadowWriteInterviewMemory(deps: ShadowWriteGateDeps = realInterviewDeps): void {
+  dispatchGated('interview', deps);
 }
