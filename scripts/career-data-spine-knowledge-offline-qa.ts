@@ -490,6 +490,8 @@ console.log('[J] Production isolation (static guard)');
     // P17-E: shadow evidence / dispatcher（sanctioned な server 統合層）。
     'lib/careerAggregate/shadowEvidence.ts',
     'lib/careerAggregate/shadowDispatcher.server.ts',
+    // P17-E2: synthetic shadow read repository（governance を使う sanctioned 統合層）。
+    'lib/careerAggregate/syntheticShadowReadRepository.ts',
   ].map((f) => join(ROOT, f));
   // P17-E: server composition（careerAggregate/server/*）も sanctioned な統合層として除外。
   const isNewModule = (f: string) =>

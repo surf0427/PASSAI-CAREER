@@ -33,7 +33,7 @@ function bool(v: unknown): boolean {
 }
 
 /** safe_artifact jsonb を SafeAggregateArtifact として最小検証する（fail-closed）。 */
-function parseArtifactPayload(row: DbRow): SafeAggregateArtifact | null {
+export function parseArtifactPayload(row: DbRow): SafeAggregateArtifact | null {
   const payload = row.safe_artifact;
   if (!payload || typeof payload !== 'object') return null;
   const a = payload as Record<string, unknown>;
@@ -44,7 +44,7 @@ function parseArtifactPayload(row: DbRow): SafeAggregateArtifact | null {
 }
 
 /** batch row → governance 用 manifest（read に必要な field のみ・fail-closed）。 */
-function parseBatchManifest(row: DbRow): AggregateBatchManifest | null {
+export function parseBatchManifest(row: DbRow): AggregateBatchManifest | null {
   const status = row.status;
   if (status !== 'started' && status !== 'completed' && status !== 'failed') return null;
   const validationState = row.validation_state;

@@ -10,11 +10,31 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 **共通の secret 非出力注意**: ログ・スクショ・evidence に project ref / URL / anon key / service-role key /
 実 user UUID / email を貼らない。記録は「変数名」「成否」「件数 bucket」「evidence の safe field」のみ。
 
-前提となるコード状態（P17-E 完了時点）:
+前提となるコード状態（P17-E / P17-E2 完了時点）:
 - `supabase/career_aggregated_insight_apply.sql`（**未適用**・shared 明記・default-deny・`data_classification` 追加）。
-- server-only: shared client adapter / composition root / shadow dispatcher。
+- server-only: service-role read port / composition root / shadow dispatcher。
 - flag default OFF・synthetic-only default true・canary allowlist default empty・real mode BLOCKED。
 - consultation route は shadow dispatcher を `void`（fire-and-forget）呼び出し（prompt/response 不変）。
+
+## 読み取り経路（P17-E2・重要）
+
+- runtime の shadow read は **server-only の service-role client** を経由する（既存 `getServiceRoleSupabaseClient` を再利用）。
+- `career_aggregate_*` table は **RLS enabled / policy 0（default deny）を維持**する。**service-role 向け RLS policy は作らない**（service_role は RLS を bypass するため不要）。
+- したがって **anon / authenticated による table 直接 SELECT は拒否される（＝正常）**。synthetic shadow は **アプリ server 経由でのみ**読む。
+- env は既存の server-only secret（`SUPABASE_SERVICE_ROLE_KEY`）を使う。**新規に secret を表示・コピー・作成しない**。NEXT_PUBLIC へ service-role を置かない。
+- service-role factory が unavailable（key 未設定等）なら shadow は `unavailable`（fail-closed）になり、consultation は不変。
+
+## Canary UUID は「shared Supabase Auth の UID」
+
+- canary に設定する UUID は **shared Supabase Auth（root AuthProvider / useCurrentUserId 由来）の auth.uid()**。
+- **CAREER ログイン（OTP・CareerAuthProvider）の UID ではない。** 混同すると canary が一致せず shadow は動かない。
+- anonymous な shared auth user でも auth.uid() を持つため、その UID を allowlist に入れればよい（RUNTIME UNVERIFIED: 実 session が anon か member か）。
+
+### shared UID の安全な取得（secret 不使用・実 UID は Claude Code から取得/表示しない）
+1. **shared Supabase Auth Dashboard** で対象 user/session の UID を確認（推奨）。
+2. 既存の安全な開発者診断ログ/画面がある場合のみ利用（新規 public API は作らない）。
+3. 対象ブラウザの本人 shared session から、自分の shared user id を **operator 本人のみ**がローカル確認。
+   （UID を外部公開する新規 endpoint は追加しない。）
 
 ---
 
@@ -66,11 +86,13 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 
 ## Phase 5 — table / constraint / RLS 確認
 - 実行者: インフラ
-- 手順: 5 table の存在・`UNIQUE(idempotency_key)`・RLS enabled かつ policy 0 件・`data_classification` CHECK を確認
-- 期待結果: default-deny + idempotency + synthetic 分類が有効
-- 停止条件: policy が存在 / constraint 欠落
+- 手順: 5 table の存在・`UNIQUE(idempotency_key)`・RLS enabled かつ **policy 0 件**・`data_classification` CHECK を確認。
+  **anon / authenticated で SELECT すると拒否される（permission denied）ことが正常**であることを確認する
+  （service-role read は runtime のアプリ server 経由のみ）。
+- 期待結果: default-deny + idempotency + synthetic 分類が有効。anon SELECT は拒否。
+- 停止条件: policy が存在する（特に service_role 向けや `USING (true)`）/ anon SELECT が通ってしまう / constraint 欠落
 - rollback: policy 削除 or drop
-- 証拠: 制約・RLS 一覧
+- 証拠: 制約・RLS 一覧（anon SELECT 拒否の確認）
 
 ## Phase 6 — flag OFF / allowlist empty 確認
 - 実行者: 運用
@@ -99,9 +121,11 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 
 ## Phase 9 — repository round-trip
 - 実行者: 開発
-- 手順: `npm run career:l4SyntheticValidate`（fake port・実 DB 非接続）で valid/suppressed/stale/invalidated/incomplete の read mapping を確認。実 DB での round-trip は、必要なら operator が canary user 向け scoped read policy を追加して確認（本 series では policy を作らない＝anon read は permission_denied=unavailable が正常）
-- 期待結果: mapping が期待どおり
-- 停止条件: mapping 不一致 / raw row 露出
+- 手順: `npm run career:l4SyntheticValidate`（fake port・実 DB 非接続）で valid/suppressed/stale/invalidated/incomplete の read mapping を確認。
+  **実 DB の round-trip は runtime の service-role read 経由**（Phase 12 の shadow で実施）。**anon/authenticated 直 read policy は追加しない**
+  （anon read が permission_denied=unavailable になるのは正常）。
+- 期待結果: mapping が期待どおり。service-role 経由でのみ synthetic row が読める。
+- 停止条件: mapping 不一致 / raw row 露出 / anon read を通すために policy を足したくなった（→ 足さない）
 - rollback: N/A
 - 証拠: validate ログ
 
@@ -115,9 +139,12 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 
 ## Phase 11 — single-user canary 設定
 - 実行者: 運用
-- 手順: `CAREER_AGGREGATED_INSIGHT_READ_ENABLED=true` / `..._CONSULTATION_ENABLED=true` を設定。`..._CANARY_USER_IDS` に **1 名の UUID のみ**（wildcard 禁止）。`..._SYNTHETIC_ONLY` は未設定（=true）
-- 期待結果: 対象 1 名のみ shadow 実行
-- 停止条件: allowlist が空/複数/wildcard、synthetic_only=false
+- 手順: `CAREER_AGGREGATED_INSIGHT_READ_ENABLED=true` / `..._CONSULTATION_ENABLED=true` を設定。`..._CANARY_USER_IDS` に
+  **1 名の UUID のみ**（wildcard 禁止）。この UUID は **shared Supabase Auth の UID**（上記「Canary UUID は…」参照）で、
+  **CAREER ログインの UID ではない**。`..._SYNTHETIC_ONLY` は未設定（=true）。service-role key（`SUPABASE_SERVICE_ROLE_KEY`）は
+  既存設定を使い、**新規表示・コピーしない**。
+- 期待結果: 対象 1 名（shared UID）のみ shadow 実行
+- 停止条件: allowlist が空/複数/wildcard、**CAREER UID を設定**、synthetic_only=false、service-role key を新規発行/表示しようとした
 - rollback: allowlist を空 / flag OFF
 - 証拠: eligible 判定（UUID は記録しない・件数のみ）
 
@@ -131,9 +158,11 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 
 ## Phase 13 — evidence export
 - 実行者: 運用
-- 手順: サーバログの `[data-spine-shadow]` 行（safe evidence JSON）を収集し JSON へ保存。raw / secret / uid が無いことを確認
-- 期待結果: safe evidence の JSON
-- 停止条件: 禁止 field を発見
+- 手順: サーバログの `[data-spine-shadow]` 行（safe evidence JSON）を収集し JSON へ保存。raw / secret / uid が無いことを確認。
+  **`access_path: 'server_service_role'` / `rls_mode: 'default_deny_bypassed_server_only'` /
+  `identity_source: 'shared_auth_session'` / `synthetic_query_enforced: true`** が記録されていることを確認。
+- 期待結果: safe evidence の JSON（access path が service-role・identity が shared）
+- 停止条件: 禁止 field を発見 / access_path が service_role でない / identity_source が shared_auth_session でない
 - rollback: N/A
 - 証拠: evidence JSON（safe field のみ）
 
@@ -148,10 +177,10 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 ## Phase 15 — rollback
 - 実行者: 運用
 - 手順: canary allowlist を空 → consumer flag OFF → master flag OFF → readiness 変数を戻す。必要なら synthetic row DELETE / table drop（Phase 3 手順）
-- 期待結果: 完全に未通電へ復帰（flag OFF のみで shadow 停止）
-- 停止条件: N/A
+- 期待結果: 完全に未通電へ復帰（**flag OFF のみで shadow 停止し、privileged client 生成が 0 になる**）
+- 停止条件: flag OFF にしても shadow が動く（＝gate 前に client 生成している疑い→即調査）
 - rollback: 本 Phase が rollback
-- 証拠: 全 flag OFF・readiness 未設定
+- 証拠: 全 flag OFF・readiness 未設定・shadow ログが出ないこと
 
 ## Phase 16 — 完了判定
 - 実行者: PM
@@ -165,9 +194,13 @@ consultation の shadow read を行う（相談AIの本出力は変えない）�
 ## 通電順序（fail-closed 多重 gate）
 
 ```
-synthetic readiness READY(非法務3項目) ─AND─ master flag ON ─AND─ consumer flag ON ─AND─
-  synthetic_only(=true) ─AND─ canary allowlist(1名) ─AND─ synthetic artifact 投入済
-    └ どれか欠ければ shadow は動かず（gate 前 return / DB query 0）、consultation は byte-identical。
+master flag ON ─AND─ synthetic_only(=true) ─AND─ synthetic readiness READY(非法務3項目) ─AND─
+  consumer flag ON ─AND─ shared-auth canary allowlist(1名) ─AND─ (real mode でない)
+    └ ここまで全通過して初めて → server-only service-role client 生成 → synthetic-only query
+      → governance → safe projection → renderer → evidence。
+    └ どれか欠ければ privileged client を生成せず shadow は動かない（DB query 0）。consultation は byte-identical。
+canary identity = shared Supabase Auth UID（CAREER OTP UID ではない）。
+table は RLS default-deny のまま（service-role が bypass・policy は作らない）。
 real-data mode は本 series で BLOCKED（composition が有効化しない）。
 ```
 

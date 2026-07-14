@@ -54,12 +54,22 @@ export type ShadowEvidence = {
   responseChanged: false;
   /** rollback は flag OFF のみで成立。 */
   rollbackReady: true;
+  // ── P17-E2: read access path の記録（identity / secret は含めない）──
+  /** read 経路（server-only service-role のみ）。anon/authenticated direct は使わない。 */
+  accessPath: 'server_service_role';
+  /** RLS 状態（default-deny を維持したまま server-only で bypass）。 */
+  rlsMode: 'default_deny_bypassed_server_only';
+  /** canary identity の由来（shared auth session。CAREER OTP ではない）。 */
+  identitySource: 'shared_auth_session';
+  /** query 側 synthetic-only 強制が有効か。 */
+  syntheticQueryEnforced: true;
 };
 
 export const SHADOW_EVIDENCE_ALLOWED_FIELDS: readonly string[] = [
   'runId', 'syntheticMarker', 'metricKey', 'sourceStatus', 'rendered', 'byteCount',
   'disclaimerPresent', 'gateDecision', 'latencyBucket', 'errorCategory', 'policyVersion',
   'calculationVersion', 'timestamp', 'promptChanged', 'responseChanged', 'rollbackReady',
+  'accessPath', 'rlsMode', 'identitySource', 'syntheticQueryEnforced',
 ];
 
 /** evidence へ絶対に載せてはいけない key の断片（部分一致で検出）。 */
@@ -108,6 +118,10 @@ export function buildShadowEvidence(input: {
     promptChanged: false,
     responseChanged: false,
     rollbackReady: true,
+    accessPath: 'server_service_role',
+    rlsMode: 'default_deny_bypassed_server_only',
+    identitySource: 'shared_auth_session',
+    syntheticQueryEnforced: true,
   };
 }
 
@@ -132,6 +146,10 @@ export function validateShadowEvidence(e: unknown): ShadowEvidenceValidation {
   if (ev.responseChanged !== false) reasons.push('response_changed');
   // gate 不整合: query した（not_run 以外）のに gate が passed でない。
   if (ev.sourceStatus !== 'not_run' && ev.gateDecision !== 'passed') reasons.push('query_without_passed_gate');
+  // P17-E2: access path / identity source / synthetic query 強制の逸脱。
+  if (ev.accessPath !== 'server_service_role') reasons.push('non_service_role_access');
+  if (ev.identitySource !== 'shared_auth_session') reasons.push('non_shared_auth_identity');
+  if (ev.syntheticQueryEnforced !== true) reasons.push('synthetic_query_not_enforced');
   if (reasons.length > 0) return { verdict: 'STOP', reasons };
 
   // ── INCOMPLETE 条件 ──

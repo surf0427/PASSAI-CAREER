@@ -381,6 +381,7 @@ function isolationChecks(): void {
     f.includes('/careerAggregate/server/') ||
     f.endsWith('/careerAggregate/shadowDispatcher.server.ts') ||
     f.endsWith('/careerAggregate/shadowEvidence.ts') ||
+    f.endsWith('/careerAggregate/syntheticShadowReadRepository.ts') ||
     /supabase(Batch|Read|Invalidation)?Repository\.ts$/.test(f) || f.endsWith('/supabaseRepository.ts');
 
   const consumerFiles = [...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'components')), ...walk(join(ROOT, 'lib'))]
@@ -421,7 +422,11 @@ function isolationChecks(): void {
   // client 生成 / supabase import 制限（DB boundary + repos は supabase client を作らない）。
   //   例外（P17-E §4 の sanctioned bridge）: sharedClientAdapter.server は既存 server client factory
   //   （@/lib/supabase/serverClient）を **再利用** する（client 生成はしない）。この 1 ファイルのみ許可。
-  const clientImportAllowed = new Set([join(ROOT, 'lib/careerDataSpineDb/sharedClientAdapter.server.ts')]);
+  const clientImportAllowed = new Set([
+    join(ROOT, 'lib/careerDataSpineDb/sharedClientAdapter.server.ts'),
+    // P17-E2 sanctioned bridge: 既存 service-role factory を再利用（client 生成はしない）。
+    join(ROOT, 'lib/careerDataSpineDb/sharedServiceRolePorts.server.ts'),
+  ]);
   const clientOffenders = newFiles.filter((f) => {
     if (clientImportAllowed.has(f)) {
       // 例外ファイルでも client を **生成** してはいけない（factory 再利用のみ）。
