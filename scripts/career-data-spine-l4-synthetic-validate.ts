@@ -15,6 +15,7 @@ import {
   syntheticDataset,
   EXPECTED_READ_STATUS,
   PROHIBITED_ROW_FIELDS,
+  UUID_RE,
   type SyntheticCase,
 } from './fixtures/careerAggregateSyntheticDbFixture';
 import { createSupabaseAggregateReadRepository } from '@/lib/careerAggregate/supabaseReadRepository';
@@ -31,17 +32,27 @@ function check(name: string, cond: boolean, detail?: string): void {
 async function main(): Promise<void> {
   const ds = syntheticDataset();
 
-  console.log('[1] fixture row shape / classification / prohibited fields');
+  console.log('[1] fixture row shape / classification / UUID type contract / prohibited fields');
+  const allBatchIds = new Set(ds.map((e) => String(e.batch.id)));
   for (const e of ds) {
     check(`${e.case}: batch data_classification=synthetic`, e.batch.data_classification === 'synthetic');
     check(`${e.case}: artifact data_classification=synthetic`, e.artifact.data_classification === 'synthetic');
-    check(`${e.case}: batch/artifact id 一貫`, e.artifact.batch_id === e.batch.id);
+    // ── UUID 型契約（uuid 列は有効 UUID・FK 一致）──
+    check(`${e.case}: batch.id は UUID`, UUID_RE.test(String(e.batch.id)));
+    check(`${e.case}: artifact.id は UUID`, UUID_RE.test(String(e.artifact.id)));
+    check(`${e.case}: artifact.batch_id は UUID`, UUID_RE.test(String(e.artifact.batch_id)));
+    check(`${e.case}: artifact.batch_id が batch.id と一致（FK）`, e.artifact.batch_id === e.batch.id);
+    check(`${e.case}: batch_id は既存 batch を参照`, allBatchIds.has(String(e.artifact.batch_id)));
+    // idempotency_key は text（人間可読・UUID でなくてよい）。
+    check(`${e.case}: idempotency_key は text marker`, typeof e.batch.idempotency_key === 'string' && String(e.batch.idempotency_key).includes('synthetic'));
     const keys = [...Object.keys(e.batch), ...Object.keys(e.artifact)];
     check(`${e.case}: 禁止 identity field なし`, !keys.some((k) => PROHIBITED_ROW_FIELDS.includes(k)));
     const blob = JSON.stringify(e).toLowerCase();
     check(`${e.case}: raw identity 値なし`, !/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(blob) && !/\buser_id\b/.test(blob) && !blob.includes('"email"'));
-    check(`${e.case}: synthetic id prefix`, String(e.artifact.id).startsWith('synthetic-l4-'));
   }
+  // batch id / artifact id が case 間で衝突しない。
+  check('id 衝突なし（batch/artifact 全 UUID がユニーク）',
+    new Set([...ds.map((e) => String(e.batch.id)), ...ds.map((e) => String(e.artifact.id))]).size === ds.length * 2);
 
   console.log('[2] round-trip mapping via fake port + supabase read repository');
   const now = Date.parse('2026-07-13T00:00:00.000Z');

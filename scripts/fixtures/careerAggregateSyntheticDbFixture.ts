@@ -17,7 +17,18 @@ import type { DbRow } from '@/lib/careerDataSpineDb/types';
 export type SyntheticCase = 'valid' | 'suppressed' | 'stale' | 'invalidated' | 'incomplete';
 export const SYNTHETIC_CASES: readonly SyntheticCase[] = ['valid', 'suppressed', 'stale', 'invalidated', 'incomplete'];
 
-export const SYNTHETIC_ID_PREFIX = 'synthetic-l4-';
+// career_aggregate_{batches,artifacts}.id は uuid 列。case ごとに固定 UUID(v4) を割り当てる。
+// batch は 00000000-...-000N、artifact は 10000000-...-000N（衝突せず・FK 一致）。valid は共有定数と一致。
+const CASE_INDEX: Record<SyntheticCase, number> = { valid: 1, suppressed: 2, stale: 3, invalidated: 4, incomplete: 5 };
+function batchUuid(c: SyntheticCase): string {
+  return c === 'valid' ? SYNTHETIC_CONSULTATION_BATCH_ID : `00000000-0000-4000-8000-00000000000${CASE_INDEX[c]}`;
+}
+function artifactUuid(c: SyntheticCase): string {
+  return c === 'valid' ? SYNTHETIC_CONSULTATION_ARTIFACT_ID : `10000000-0000-4000-8000-00000000000${CASE_INDEX[c]}`;
+}
+
+/** UUID(v4) 妥当性（seed / validator の型契約検証用）。 */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // 決定論的な時刻（マシン時刻非依存）。
 const GENERATED_AT = '2026-07-01T00:00:00.000Z';
@@ -28,10 +39,7 @@ const WINDOW_END = '2026-06-01T00:00:00.000Z';
 const WATERMARK = '2026-06-02T00:00:00.000Z';
 
 function ids(c: SyntheticCase): { batchId: string; artifactId: string } {
-  if (c === 'valid') {
-    return { batchId: SYNTHETIC_CONSULTATION_BATCH_ID, artifactId: SYNTHETIC_CONSULTATION_ARTIFACT_ID };
-  }
-  return { batchId: `${SYNTHETIC_ID_PREFIX}${c}-batch`, artifactId: `${SYNTHETIC_ID_PREFIX}${c}-artifact` };
+  return { batchId: batchUuid(c), artifactId: artifactUuid(c) };
 }
 
 export function syntheticBatchRow(c: SyntheticCase): DbRow {
@@ -39,7 +47,8 @@ export function syntheticBatchRow(c: SyntheticCase): DbRow {
   const incomplete = c === 'incomplete';
   return {
     id: batchId,
-    idempotency_key: `${batchId}-idem`,
+    // idempotency_key は text 列（人間可読の synthetic marker を維持）。
+    idempotency_key: `synthetic-${c}-idem`,
     metric_key: 'feature_usage_prevalence',
     calculation_version: 'feature_usage_prevalence@1',
     policy_version: 1,

@@ -12,9 +12,13 @@ import type { DataSpineReadPort } from '@/lib/careerDataSpineDb/types';
 /** 'real' は型上存在するが composition が blocked に倒す（有効化できない）。 */
 export type AggregatedInsightRuntimeMode = 'synthetic_only' | 'real';
 
-/** synthetic round-trip / shadow が対象とする固定 synthetic id（seed と runtime で共有）。 */
-export const SYNTHETIC_CONSULTATION_BATCH_ID = 'synthetic-l4-consultation-batch-1';
-export const SYNTHETIC_CONSULTATION_ARTIFACT_ID = 'synthetic-l4-consultation-artifact-1';
+/**
+ * synthetic round-trip / shadow が対象とする固定 synthetic id（seed と runtime で共有）。
+ * career_aggregate_{batches,artifacts}.id は uuid 列のため **有効な固定 UUID(v4)** を使う
+ * （P17-E3: 非 UUID 文字列は Postgres 22P02 になる）。実行ごとに変わらない fixture 値。
+ */
+export const SYNTHETIC_CONSULTATION_BATCH_ID = '00000000-0000-4000-8000-000000000001';
+export const SYNTHETIC_CONSULTATION_ARTIFACT_ID = '10000000-0000-4000-8000-000000000001';
 
 /**
  * canary identity は **shared Supabase auth の UID**（root AuthProvider / useCurrentUserId 由来）。

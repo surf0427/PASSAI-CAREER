@@ -26,7 +26,7 @@ import {
 import { evaluateCanary } from '@/lib/careerDataSpineGate/canary';
 import { evaluateSyntheticReadiness, isRealReadyForActivation } from '@/lib/careerDataSpinePolicy/syntheticReadiness';
 import { createFakeDb, DS_NOW } from './fixtures/careerDataSpineDbFixtures';
-import { syntheticArtifactRow, syntheticBatchRow, syntheticDataset, PROHIBITED_ROW_FIELDS } from './fixtures/careerAggregateSyntheticDbFixture';
+import { syntheticArtifactRow, syntheticBatchRow, syntheticDataset, PROHIBITED_ROW_FIELDS, UUID_RE } from './fixtures/careerAggregateSyntheticDbFixture';
 import type { PrivilegedReadResult } from '@/lib/careerAggregate/server/runtimeTypes';
 import type { BatchAwareReadResult } from '@/lib/careerAggregate/batchRepository';
 import type { ValidAggregateArtifact } from '@/types/careerAggregate';
@@ -159,9 +159,15 @@ async function main(): Promise<void> {
     check('D2 deterministic', JSON.stringify(ds) === JSON.stringify(syntheticDataset()));
     check('D3 synthetic marker', ds.every((e) => e.batch.data_classification === 'synthetic' && e.artifact.data_classification === 'synthetic'));
     check('D4 禁止 identity field なし', ds.every((e) => ![...Object.keys(e.batch), ...Object.keys(e.artifact)].some((k) => PROHIBITED_ROW_FIELDS.includes(k))));
+    // P17-E3: uuid 型契約（uuid 列は有効 UUID・FK 一致・idempotency_key は text）。
+    const batchIds = new Set(ds.map((e) => String(e.batch.id)));
+    check('D5 batch.id / artifact.id / batch_id が全て UUID', ds.every((e) => UUID_RE.test(String(e.batch.id)) && UUID_RE.test(String(e.artifact.id)) && UUID_RE.test(String(e.artifact.batch_id))));
+    check('D6 artifact.batch_id が既存 batch.id を参照（FK 整合）', ds.every((e) => e.artifact.batch_id === e.batch.id && batchIds.has(String(e.artifact.batch_id))));
+    check('D7 idempotency_key は text（UUID でない・synthetic marker）', ds.every((e) => !UUID_RE.test(String(e.batch.idempotency_key)) && String(e.batch.idempotency_key).includes('synthetic')));
+    check('D8 UUID は case 間で衝突しない', new Set([...ds.map((e) => String(e.batch.id)), ...ds.map((e) => String(e.artifact.id))]).size === ds.length * 2);
     const seedSrc = read('scripts/career-data-spine-l4-synthetic-seed.ts');
-    check('D5 seed は DB 接続しない', !/from\s+['"]@\/lib\/(supabase|careerSupabase)/.test(seedSrc));
-    check('D6 seed は REVIEW ONLY', seedSrc.includes('REVIEW ONLY') || seedSrc.includes('DO NOT AUTO-APPLY'));
+    check('D9 seed は DB 接続しない', !/from\s+['"]@\/lib\/(supabase|careerSupabase)/.test(seedSrc));
+    check('D10 seed は REVIEW ONLY', seedSrc.includes('REVIEW ONLY') || seedSrc.includes('DO NOT AUTO-APPLY'));
   }
 
   // ══════════════════════════════════════════════════════════════
