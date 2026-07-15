@@ -2,73 +2,27 @@
 //
 // 修正2（部屋の削除・終了）/ 修正3（リーダー退出）で共用する。
 //   - status が waiting / active の room を cancelled にする（論理削除）。
-//   - 既に finished / cancelled は冪等成功（現在行を返す）。
+//   - finished は cancelled で上書きしない（結果整合性を守るため member cleanup もしない）。
 //   - status='waiting' or 'active' 条件付き UPDATE でレース耐性を持たせ、
 //     「部屋を終了」と「リーダー退出」が同時に走っても二重処理にならない。
 //   - 参加者を退出扱い（left_at）にし、残存参加者情報を整理する（best-effort）。
+//
+// 再実行整合性（重要）:
+//   room status を正本とし、member cleanup は「room が cancelled である限り」何度でも安全に
+//   再実行できる（`left_at IS NULL` の member だけ更新するため冪等）。room の cancelled 更新は
+//   成功したが member 更新が失敗した部分障害でも、次回 cancelRoom 呼び出し（close / host leave の
+//   再試行・競合）で cleanup が再度走り、取りこぼした left_at が補正される。
+//   → 「room は cancelled だが active member が残り続ける」状態を作らない。
 //
 // DB 操作は service-role クライアント（API ゲートウェイ方式）。呼び出し側で host 権限を検証する。
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cancelRoomCore } from './roomCloseCore';
 
-type Row = Record<string, unknown>;
+export type { CancelRoomResult } from './roomCloseCore';
 
-export type CancelRoomResult =
-  | { kind: 'ok'; row: Row; alreadyClosed: boolean }
-  | { kind: 'not_found' }
-  | { kind: 'error'; message: string };
-
-// room を cancelled にする（論理削除）。既に終端状態なら冪等に現在行を返す。
-export async function cancelRoom(admin: SupabaseClient, roomId: string): Promise<CancelRoomResult> {
-  // ── 現在の room を取得 ──
-  const { data: roomRow, error: roomErr } = await admin
-    .from('career_gd_rooms')
-    .select('*')
-    .eq('id', roomId)
-    .maybeSingle();
-  if (roomErr) return { kind: 'error', message: roomErr.message };
-  if (!roomRow) return { kind: 'not_found' };
-
-  const status = (roomRow as Row).status;
-
-  // 既に終端（finished / cancelled）→ 冪等成功。二重終了で不整合を起こさない。
-  if (status === 'cancelled' || status === 'finished') {
-    return { kind: 'ok', row: roomRow as Row, alreadyClosed: true };
-  }
-
-  // ── waiting / active → cancelled（条件付き UPDATE でレース耐性） ──
-  const nowIso = new Date().toISOString();
-  const { data: updated, error: updErr } = await admin
-    .from('career_gd_rooms')
-    .update({ status: 'cancelled', finished_at: nowIso })
-    .eq('id', roomId)
-    .in('status', ['waiting', 'active'])
-    .select('*');
-  if (updErr) return { kind: 'error', message: updErr.message };
-
-  const updatedRow = (updated ?? [])[0] as Row | undefined;
-  if (!updatedRow) {
-    // 別リクエストが先に終端化した。最新を取り直して冪等に返す。
-    const { data: latest } = await admin
-      .from('career_gd_rooms')
-      .select('*')
-      .eq('id', roomId)
-      .maybeSingle();
-    if (latest) return { kind: 'ok', row: latest as Row, alreadyClosed: true };
-    return { kind: 'not_found' };
-  }
-
-  // ── 参加者を退出扱いにする（残存参加者情報の整理・best-effort） ──
-  // 失敗しても room は既に cancelled。次周期の poll / cleanup で回収されるため throw しない。
-  const { error: leaveErr } = await admin
-    .from('career_gd_room_members')
-    .update({ left_at: nowIso })
-    .eq('room_id', roomId)
-    .is('left_at', null);
-  if (leaveErr) {
-    console.error('Career GD cancelRoom: mark members left error', leaveErr.message);
-  }
-
-  return { kind: 'ok', row: updatedRow, alreadyClosed: false };
+// room を cancelled にする（論理削除）。既に cancelled でも member cleanup は再実行する。
+export function cancelRoom(admin: SupabaseClient, roomId: string) {
+  return cancelRoomCore(admin, roomId);
 }

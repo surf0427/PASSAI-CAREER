@@ -60,7 +60,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
       console.error('Career GD leave: host cancel error', result.message);
       return jsonError('ROOM_LEAVE_FAILED', 'ルームの退出処理に失敗しました。', 500);
     }
-    return Response.json({ room: mapRoomRow(result.row as Row), status: 'cancelled', hostLeft: true });
+    // 実際の room 状態を返す（finished room に leave された場合は finished のまま）。
+    const mapped = mapRoomRow(result.row as Row);
+    return Response.json({ room: mapped, status: mapped.status, hostLeft: true });
   }
 
   // ── 一般参加者 → 自分の行のみ退出（部屋は継続）。既に退出済みは冪等成功 ──

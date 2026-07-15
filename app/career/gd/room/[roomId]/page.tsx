@@ -195,12 +195,14 @@ export default function CareerGdRoomPage() {
         <FinishedView detail={detail} onRefresh={refresh} />
       ) : (
         // cancelled（部屋の終了 / リーダー退出による論理削除）。突然壊れた画面に見せない。
+        // 終了理由（明示終了 vs リーダー退出）を区別する DB 列は持たないため（migration 回避）、
+        // 残存参加者には両ケースを正しく包含する汎用文言を表示する。
         <Card variant="soft" padding="md" className="mb-5">
           <p className="text-sm font-bold text-slate-800 mb-1">このGDセッションは終了しました</p>
           <p className="text-xs text-slate-500 leading-relaxed mb-4">
             {detail.isHost
               ? 'この部屋は終了済みです。新しくGDを行うには、部屋を作り直すか別の部屋に参加してください。'
-              : '部屋のリーダーが退出したため、このGDセッションは終了しました。新しくGDを行うには、別の部屋に参加してください。'}
+              : 'リーダーにより、このGDセッションは終了しました。新しくGDを行うには、別の部屋に参加してください。'}
           </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Link
@@ -722,8 +724,9 @@ function ActiveView({
         )}
       </Card>
 
-      {/* 修正3: 一般参加者の退出（部屋は継続）。host は上の「GDを終了する」で終了する。 */}
-      <ExitControls roomId={roomId} isHost={isHost} allowHostClose={false} onChanged={onStatusChanged} />
+      {/* 修正2/3: host は「GDを終了する」(finish→結果) に加え、途中中止したい場合は「部屋を終了する」
+          (close→cancelled・結果なし) を明示操作できる。一般参加者は「退出する」(部屋は継続)。 */}
+      <ExitControls roomId={roomId} isHost={isHost} allowHostClose onChanged={onStatusChanged} />
     </>
   );
 }

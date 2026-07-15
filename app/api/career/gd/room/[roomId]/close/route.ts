@@ -60,5 +60,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     return jsonError('ROOM_CLOSE_FAILED', 'ルームの終了に失敗しました。', 500);
   }
 
-  return Response.json({ room: mapRoomRow(result.row as Row), status: 'cancelled' });
+  // 実際の room 状態を返す（finished room に close された場合は finished のまま＝上書きしない）。
+  const mapped = mapRoomRow(result.row as Row);
+  return Response.json({ room: mapped, status: mapped.status });
 }
