@@ -9,7 +9,7 @@
 // 共有状態は Supabase が正本。DB 操作はすべて API route 経由（クライアントは room 系テーブルを直接叩かない）。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -194,11 +194,22 @@ export default function CareerGdRoomPage() {
       ) : status === 'finished' ? (
         <FinishedView detail={detail} onRefresh={refresh} />
       ) : (
+        // cancelled（部屋の終了 / リーダー退出による論理削除）。突然壊れた画面に見せない。
         <Card variant="soft" padding="md" className="mb-5">
-          <p className="text-sm font-bold text-slate-800 mb-1">このルームは終了しています</p>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            {STATUS_LABELS[status]}の状態です。新しくGDを行うには、合言葉で別のルームに参加してください。
+          <p className="text-sm font-bold text-slate-800 mb-1">このGDセッションは終了しました</p>
+          <p className="text-xs text-slate-500 leading-relaxed mb-4">
+            {detail.isHost
+              ? 'この部屋は終了済みです。新しくGDを行うには、部屋を作り直すか別の部屋に参加してください。'
+              : '部屋のリーダーが退出したため、このGDセッションは終了しました。新しくGDを行うには、別の部屋に参加してください。'}
           </p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Link
+              href="/career/gd"
+              className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+            >
+              GDトップへ戻る →
+            </Link>
+          </div>
         </Card>
       )}
       <div className="mt-5 flex flex-col sm:flex-row gap-3">
@@ -313,6 +324,23 @@ function WaitingView({
           <Info label="予定人数" value={`${room.plannedParticipantCount}人`} />
           <Info label="制限時間" value={`${Math.round(room.timeLimitSec / 60)}分`} />
         </div>
+        {/* 確定した GD テーマ（作成時に保存済み・待機/進行/結果で同一テーマを参照）。 */}
+        {room.theme?.title && (
+          <div className="mt-4 rounded-xl bg-white/70 ring-1 ring-slate-200 px-3 py-3" data-testid="gd-waiting-theme">
+            <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">GDテーマ</p>
+            <p className="text-sm font-bold text-slate-800 leading-snug">{room.theme.title}</p>
+            {room.theme.description && (
+              <p className="mt-1 text-xs text-slate-600 leading-relaxed">{room.theme.description}</p>
+            )}
+            {room.theme.constraints && room.theme.constraints.length > 0 && (
+              <ul className="mt-2 list-disc pl-4 text-xs text-slate-500 leading-relaxed">
+                {room.theme.constraints.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {/* 6桁コード共有の案内は合言葉(invite) room のみ（ランダムマッチ・公開ロビーはコード無し）。 */}
         {isHost && room.roomType === 'invite' && (
           <p className="mt-4 text-xs text-amber-700 leading-relaxed">
@@ -382,6 +410,9 @@ function WaitingView({
           </p>
         </Card>
       )}
+
+      {/* 修正2/3: host=部屋を終了（cancelled 論理削除）/ 一般参加者=退出（部屋は継続）。 */}
+      <ExitControls roomId={room.id} isHost={isHost} allowHostClose onChanged={onRefresh} />
     </>
   );
 }
@@ -690,7 +721,115 @@ function ActiveView({
           !isHost && <p className="mt-2 text-[11px] text-slate-400">GDの終了はホストが行います。</p>
         )}
       </Card>
+
+      {/* 修正3: 一般参加者の退出（部屋は継続）。host は上の「GDを終了する」で終了する。 */}
+      <ExitControls roomId={roomId} isHost={isHost} allowHostClose={false} onChanged={onStatusChanged} />
     </>
+  );
+}
+
+// 修正2/3: 部屋の終了（host・cancelled 論理削除）/ 退出（一般参加者・部屋は継続）の操作。
+// 表示制御に加え、サーバ側（close / leave route）でも host 権限を検証する（多層防御）。
+function ExitControls({
+  roomId,
+  isHost,
+  allowHostClose,
+  onChanged,
+}: {
+  roomId: string;
+  isHost: boolean;
+  allowHostClose: boolean;
+  onChanged: () => void;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<null | 'close' | 'leave'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const closeRoom = useCallback(async () => {
+    if (busy) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        'この部屋を終了すると、参加者全員が退出し、現在のセッションは利用できなくなります。本当に終了しますか？',
+      )
+    ) {
+      return;
+    }
+    setBusy('close');
+    setError(null);
+    try {
+      const res = await fetch(`/api/career/gd/room/${encodeURIComponent(roomId)}/close`, { method: 'POST' });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(data?.detail ?? 'ルームの終了に失敗しました。');
+      }
+      onChanged(); // status=cancelled を root が受けて cancelled 画面へ再ルーティング。
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ルームの終了に失敗しました。');
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, roomId, onChanged]);
+
+  const leaveRoom = useCallback(async () => {
+    if (busy) return;
+    const msg = isHost
+      ? 'あなたはホストです。退出すると部屋が終了し、参加者全員が退出します。よろしいですか？'
+      : 'この部屋から退出しますか？';
+    if (typeof window !== 'undefined' && !window.confirm(msg)) return;
+    setBusy('leave');
+    setError(null);
+    try {
+      const res = await fetch(`/api/career/gd/room/${encodeURIComponent(roomId)}/leave`, { method: 'POST' });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(data?.detail ?? 'ルームの退出に失敗しました。');
+      }
+      router.push('/career/gd');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ルームの退出に失敗しました。');
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, roomId, isHost, router]);
+
+  return (
+    <div className="mt-5">
+      {error && (
+        <p className="mb-2 text-xs text-red-600 leading-relaxed" role="alert">
+          {error}
+        </p>
+      )}
+      {isHost ? (
+        allowHostClose ? (
+          <div className="rounded-xl ring-1 ring-red-100 bg-red-50/40 px-4 py-3">
+            <p className="text-xs text-slate-500 leading-relaxed mb-2">
+              この部屋を終了すると参加者全員が退出し、セッションは利用できなくなります。
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={closeRoom}
+              disabled={!!busy}
+              className="text-red-600"
+              data-testid="gd-close-room"
+            >
+              {busy === 'close' ? '終了処理中…' : '部屋を終了する'}
+            </Button>
+          </div>
+        ) : null
+      ) : (
+        <button
+          type="button"
+          onClick={leaveRoom}
+          disabled={!!busy}
+          className="text-sm text-slate-500 hover:text-slate-800 underline disabled:opacity-50"
+          data-testid="gd-leave-room"
+        >
+          {busy === 'leave' ? '退出中…' : '退出する'}
+        </button>
+      )}
+    </div>
   );
 }
 

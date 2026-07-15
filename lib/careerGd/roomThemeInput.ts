@@ -1,0 +1,72 @@
+// PASSAI 就活版 — GD マルチ ルームテーマ入力の検証・正規化（server / client 共用）。
+//
+// 修正1（テーマ設定ステップ）で、ユーザーが確定した GD テーマを部屋作成時に
+// career_gd_rooms.theme（jsonb）へ保存するための共通ロジック。
+//   - 手動入力 / AI 生成いずれのテーマも同じ形（GdTheme）に正規化する。
+//   - create route（invite / public lobby）と ThemeSetupStep（UI ガード）で共用する。
+//
+// 純粋ロジック（DOM / localStorage / Supabase / AI 非依存）。
+
+import type { GdFormat, GdTheme } from '@/types/careerGd';
+
+export const GD_THEME_TITLE_MAX = 120;
+export const GD_THEME_DESCRIPTION_MAX = 2000;
+export const GD_THEME_CONSTRAINT_MAX = 300;
+export const GD_THEME_CONSTRAINTS_MAX_COUNT = 8;
+
+function normalizeFormat(v: unknown): GdFormat {
+  return v === 'case' || v === 'abstract' ? v : 'free';
+}
+
+// 確定条件: タイトルと説明の両方が非空。UI の「決定」ボタン活性判定・start 時の
+// 「確定テーマかどうか」判定に使う（buildRoomTheme fallback の分岐にも使用）。
+export function isThemeConfirmed(theme: GdTheme | null | undefined): theme is GdTheme {
+  if (!theme) return false;
+  return theme.title.trim().length > 0 && theme.description.trim().length > 0;
+}
+
+export type ParseRoomThemeResult =
+  | { ok: true; theme: GdTheme }
+  | { ok: false; reason: string };
+
+// 任意の入力値（API body / UI state）を GdTheme に正規化・検証する。
+// title / description は必須。constraints は string[]（空・欠落可）。
+export function parseRoomThemeInput(value: unknown): ParseRoomThemeResult {
+  if (!value || typeof value !== 'object') {
+    return { ok: false, reason: 'テーマが指定されていません。' };
+  }
+  const v = value as {
+    title?: unknown;
+    description?: unknown;
+    format?: unknown;
+    constraints?: unknown;
+  };
+
+  const title = typeof v.title === 'string' ? v.title.trim() : '';
+  const description = typeof v.description === 'string' ? v.description.trim() : '';
+  if (!title) return { ok: false, reason: 'テーマ（タイトル）を入力してください。' };
+  if (!description) return { ok: false, reason: 'テーマの説明を入力してください。' };
+  if (title.length > GD_THEME_TITLE_MAX) {
+    return { ok: false, reason: `テーマは${GD_THEME_TITLE_MAX}文字以内で入力してください。` };
+  }
+  if (description.length > GD_THEME_DESCRIPTION_MAX) {
+    return { ok: false, reason: `説明は${GD_THEME_DESCRIPTION_MAX}文字以内で入力してください。` };
+  }
+
+  const constraints = Array.isArray(v.constraints)
+    ? v.constraints
+        .filter((c): c is string => typeof c === 'string')
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0)
+        .slice(0, GD_THEME_CONSTRAINTS_MAX_COUNT)
+        .map((c) => c.slice(0, GD_THEME_CONSTRAINT_MAX))
+    : [];
+
+  const theme: GdTheme = {
+    title,
+    description,
+    format: normalizeFormat(v.format),
+    ...(constraints.length > 0 ? { constraints } : {}),
+  };
+  return { ok: true, theme };
+}

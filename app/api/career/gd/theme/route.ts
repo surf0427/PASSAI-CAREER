@@ -44,13 +44,27 @@ export async function POST(req: Request) {
     format?: unknown;
     participantCount?: unknown;
     timeLimitSec?: unknown;
+    industry?: unknown;
+    jobType?: unknown;
+    difficulty?: unknown;
+    themeType?: unknown;
   };
   const format = resolveFormat(b.format);
   const participantCount = resolveCount(b.participantCount);
   const timeLimitSec = resolveTimeLimit(b.timeLimitSec);
+  // 任意の絞り込み条件（マルチGD テーマ設定ステップ用・未指定は AI にお任せ）。
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
 
   const system = buildThemeSystem();
-  const user = buildThemeUser({ format, participantCount, timeLimitSec });
+  const user = buildThemeUser({
+    format,
+    participantCount,
+    timeLimitSec,
+    industry: str(b.industry),
+    jobType: str(b.jobType),
+    difficulty: str(b.difficulty),
+    themeType: str(b.themeType),
+  });
 
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {

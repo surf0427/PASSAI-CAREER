@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/Button';
 import { useAuthStatus, useIsMember } from '@/app/components/AuthProvider';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { GD_FORMAT_LABELS, GD_FORMAT_DESCRIPTIONS } from '../../gdRoles';
-import type { CareerGdRoomCreateResponse, GdFormat } from '@/types/careerGd';
+import { ThemeSetupStep } from '../../components/ThemeSetupStep';
+import type { CareerGdRoomCreateResponse, GdFormat, GdTheme } from '@/types/careerGd';
 import {
   CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
   DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
@@ -41,11 +42,13 @@ export default function CareerGdRoomCreatePage() {
   const authStatus = useAuthStatus();
   const isMember = useIsMember();
 
+  const [step, setStep] = useState<'settings' | 'theme'>('settings');
   const [format, setFormat] = useState<GdFormat>('free');
   const [participantCount, setParticipantCount] = useState<number>(
     DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
   );
   const [timeLimitSec, setTimeLimitSec] = useState(900);
+  const [theme, setTheme] = useState<GdTheme | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CareerGdRoomCreateResponse | null>(null);
@@ -64,13 +67,17 @@ export default function CareerGdRoomCreatePage() {
 
   async function handleCreate() {
     if (loading) return;
+    if (!theme) {
+      setError('GDテーマを確定してください。');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/career/gd/room/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format, plannedParticipantCount: participantCount, timeLimitSec, displayName }),
+        body: JSON.stringify({ format, plannedParticipantCount: participantCount, timeLimitSec, displayName, theme }),
       });
       const data = (await res.json().catch(() => null)) as
         | (CareerGdRoomCreateResponse & { error?: string; detail?: string })
@@ -197,7 +204,77 @@ export default function CareerGdRoomCreatePage() {
     );
   }
 
-  // ── 作成フォーム ──
+  // ── 作成ウィザード step2: GDテーマの設定 ──
+  if (step === 'theme') {
+    return (
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        <PageHeader
+          title="GDテーマの設定"
+          description="待機部屋に進む前に、このルームで話し合うGDテーマを決めます。"
+        />
+
+        {/* step1 で決めた部屋設定の要約（重複入力させない） */}
+        <Card variant="soft" padding="md" className="mb-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm flex-1">
+              <Info label="形式" value={GD_FORMAT_LABELS[format]} />
+              <Info label="参加人数" value={`${participantCount}人`} />
+              <Info label="制限時間" value={`${Math.round(timeLimitSec / 60)}分`} />
+            </div>
+            <button
+              type="button"
+              onClick={() => setStep('settings')}
+              className="shrink-0 text-xs text-slate-500 hover:text-slate-800 underline"
+            >
+              部屋設定を変更
+            </button>
+          </div>
+        </Card>
+
+        <Card variant="soft" padding="md" className="mb-5">
+          <ThemeSetupStep
+            format={format}
+            participantCount={participantCount}
+            timeLimitSec={timeLimitSec}
+            accent="blue"
+            onThemeChange={setTheme}
+          />
+        </Card>
+
+        {error && (
+          <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button
+            variant="primary"
+            size="md"
+            onClick={handleCreate}
+            disabled={loading || !theme}
+            className="w-full sm:w-auto"
+          >
+            {loading ? '作成中…' : 'このテーマでルームを作成 →'}
+          </Button>
+          <button
+            type="button"
+            onClick={() => setStep('settings')}
+            className="inline-flex items-center justify-center gap-1 text-sm text-gray-500 hover:text-gray-800 border border-gray-300 hover:border-gray-400 rounded-lg px-4 py-2 transition-colors"
+          >
+            ← 部屋設定に戻る
+          </button>
+        </div>
+        {!theme && (
+          <p className="mt-2 text-[11px] text-slate-400">
+            テーマを確定すると「ルームを作成」に進めます。
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ── 作成ウィザード step1: 部屋の設定 ──
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
@@ -241,15 +318,9 @@ export default function CareerGdRoomCreatePage() {
         </div>
       </Card>
 
-      {error && (
-        <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
-          {error}
-        </p>
-      )}
-
       <div className="flex flex-col sm:flex-row gap-3">
-        <Button variant="primary" size="md" onClick={handleCreate} disabled={loading} className="w-full sm:w-auto">
-          {loading ? '作成中…' : 'ルームを作成 →'}
+        <Button variant="primary" size="md" onClick={() => setStep('theme')} className="w-full sm:w-auto">
+          次へ（GDテーマの設定）→
         </Button>
         <BackLink />
       </div>

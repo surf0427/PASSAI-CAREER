@@ -21,6 +21,7 @@ import {
 import { mapRoomRow, mapMemberRow } from '../../roomMappers';
 import { buildAiRoomMembers } from '../../aiMembers';
 import { buildRoomTheme } from '../../roomTheme';
+import { isThemeConfirmed } from '@/lib/careerGd/roomThemeInput';
 import type { GdFormat } from '@/types/careerGd';
 
 export const maxDuration = 30;
@@ -105,11 +106,15 @@ export async function POST(
     })
     .filter((k): k is string => k !== '');
 
-  // ── テーマを確定（同じ room は決定的に同じテーマ・STEP-GD-14） ──
-  //    waiting 中は未確定（theme={}）。開始権を取れた本人が UPDATE で確定させる。
+  // ── テーマを確定 ──
+  //    修正1: invite / public lobby は作成時にユーザーが確定したテーマを既に持つ（theme jsonb）。
+  //    その場合は保持し、決して buildRoomTheme で上書きしない。
+  //    テーマ未確定（random_match の自動成立 room や旧行など theme={}）のときだけ、
+  //    従来どおり roomId seed で決定的に自動生成する（同じ room は同じテーマ）。
   const format: GdFormat =
     roomRow.format === 'case' || roomRow.format === 'abstract' ? roomRow.format : 'free';
-  const theme = buildRoomTheme(roomId, format);
+  const storedTheme = mapRoomRow(roomRow).theme;
+  const theme = isThemeConfirmed(storedTheme) ? storedTheme : buildRoomTheme(roomId, format);
 
   // ── 開始権の取得（同時開始レース対策の要）: status='waiting' 条件付き UPDATE ──
   //    ここで 1 行更新できた呼び出しだけが「開始した本人」。0 行なら他が先に開始した＝409。

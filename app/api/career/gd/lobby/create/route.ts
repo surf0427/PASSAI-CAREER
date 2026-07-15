@@ -24,6 +24,7 @@ import {
   jsonError,
 } from '@/lib/careerGd/publicLobby';
 import type { LobbyCreateResponse } from '@/lib/careerGd/publicLobbyTypes';
+import { parseRoomThemeInput } from '@/lib/careerGd/roomThemeInput';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
@@ -40,6 +41,14 @@ export async function POST(req: Request) {
   const parsed = parseCreateInput(body);
   if (!parsed.ok) return parsed.response;
   const { format, plannedParticipantCount, timeLimitSec, displayName } = parsed;
+
+  // 修正1: 確定した GD テーマを作成時に保存（未確定は 400）。
+  const themeInput = (body && typeof body === 'object' ? (body as { theme?: unknown }).theme : undefined);
+  const themeParsed = parseRoomThemeInput(themeInput);
+  if (!themeParsed.ok) {
+    return jsonError('THEME_REQUIRED', themeParsed.reason, 400);
+  }
+  const theme = themeParsed.theme;
 
   // ── 2) 認証（member 必須） ──
   const auth = await authenticateGdMember();
@@ -64,7 +73,7 @@ export async function POST(req: Request) {
     host_user_id: userId,
     status: 'waiting',
     format,
-    theme: {},
+    theme, // 修正1: 確定テーマを作成時に保存。
     time_limit_sec: timeLimitSec,
     planned_participant_count: plannedParticipantCount,
     join_code_hash: buildPublicJoinCodeHash(roomId),

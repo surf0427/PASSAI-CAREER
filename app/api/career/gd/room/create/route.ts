@@ -15,6 +15,7 @@ import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
 import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
 import { generateSixDigitJoinCode, hashJoinCode } from '../roomCode';
 import { parseParticipantCount } from '@/lib/careerGd/participantCount';
+import { parseRoomThemeInput } from '@/lib/careerGd/roomThemeInput';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
@@ -65,6 +66,7 @@ export async function POST(req: Request) {
     plannedParticipantCount?: unknown;
     timeLimitSec?: unknown;
     displayName?: unknown;
+    theme?: unknown;
   };
 
   const format = FORMATS.includes(b.format as Fmt) ? (b.format as Fmt) : null;
@@ -82,6 +84,14 @@ export async function POST(req: Request) {
     return jsonError('INVALID_TIME', '制限時間は 300〜1800 秒にしてください。', 400);
   }
   const displayName = sanitizeName(b.displayName);
+
+  // 修正1: 確定した GD テーマを作成時に保存する（part of the create wizard）。
+  // 未確定は 400（テーマ未確定の部屋を作らない ＝ 待機部屋・GD開始へ進めない条件を満たす）。
+  const themeParsed = parseRoomThemeInput(b.theme);
+  if (!themeParsed.ok) {
+    return jsonError('THEME_REQUIRED', themeParsed.reason, 400);
+  }
+  const theme = themeParsed.theme;
 
   // ── 2) 認証（member ログイン必須・guest/匿名は拒否） ──
   const authClient = await getServerSupabaseClient();
@@ -133,7 +143,7 @@ export async function POST(req: Request) {
         host_user_id: userId,
         status: 'waiting',
         format,
-        theme: {},
+        theme, // 修正1: 確定テーマを作成時に保存（start 時の自動生成上書きは start route 側で抑止）。
         time_limit_sec: Math.round(timeLimitSec),
         planned_participant_count: plannedParticipantCount,
         join_code_hash: joinCodeHash,

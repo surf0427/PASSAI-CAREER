@@ -63,11 +63,23 @@ export function buildThemeUser(input: {
   format: GdFormat;
   participantCount: number;
   timeLimitSec: number;
+  // 任意の絞り込み条件（マルチGD のテーマ設定ステップで指定。ソロ setup は未指定）。
+  industry?: string;
+  jobType?: string;
+  difficulty?: string;
+  themeType?: string;
 }): string {
   const minutes = Math.round(input.timeLimitSec / 60);
+  // 任意条件は入力があるものだけ 1 行で添える（未指定は AI にお任せ）。
+  const prefs: string[] = [];
+  if (input.industry?.trim()) prefs.push(`業界: ${input.industry.trim().slice(0, 60)}`);
+  if (input.jobType?.trim()) prefs.push(`職種: ${input.jobType.trim().slice(0, 60)}`);
+  if (input.difficulty?.trim()) prefs.push(`難易度: ${input.difficulty.trim().slice(0, 30)}`);
+  if (input.themeType?.trim()) prefs.push(`テーマの種類: ${input.themeType.trim().slice(0, 40)}`);
   return [
     `GD 形式: ${GD_FORMAT_LABELS[input.format]}（${GD_FORMAT_DESCRIPTIONS[input.format]}）`,
     `参加人数: ${input.participantCount}人 / 制限時間: 約${minutes}分`,
+    ...(prefs.length > 0 ? ['希望条件（できる範囲で反映）:', ...prefs.map((p) => `- ${p}`)] : []),
     '',
     '上記に合うテーマを 1 つ作ってください。',
     input.format === 'case'
