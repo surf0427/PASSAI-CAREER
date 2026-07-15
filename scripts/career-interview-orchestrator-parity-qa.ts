@@ -212,9 +212,11 @@ function buildStages(input: CareerInterviewContextInput): Record<string, { syste
     buildFinalFeedbackInstruction(it, hasCompanyResearch, input.target),
   ].join('\n\n');
   return {
-    start: { system: startSystem, user: buildSeedUserPrompt(it) },
+    // seed/followup は target がある fixture でのみ operative な入口・優先度指示が増える
+    //   （target 無し fixture では第3引数 undefined ＝ byte 不変）。route と同じ配線。
+    start: { system: startSystem, user: buildSeedUserPrompt(it, input.target) },
     // turn は base system を共有し、user が followup。
-    turn: { system: startSystem, user: buildFollowupUserPrompt(TURNS, it) },
+    turn: { system: startSystem, user: buildFollowupUserPrompt(TURNS, it, input.target) },
     complete: { system: completeSystem, user: buildFinalUserPrompt(TURNS) },
   };
 }

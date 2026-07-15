@@ -70,6 +70,8 @@ export async function POST(req: Request) {
   }
 
   const interviewType = resolveInterviewType(b.interviewType);
+  // target は seed（初回質問の operative 指示）と system の両方で使うため一度だけ正規化する。
+  const target = normalizeInterviewTarget(b.target);
   const system = buildInterviewBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
@@ -79,7 +81,7 @@ export async function POST(req: Request) {
     matching: b.matching ?? null,
     consultationInsights: b.consultationInsights ?? null,
     companyResearch: normalizeInterviewCompanyResearchContext(b.companyResearch),
-    target: normalizeInterviewTarget(b.target),
+    target,
     interviewType,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
@@ -91,7 +93,7 @@ export async function POST(req: Request) {
         max_tokens: 400,
         temperature: 0.6,
         system,
-        messages: [{ role: 'user', content: buildSeedUserPrompt(interviewType) }],
+        messages: [{ role: 'user', content: buildSeedUserPrompt(interviewType, target) }],
       },
       { signal: createTimeoutSignal() },
     );

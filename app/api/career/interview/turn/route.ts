@@ -106,6 +106,8 @@ export async function POST(req: Request) {
   ];
 
   const interviewType = resolveInterviewType(b.interviewType);
+  // target は followup（次質問の operative 指示）と system の両方で使うため一度だけ正規化する。
+  const target = normalizeInterviewTarget(b.target);
   const system = buildInterviewBaseSystem({
     profile: b.profile ?? null,
     activity: b.activity ?? null,
@@ -115,7 +117,7 @@ export async function POST(req: Request) {
     matching: b.matching ?? null,
     consultationInsights: b.consultationInsights ?? null,
     companyResearch: normalizeInterviewCompanyResearchContext(b.companyResearch),
-    target: normalizeInterviewTarget(b.target),
+    target,
     interviewType,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
           temperature: attempt === 2 ? 0 : 0.6,
           system,
           messages: [
-            { role: 'user', content: buildFollowupUserPrompt(priorTurns, interviewType) },
+            { role: 'user', content: buildFollowupUserPrompt(priorTurns, interviewType, target) },
           ],
         },
         { signal: createTimeoutSignal() },

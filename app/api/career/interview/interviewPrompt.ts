@@ -230,26 +230,101 @@ export function countAnswers(turns: CareerInterviewTurn[]): number {
   return turns.filter((t) => t.role === 'answer').length;
 }
 
+// operative prompt へ target 原文を差し込む際の安全な長さ制限（肥大化防止）。
+// system 側にも同じ値が入るため、user 側は必要最小限の参照にとどめる。
+function clipForPrompt(s: string, max = 120): string {
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+// target（受験先・選考の想定）を初回質問（seed）の operative な入口選択指示に変換する。
+// companyName が無ければ空文字（＝従来どおり byte 不変）。「答えやすい入口」という性質は保つ。
+// 反映優先度は focusPoint → jobType → companyMemo。未入力項目は指示に含めない。
+function buildSeedTargetHook(
+  target: CareerInterviewTarget | null | undefined,
+): string {
+  if (!target || !target.companyName) return '';
+  const lines: string[] = [
+    'この面接は特定の受験先を想定しています。1問目は答えやすい入口のまま、次に配慮して切り口を選んでください（初回から詰問・細かい数値・失敗理由の深掘りはしない）:',
+  ];
+  if (target.focusPoint) {
+    lines.push(
+      `- 学生が特に練習したいのは「${clipForPrompt(target.focusPoint)}」。この点へ後の質問でつなげやすい、経験の全体像を話せる入口を優先する。`,
+    );
+  }
+  if (target.jobType) {
+    lines.push(
+      `- 志望職種は「${target.jobType}」。この職種で求められる力を後の深掘りで確認しやすいエピソードに触れられる入口を選ぶ。`,
+    );
+  }
+  if (target.companyMemo) {
+    lines.push(
+      '- 学生が入力した企業想定に関連する経験を話しやすい入口にする（企業固有の事実は断定しない）。',
+    );
+  }
+  lines.push('- ただし target の語句をそのまま復唱せず、自然で答えやすい質問文にする。');
+  return lines.join('\n');
+}
+
+// target を中盤深掘り（followup）の operative な質問選択の優先度指示に変換する。
+// 既存の CAREER_DEEP_DIVE_AXES を置き換えず、優先順位だけ足す。companyName 無しは空文字。
+// focusPoint を最優先扱いにする。未入力項目は指示に含めない。
+function buildFollowupTargetHook(
+  target: CareerInterviewTarget | null | undefined,
+): string {
+  if (!target || !target.companyName) return '';
+  const lines: string[] = [
+    '受験先の想定を踏まえた質問選択の優先度（上の汎用深掘り軸は残したまま、優先順位だけ調整する）:',
+  ];
+  if (target.focusPoint) {
+    lines.push(
+      `- 最優先: 学生が特に練習したい「${clipForPrompt(target.focusPoint)}」に関わる力・経験・根拠がまだ十分に確認できていなければ、次の質問で優先的に掘る。ただし既に十分聞けた／直前に同じ観点を聞いた／回答と接続できない／不自然な話題転換になる場合は無理に聞かない。`,
+    );
+  }
+  if (target.jobType) {
+    lines.push(
+      `- 志望職種「${target.jobType}」で必要になりそうな力（課題把握・関係構築・提案の組み立て・巻き込み・目標への行動・再現性などのうち回答文脈に合うもの）が回答から確認できていなければ、それを確認する深掘りを候補に含める。職種名だけから企業固有の採用基準は捏造しない。`,
+    );
+  }
+  if (target.companyMemo) {
+    lines.push(
+      '- 学生が入力した企業想定は面接の前提として扱い、志望理由と経験の接続・回答の根拠を確認する質問を候補に含める（その想定を外部事実として断定しない）。',
+    );
+  }
+  lines.push(
+    '- いずれも target の語句をそのまま復唱せず、直前までの回答と自然に統合した1問にする。既出の論点・聞き方は繰り返さない。',
+  );
+  return lines.join('\n');
+}
+
 // seed（1問目）生成の user プロンプト。面接の種類に応じて切り口を変える。
-export function buildSeedUserPrompt(interviewType?: CareerInterviewType): string {
+// target があるときのみ、入口選択の operative な指示を追加する（未入力時は byte 不変）。
+export function buildSeedUserPrompt(
+  interviewType?: CareerInterviewType,
+  target?: CareerInterviewTarget | null,
+): string {
   const config = getInterviewModeConfig(interviewType);
-  return [
+  const lines: string[] = [
     `新卒就活の面接（${config.label}）を始めます。`,
     `全${CAREER_INTERVIEW_MAX_TURNS}問程度で、後から具体を掘り下げられるように深掘りしていきます。`,
     `1問目の切り口: ${config.seedFocus}`,
     'いきなり数字や細部を問い詰めず、まずは経験の全体像を話しやすい入口にしてください。',
-    '出力は質問文そのものだけ（前置き・説明・記号・引用符は付けない）。',
-  ].join('\n');
+  ];
+  const targetHook = buildSeedTargetHook(target);
+  if (targetHook) lines.push(targetHook);
+  lines.push('出力は質問文そのものだけ（前置き・説明・記号・引用符は付けない）。');
+  return lines.join('\n');
 }
 
 // followup（回答を踏まえた次質問）生成の user プロンプト。JSON {reaction, question} を要求する。
+// target があるときのみ、汎用深掘り軸に加えて質問選択の優先度指示を差し込む（未入力時は byte 不変）。
 export function buildFollowupUserPrompt(
   turns: CareerInterviewTurn[],
   interviewType?: CareerInterviewType,
+  target?: CareerInterviewTarget | null,
 ): string {
   const config = getInterviewModeConfig(interviewType);
   const questionNumber = Math.min(countAnswers(turns) + 1, CAREER_INTERVIEW_MAX_TURNS);
-  return [
+  const lines: string[] = [
     'これまでのやり取り:',
     buildTranscript(turns),
     '',
@@ -266,10 +341,15 @@ export function buildFollowupUserPrompt(
     '- 文脈に合えば、STAR（状況・課題・行動・結果）・数字・Before/After・判断理由・学び・再現性まで自然に引き出す（ただし一度に複数を問い詰めず、尋問にしない）。',
     '- 既に聞いた論点・聞き方は繰り返さない。Yes/Noで終わる質問・答えにくい質問・説教めいた質問は避ける。',
     '- 目的は「多く質問すること」ではなく、ES・面接・マッチングで再利用できる具体的な情報を引き出すこと。',
+  ];
+  const targetHook = buildFollowupTargetHook(target);
+  if (targetHook) lines.push('', targetHook);
+  lines.push(
     '',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '{ "reaction": string, "question": string }',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 // target（受験先・選考の想定）に応じた最終フィードバックの評価観点を組み立てる。
