@@ -46,5 +46,8 @@ STEP-CAREER-GENJOB-01 / 02。`career_generation_jobs` + 202/after background + s
 - migration: `supabase/career_generation_jobs_apply.sql`
 - data 層: `lib/careerGenerationJob/*`（constants / types / idempotency / repository / errors / flag.server）
 - 生成: `lib/careerSelfAnalysis/summaryPrompt.ts` / `summaryProvider.ts` / `summaryJobAttempt.ts` / `summaryJobService.ts` / `summaryJobStatus.ts`
+- client: `lib/careerSelfAnalysis/clientJob/*` / `app/career/self-analysis/useSelfAnalysisGeneration.ts` / `finalizeSummary.ts`
 - route: `app/api/career/self-analysis/route.ts`（POST）/ `.../job/route.ts`（GET status）
-- QA: `npm run qa:careerGenerationJob`（sql-contract / core / step2）
+- QA: `npm run qa:careerGenerationJob`（sql-contract / core / step2 / step3 / step4）
+- **Step 4 統合レディネス / Failure Matrix / Gate A・B 詳細手順 / pilot・rollback checklist**:
+  [generation_job_step4_readiness.md](generation_job_step4_readiness.md)
