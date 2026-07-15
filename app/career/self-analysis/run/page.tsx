@@ -26,12 +26,12 @@ import {
   loadCareerValues,
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
-import { appendSelfAnalysisLog, loadSelfAnalysisLogs } from '../selfAnalysisStorage';
+import { loadSelfAnalysisLogs } from '../selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
-import { upsertCareerSelfAnalysisResultsToSupabase } from '@/lib/supabase/careerSelfAnalysis';
-import { shadowWriteSelfAnalysisMemory } from '@/app/career/personalMemoryShadowWrite';
-import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
+import { saveCompletedSelfAnalysis } from '../finalizeSummary';
+import { useSelfAnalysisGeneration } from '../useSelfAnalysisGeneration';
+import type { GenerationClientState } from '@/lib/careerSelfAnalysis/clientJob/types';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -47,11 +47,33 @@ const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
-function newId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+// member 生成の進行表示（実際に確認できる状態のみ・架空進行なし）。
+function genStatusTitle(state: GenerationClientState): string {
+  switch (state) {
+    case 'submitting':
+    case 'running':
+      return '自己分析を生成しています';
+    case 'reconnecting':
+      return '生成状況を確認しています';
+    case 'failed':
+      return '生成に失敗しました';
+    default:
+      return '';
   }
-  return `csa-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
+function genStatusDetail(state: GenerationClientState): string {
+  switch (state) {
+    case 'submitting':
+      return '生成を開始しています。';
+    case 'running':
+      return '生成は続いています。ページを再読み込みしても復元できます。';
+    case 'reconnecting':
+      return '接続が不安定なため、処理状況を再確認しています。ページを再読み込みしても復元できます。';
+    case 'failed':
+      return 'もう一度試すことができます。入力内容は保持されています。';
+    default:
+      return '';
+  }
 }
 
 // クライアント側のタイムアウト（サーバ無応答でも操作不能にならないよう上限を設ける）。
@@ -169,9 +191,25 @@ export default function CareerSelfAnalysisRunPage() {
   const answered = countAnswers(turns);
   const progressPct = Math.min(100, Math.round((answered / MAX_TURNS) * 100));
   const questionNumber = Math.min(answered + 1, MAX_TURNS);
-  const busy = loading || generating;
+  // member（ログイン済み）は耐障害 job 経路、anonymous は従来同期経路。
+  // 生成ロジックは controller（QA 済み）にあり、本 hook は配線のみ。
+  const gen = useSelfAnalysisGeneration({
+    userId,
+    getRequestBody: () =>
+      canRun
+        ? { profile: basicInfo, activity, values, userInput: '', conversation: turns, pastSummaries }
+        : null,
+    getTurnCount: () => countAnswers(turns),
+  });
+  const memberGenBusy =
+    !!userId &&
+    (gen.view.state === 'submitting' ||
+      gen.view.state === 'running' ||
+      gen.view.state === 'reconnecting');
+  const generatingNow = generating || memberGenBusy;
+  const busy = loading || generatingNow;
 
-  // 入力データを body に積む（最新の localStorage を反映）。
+  // 入力データを body に積む（最新の localStorage を反映）。anonymous legacy 経路用。
   // pastSummaries は過去ログの軽量サマリ（全文は渡さない）。
   function payload() {
     return { profile: basicInfo, activity, values, pastSummaries };
@@ -249,9 +287,20 @@ export default function CareerSelfAnalysisRunPage() {
 
   // 自己分析結果を生成する（会話があれば conversation として渡す）。
   // 質問生成が失敗していても、既存 turns があれば本関数で結果生成に進める。
-  async function generate() {
+  // member はログイン済み owner-scoped の耐障害 job 経路（202→poll→復元）。
+  // anonymous は従来の同期経路（挙動不変）。進行と復旧は gen.view / controller が担う。
+  function generate() {
     if (!canRun || busy) return;
     setError(null);
+    if (userId) {
+      gen.start();
+      return;
+    }
+    void legacyGenerate();
+  }
+
+  // anonymous 向け従来同期経路。保存は共有 finalize（saveCompletedSelfAnalysis）に集約。
+  async function legacyGenerate() {
     setGenerating(true);
     try {
       const data = await postJson(
@@ -262,29 +311,8 @@ export default function CareerSelfAnalysisRunPage() {
       );
       const result = data.result as CareerSelfAnalysisResult | undefined;
       if (!result) throw new Error('分析の生成に失敗しました。もう一度お試しください。');
-      const log = {
-        id: newId(),
-        createdAt: new Date().toISOString(),
-        userInput: '',
-        result,
-      };
-      appendSelfAnalysisLog(log);
-      // Supabase durable mirror（best-effort / member のみ）。
-      if (userId) {
-        void upsertCareerSelfAnalysisResultsToSupabase(userId, [log]);
-        // P16-D: Personal Memory shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
-        void shadowWriteSelfAnalysisMemory();
-        // Event Log（本文なし・fire-and-forget / member のみ）。自己分析本文・AI出力本文・
-        // 強み弱み本文・深掘り質問/回答本文・userInput は渡さない。深掘り回数のみ turnCount で記録。
-        // event_type は ai_generated（AI生成物である点で ES と同方針）。
-        void recordCareerEvent(userId, {
-          feature: 'self_analysis',
-          eventType: 'ai_generated',
-          completionStatus: 'completed',
-          clientEventId: log.id,
-          metadata: { turnCount: countAnswers(turns) },
-        });
-      }
+      const saved = saveCompletedSelfAnalysis({ result, userId, turnCount: countAnswers(turns) });
+      if (!saved) throw new Error('分析の保存に失敗しました。もう一度お試しください。');
       router.push('/career/self-analysis/result');
     } catch (e) {
       setError(e instanceof Error ? e.message : '分析の生成に失敗しました。もう一度お試しください。');
@@ -365,7 +393,7 @@ export default function CareerSelfAnalysisRunPage() {
               disabled={!canRun || busy}
               className="w-full sm:w-auto"
             >
-              {generating ? '生成中…' : '対話せずにすぐ生成する'}
+              {generatingNow ? '生成中…' : '対話せずにすぐ生成する'}
             </Button>
           </div>
         </Card>
@@ -427,7 +455,7 @@ export default function CareerSelfAnalysisRunPage() {
                   disabled={busy}
                   className="w-full sm:w-auto"
                 >
-                  {generating ? '生成中…' : 'ここまでで分析を生成する'}
+                  {generatingNow ? '生成中…' : 'ここまでで分析を生成する'}
                 </Button>
               )}
             </div>
@@ -455,8 +483,30 @@ export default function CareerSelfAnalysisRunPage() {
             disabled={busy}
             className="w-full sm:w-auto"
           >
-            {generating ? '分析を作成中…' : '自己分析を生成する →'}
+            {generatingNow ? '分析を作成中…' : '自己分析を生成する →'}
           </Button>
+        </Card>
+      )}
+
+      {/* member 生成の進行・復旧（202→poll→復元）。実際に確認できる状態のみ表示。 */}
+      {userId && gen.view.state !== 'idle' && gen.view.state !== 'completed' && (
+        <Card variant="soft" padding="md" className="mb-5">
+          <p className="text-sm font-bold text-slate-800 mb-1">{genStatusTitle(gen.view.state)}</p>
+          <p className="text-xs text-slate-500 leading-relaxed mb-3">{genStatusDetail(gen.view.state)}</p>
+          {(gen.view.canRetry || gen.view.canRecheck) && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              {gen.view.canRetry && (
+                <Button variant="primary" size="md" onClick={gen.retry} className="w-full sm:w-auto">
+                  もう一度試す
+                </Button>
+              )}
+              {gen.view.canRecheck && (
+                <Button variant="outline" size="md" onClick={gen.recheck} className="w-full sm:w-auto">
+                  処理状況を再確認
+                </Button>
+              )}
+            </div>
+          )}
         </Card>
       )}
 

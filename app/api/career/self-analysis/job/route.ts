@@ -72,10 +72,10 @@ export async function GET(req: Request) {
     );
   }
 
-  // owner-scoped SELECT（RLS + 明示 user_id 条件）。
+  // owner-scoped SELECT（RLS + 明示 user_id 条件）。lease_expires_at は recoveryAction 用。
   const { data, error } = await client
     .from(TABLE)
-    .select('id, status, result, error_code')
+    .select('id, status, result, error_code, lease_expires_at')
     .eq('id', jobId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -97,8 +97,10 @@ export async function GET(req: Request) {
       status: data.status as string,
       result: data.result ?? null,
       errorCode: typeof data.error_code === 'string' ? data.error_code : null,
+      leaseExpiresAt: typeof data.lease_expires_at === 'string' ? data.lease_expires_at : null,
     },
     jobId,
+    Date.now(),
   );
   return Response.json(mapped.body, { status: mapped.httpStatus });
 }
