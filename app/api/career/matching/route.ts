@@ -67,8 +67,9 @@ const PER_CALL_TIMEOUT_MS = 60_000; // 1回あたりの AI timeout（旧 75s か
 const MIN_RETRY_BUDGET_MS = 30_000; // 2回目 retry を発火するのに必要な最低残予算
 
 // 生成量（＝生成時間）の主因は「社数 × 各社の signals/根拠 × テキスト配列」。
-// タイムアウト対策として 4 社に抑える（決定的エンジン runCareerMatch は社数非依存で不変）。
-const MAX_COMPANIES = 4;
+// 提案社数の上限（決定的エンジン runCareerMatch は社数非依存で不変）。
+// 社数増は生成量＝生成時間の増加要因なので、max_tokens 余白とセットで調整する。
+const MAX_COMPANIES = 6;
 
 const MATCH_KEYS = MATCH_AXES.map((a) => `match:${a}`);
 const SUCCESS_KEYS = SUCCESS_AXES.map((a) => `success:${a}`);
@@ -380,7 +381,8 @@ export async function POST(req: Request) {
       const message = await anthropic.messages.create(
         {
           model: MODEL,
-          max_tokens: 3200,
+          // 社数 4→6 で company ブロックが増えるため、途中切れ(max_tokens stop)防止に余白を追加。
+          max_tokens: 4400,
           temperature: attempt === 2 ? 0 : 0.5,
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],

@@ -169,6 +169,9 @@ export default function CareerMatchingResultPage() {
 }
 
 function CompanyCard({ company, rank }: { company: CompanyScore; rank: number }) {
+  // 初期状態は折りたたみ（要約のみ）。詳細はユーザー操作で開く。
+  const [open, setOpen] = useState(false);
+
   return (
     <div className="rounded-xl ring-1 ring-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-3 mb-3">
@@ -179,67 +182,84 @@ function CompanyCard({ company, rank }: { company: CompanyScore; rank: number })
         <ConfidenceBadge confidence={company.match.confidence} />
       </div>
 
-      {/* 3スコア */}
+      {/* 3スコア（要約・常時表示） */}
       <div className="grid grid-cols-3 gap-2 mb-3">
         <ScorePill label="マッチ度" total={company.match.total} tone="blue" />
         <ScorePill label="選考準備度" total={company.readiness.total} tone="emerald" />
         <ScorePill label="活躍可能性" total={company.success.total} tone="violet" />
       </div>
 
-      {/* avoidances キャップの説明 */}
-      {company.appliedCaps.length > 0 && (
-        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700 leading-relaxed">
-          「{company.appliedCaps.map((c) => c.label).join('・')}」に該当する可能性があるため、
-          マッチ度は上限 {Math.min(...company.appliedCaps.map((c) => c.cap))} 点に制限しています
-          （キャップ前: {company.matchUncapped}）。
-        </p>
-      )}
+      {/* 詳細トグル（既存 Accordion 方針: aria-expanded + シェブロン回転 + 条件レンダー） */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+      >
+        <span>{open ? '詳細を閉じる' : '詳細を見る'}</span>
+        <span aria-hidden className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>
+          ▾
+        </span>
+      </button>
 
-      {/* 軸別スコア（マッチ度の内訳） */}
-      <AxisBreakdown title="マッチ度の内訳（軸別）" breakdown={company.match} />
+      {open && (
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          {/* avoidances キャップの説明 */}
+          {company.appliedCaps.length > 0 && (
+            <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700 leading-relaxed">
+              「{company.appliedCaps.map((c) => c.label).join('・')}」に該当する可能性があるため、
+              マッチ度は上限 {Math.min(...company.appliedCaps.map((c) => c.cap))} 点に制限しています
+              （キャップ前: {company.matchUncapped}）。
+            </p>
+          )}
 
-      <MiniList title="なぜ向いているのか" items={company.matchReasons} accent />
-      <MiniList title="活きる強み" items={company.strengthsUsed} />
-      <MiniList title="見極めの留意点" items={company.attentionPoints} />
+          {/* 軸別スコア（マッチ度の内訳） */}
+          <AxisBreakdown title="マッチ度の内訳（軸別）" breakdown={company.match} />
 
-      {/* 不足能力（優先度順） */}
-      {company.gaps.length > 0 && (
-        <div className="mt-3">
-          <p className="text-[11px] font-bold text-slate-500 mb-1">あと何が足りないか（優先順）</p>
-          <ul className="flex flex-col gap-1.5">
-            {company.gaps.slice(0, 4).map((g, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-slate-700">{g.label}</span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className="text-[11px] font-bold text-emerald-700">
-                    +{g.deltaIfImproved}
-                  </span>
-                  <Link href={g.feature.href} className="text-[11px] text-blue-600 hover:underline">
-                    {g.feature.label} →
-                  </Link>
-                </span>
-              </li>
-            ))}
-          </ul>
+          <MiniList title="なぜ向いているのか" items={company.matchReasons} accent />
+          <MiniList title="活きる強み" items={company.strengthsUsed} />
+          <MiniList title="見極めの留意点" items={company.attentionPoints} />
+
+          {/* 不足能力（優先度順） */}
+          {company.gaps.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[11px] font-bold text-slate-500 mb-1">あと何が足りないか（優先順）</p>
+              <ul className="flex flex-col gap-1.5">
+                {company.gaps.slice(0, 4).map((g, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-slate-700">{g.label}</span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-[11px] font-bold text-emerald-700">
+                        +{g.deltaIfImproved}
+                      </span>
+                      <Link href={g.feature.href} className="text-[11px] text-blue-600 hover:underline">
+                        {g.feature.label} →
+                      </Link>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 改善ロードマップ */}
+          {company.roadmap.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[11px] font-bold text-slate-500 mb-1">改善ロードマップ</p>
+              <ol className="flex flex-col gap-1.5">
+                {company.roadmap.map((step) => (
+                  <li key={step.order} className="text-sm text-slate-700">
+                    <span className="font-semibold text-slate-900">Step{step.order}　{step.label}</span>
+                    <span className="block text-[11px] text-slate-500">{step.reason}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          <MiniList title="次のアクション" items={company.nextActions} />
         </div>
       )}
-
-      {/* 改善ロードマップ */}
-      {company.roadmap.length > 0 && (
-        <div className="mt-3">
-          <p className="text-[11px] font-bold text-slate-500 mb-1">改善ロードマップ</p>
-          <ol className="flex flex-col gap-1.5">
-            {company.roadmap.map((step) => (
-              <li key={step.order} className="text-sm text-slate-700">
-                <span className="font-semibold text-slate-900">Step{step.order}　{step.label}</span>
-                <span className="block text-[11px] text-slate-500">{step.reason}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
-      <MiniList title="次のアクション" items={company.nextActions} />
     </div>
   );
 }
