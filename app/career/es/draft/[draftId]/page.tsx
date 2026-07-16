@@ -18,7 +18,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { loadEsDraft, saveEsDraft, deleteEsDraft } from '../../esDraftStorage';
-import { appendEsLog, createEsWorkspaceLog } from '../../esStorage';
+import { appendEsLog, createEsWorkspaceLog, loadEsLogById } from '../../esStorage';
 import { EsDeepDivePanel } from '../../components/EsDeepDivePanel';
 import { classifyEsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
@@ -156,6 +156,14 @@ export default function CareerEsDraftEditorPage() {
         review,
       };
       appendEsLog(log);
+      // 正式ログが実際に永続化できたことを確認してから draft を削除する。
+      // localStorage quota 超過時、safeSetStorage は例外を投げず黙って失敗するため、
+      // 確認せず draft を消すと本文が失われる（正式ログも draft も残らない）。
+      if (!loadEsLogById(log.id)) {
+        throw new Error(
+          '保存容量が不足しているため、ESを保存できませんでした。不要なデータを削除して、もう一度お試しください。',
+        );
+      }
       if (userId) void upsertCareerEsLogsToSupabase(userId, [log]);
       void recordCareerEvent(userId, {
         feature: 'es',
@@ -166,7 +174,7 @@ export default function CareerEsDraftEditorPage() {
         jobType: draft.jobType ?? null,
         metadata: { mode: draft.mode, kind: 'review' },
       });
-      // 保存が成功したときだけ draft を削除する。
+      // 正式ログの保存を確認できたときだけ draft を削除する。
       deleteEsDraft(draft.id, userId);
       router.push(`/career/es/${encodeURIComponent(log.id)}`);
     } catch (e) {

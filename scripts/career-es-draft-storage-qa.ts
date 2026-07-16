@@ -35,6 +35,11 @@ import {
   saveEsDraft,
   deleteEsDraft,
 } from '@/app/career/es/esDraftStorage';
+import {
+  appendEsLog,
+  createEsWorkspaceLog,
+  loadEsLogById,
+} from '@/app/career/es/esStorage';
 import { ES_DRAFT_SCHEMA_VERSION, type CareerEsDraft } from '@/types/careerEs';
 
 let failures = 0;
@@ -139,6 +144,33 @@ console.log('# ownerId 正規化（空文字→guest 扱い）');
   reset();
   saveEsDraft(makeDraft({ id: 'x', ownerId: '' as unknown as string }));
   check('空 ownerId は guest(null) として扱う', loadEsDraft('x', null) !== null);
+}
+
+// draft→正式ログ昇格（添削成功時）の「保存成功確認 → draft 削除」不変条件。
+// 昇格ハンドラ（app/career/es/draft/[draftId]/page.tsx）は appendEsLog 後に
+// loadEsLogById で永続化を確認し、確認できたときだけ draft を削除する。
+// この QA は確認の可否（guard 条件）が正しく分岐することを検証する:
+//   - 正常保存: loadEsLogById が非 null → guard 通過 → draft 削除して良い。
+//   - quota 失敗: safeSetStorage は例外を投げず黙って失敗 → loadEsLogById は null
+//     → guard 発火 → draft を残す（本文消失を防ぐ）。
+console.log('# 昇格の保存成功確認（quota 失敗時は正式ログ null → draft を残す）');
+{
+  reset();
+  const okLog = createEsWorkspaceLog({ mode: 'write', question: 'Q', body: '本文' });
+  appendEsLog(okLog);
+  check('正常保存後は loadEsLogById が非 null（guard 通過＝draft 削除可）', loadEsLogById(okLog.id) !== null);
+
+  // localStorage.setItem を一時的に quota 失敗させる（getItem/removeItem は維持）。
+  const realSetItem = (g.localStorage as { setItem: (k: string, v: string) => void }).setItem;
+  (g.localStorage as { setItem: (k: string, v: string) => void }).setItem = () => {
+    throw new DOMException('quota', 'QuotaExceededError');
+  };
+  const failLog = createEsWorkspaceLog({ mode: 'write', question: 'Q2', body: '消えてはいけない本文' });
+  appendEsLog(failLog); // safeSetStorage が握るため例外にはならない
+  (g.localStorage as { setItem: (k: string, v: string) => void }).setItem = realSetItem;
+
+  check('quota 失敗時は正式ログが永続化されない（loadEsLogById=null＝guard 発火）', loadEsLogById(failLog.id) === null);
+  check('quota 失敗でも既存の正式ログは壊れない', loadEsLogById(okLog.id) !== null);
 }
 
 if (failures > 0) {

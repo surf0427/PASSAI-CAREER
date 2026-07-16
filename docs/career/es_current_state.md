@@ -68,7 +68,7 @@
 - **schema version**: `ES_DRAFT_SCHEMA_VERSION`。不一致・壊れた draft は読み込み時に安全に破棄する（fail-safe。localStorage JSON parse error も `safeStorage` が吸収）。
 - **autosave**: 設定・Q&A回答・質問進行・organize完了は即時保存、本文入力は約 700ms debounce（blur・添削前に flush）。外部 API への自動送信はしない。
 - **再開UI**: `/career/es/new?mode=…` で同モードの未完成 draft を「続きから再開」として上部に表示（勝手に上書きしない。新規は別 draftId で作成）。
-- **draft 削除**: (a) AI添削成功で正式ログ化したとき、(b) ユーザーが明示的に破棄したとき、のみ。API/添削/保存の失敗では削除しない。
+- **draft 削除**: (a) AI添削成功で正式ログ化したとき、(b) ユーザーが明示的に破棄したとき、のみ。API/添削/保存の失敗では削除しない。(a) は **正式ログの永続化を `loadEsLogById` で確認できたときだけ** 削除する（quota 超過などで `safeSetStorage` が黙って失敗した場合、正式ログも draft も失う本文消失を防ぐ）。
 - **分離不変条件**: draft は matching / presentation / mypage / consultation / ES履歴 / 添削履歴 に露出しない（それらは `careerEsLogs` のみ読む）。draft は LRU 上限 20 件。
 
 ## storage キー
@@ -112,4 +112,5 @@
 
 - draft の LRU 上限（20 件）超過時は古いものから破棄（作成中データの一時性ゆえ許容）。
 - draft は localStorage のみ（Supabase mirror なし）。端末をまたぐ再開は不可。
+- **multi-tab の制限**: 同一 owner の同一 draft を複数タブで開いた場合、共同編集はせず last-write-wins（最後に保存したタブの内容が残る。`updatedAt` による衝突検知はしない）。ただし正式ログ化は上記の保存成功確認を通るため、古いタブが「削除済み draft を復活させて重複正式ログを量産する」ことはない（正式ログの id は `newEsId` で毎回新規・添削成功時のみ append）。
 - essay と異なり課金/quota 非接続（既存 career/es 慣習を踏襲）。将来 gate 化する場合は別途方針。
