@@ -75,7 +75,11 @@ export default function CareerEsHistoryPage() {
                       {log.question?.trim() || '（設問未設定のES）'}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {log.companyName?.trim() || '企業未指定'} ・ {formatDate(log.createdAt)}
+                      {log.companyName?.trim() || '企業未指定'}
+                      {log.jobType?.trim() ? ` ・ ${log.jobType.trim()}` : ''} ・ {formatDate(log.createdAt)}
+                    </p>
+                    <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                      {creationMethodLabel(log)}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -101,6 +105,15 @@ export default function CareerEsHistoryPage() {
       </div>
     </div>
   );
+}
+
+// 作成方法ラベル（spec ③: 深掘り／自力／改善版）。改善版（v2 以降）を優先し、
+// v1 は作成モード（deep=深掘り / write=自力）で表す。旧ログ（mode 欠損）は「記録」。
+function creationMethodLabel(log: CareerEsLog): string {
+  if ((log.version ?? 1) > 1) return '改善版';
+  if (log.mode === 'deep') return '深掘りしながら書く';
+  if (log.mode === 'write') return '自力で書く';
+  return '記録';
 }
 
 function formatDate(iso: string): string {
