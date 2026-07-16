@@ -22,7 +22,6 @@ import {
 } from '../presentationStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerPresentationSessionsToSupabase } from '@/lib/supabase/careerPresentation';
-import { useVoice } from '@/app/career/interview/useVoice';
 import {
   CAREER_PRESENTATION_TIME_LIMITS,
   CAREER_PRESENTATION_EVAL_FOCUS,
@@ -33,7 +32,6 @@ import {
   resolveDifficulty,
 } from '../presentationModes';
 import type {
-  CareerPresentationMode,
   CareerPresentationSession,
   CareerPresentationConfig,
   CareerPresentationTarget,
@@ -76,12 +74,9 @@ export default function CareerPresentationSetupPage() {
   // 登録済みの自己分析・ES等（他PASSAI機能データ）を補助的に参考にするか（既定 off）。
   const [useCareerContext, setUseCareerContext] = useState(false);
 
-  const [mode, setMode] = useState<CareerPresentationMode>('voice');
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { sttSupported } = useVoice();
 
   const ctx = useMemo<CareerPresentationContextPayload | null>(
     () => (isMounted ? buildPresentationContextPayload() : null),
@@ -147,9 +142,6 @@ export default function CareerPresentationSetupPage() {
     }
     setLoading(true);
     setError(null);
-    // 音声モードは Web Speech 非対応なら text に倒す。
-    const effectiveMode: CareerPresentationMode =
-      mode === 'voice' && !sttSupported ? 'text' : mode;
     const config = buildConfig();
     // presentationType は後方互換のため scenario からマッピングして埋める（Supabase 列・旧表示用）。
     const presentationType: CareerPresentationType = getScenarioConfig(config.scenario).legacyType;
@@ -161,7 +153,9 @@ export default function CareerPresentationSetupPage() {
       status: 'in_progress',
       presentationType,
       config,
-      mode: effectiveMode,
+      // プレゼンは音声・録音で発表する形式のみ（テキスト発表は廃止）。
+      // 音声認識に未対応の端末では session 側でテキスト入力にフォールバックする。
+      mode: 'voice',
       theme: theme.trim(),
       timeLimitSec,
       durationSec: 0,
@@ -257,28 +251,13 @@ export default function CareerPresentationSetupPage() {
         </label>
       </Card>
 
-      {/* 入力モード */}
+      {/* 発表方法（音声・録音のみ） */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">入力モード</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ModeOption
-            label="音声で発表"
-            description={
-              sttSupported
-                ? 'マイクで話して発表します（ブラウザの音声認識で文字起こし）。'
-                : 'お使いのブラウザは音声認識に未対応のため、テキスト入力になります。'
-            }
-            active={mode === 'voice'}
-            disabled={!sttSupported}
-            onClick={() => sttSupported && setMode('voice')}
-          />
-          <ModeOption
-            label="テキストで発表"
-            description="発表原稿を入力・貼り付けして評価します。"
-            active={mode === 'text'}
-            onClick={() => setMode('text')}
-          />
-        </div>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">発表方法</p>
+        <p className="text-sm text-slate-600 leading-relaxed">
+          🎤 マイクで実際に声に出して発表します（ブラウザの音声認識でその場で文字起こしします）。
+          本番と同じように「話して伝える」練習ができます。
+        </p>
       </Card>
 
       {error && (
@@ -391,29 +370,3 @@ function Chip({
   );
 }
 
-function ModeOption({
-  label,
-  description,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const base = 'w-full text-left rounded-xl ring-1 p-4 transition-colors';
-  const cls = disabled
-    ? `${base} ring-slate-200 bg-slate-50 opacity-60 cursor-not-allowed`
-    : active
-      ? `${base} ring-blue-500 bg-blue-50`
-      : `${base} ring-slate-200 bg-white hover:bg-slate-50`;
-  return (
-    <button type="button" onClick={onClick} disabled={disabled} className={cls}>
-      <p className="text-sm font-bold text-slate-900 mb-1">{label}</p>
-      <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
-    </button>
-  );
-}

@@ -49,7 +49,7 @@ export default function CareerPresentationEntryPage() {
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">使い方</p>
         <ol className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           <Step n={1} label="お題を設定" hint="自分で入力 or AIに作ってもらう" />
-          <Step n={2} label="発表する" hint="音声 or テキストで練習" />
+          <Step n={2} label="発表する" hint="マイクで録音して練習" />
           <Step n={3} label="AIが評価" hint="構成・説得力・話し方など" />
         </ol>
       </Card>
@@ -74,7 +74,7 @@ export default function CareerPresentationEntryPage() {
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
         <p className="text-sm font-bold text-slate-800 mb-1">お題プレゼンを始める</p>
         <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          お題と発表時間を決めて、発表を録音（またはテキスト入力）し、AIの評価を受けます。
+          お題と発表時間を決めて、マイクで発表を録音し、AIの評価を受けます。
         </p>
         <Link
           href="/career/presentation/target"
