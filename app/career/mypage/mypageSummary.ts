@@ -343,7 +343,10 @@ export function buildMypageSummary(): MypageSummary {
       type: 'ES',
       date: l.createdAt,
       href: '/career/es',
-      description: snippet(l.result.headline || l.result.gakuchika || l.result.selfPr),
+      // 新: ユーザーが書いた本文（body / result.answer）を優先。旧: 生成系フィールド。
+      description: snippet(
+        l.body || l.result.answer || l.result.headline || l.result.gakuchika || l.result.selfPr,
+      ),
     })),
     ...interviewResults.map((l) => ({
       id: `interview-${l.id}`,

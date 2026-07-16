@@ -1,7 +1,7 @@
 // PASSAI 就活版 — ES（エントリーシート）添削AI API
 //
-// 役割: /career/es/result の「AI添削」から呼ばれ、就活 ES 回答 1 本を採点・添削して
-//       JSON で返すだけ。生成系（/api/career/es）とは独立した追加 route。
+// 役割: /career/es/[id] エディタの「AI添削」から呼ばれ、就活 ES 回答 1 本を採点・添削して
+//       JSON で返すだけ。ES本文はユーザーが書き、AIは添削のみ（本文・完成例は返さない）。
 //
 // 設計思想（受験版 app/api/essay-review を参考。ただしコードは流用せず就活ES専用に再設計）:
 //   - スコアは AI に出させ、ランクは「スコアから決定論で」導出する（AI にランクを決めさせない）。
@@ -31,7 +31,7 @@ const MODEL = 'claude-sonnet-4-6';
 // Vercel 実行時間上限。AI timeout（60s）+ 余裕。runtime は既定 nodejs。
 export const maxDuration = 80;
 
-// rewriteExample（完成版）+ 各種コメントを収めるため生成系より少し多めに確保する。
+// 6軸スコア + 各種コメント（良かった点/改善点/不足要素/採用担当視点/優先改善）を収める。
 const MAX_TOKENS = 3000;
 
 // 6 軸の固定キー（AI 出力の照合・normalize に使う）。
@@ -130,7 +130,8 @@ function normalizeReview(raw: unknown): CareerEsReview {
     breakdown,
     strengths: strArray(r.strengths, 5),
     improvements: strArray(r.improvements, 5),
-    rewriteExample: str(r.rewriteExample),
+    missingElements: strArray(r.missingElements, 5),
+    recruiterComments: strArray(r.recruiterComments, 5),
     priorityActions: strArray(r.priorityActions, 5),
   };
 }
@@ -164,15 +165,20 @@ const SYSTEM_PROMPT = [
   '',
   '【絶対のルール】',
   '- 与えられた回答文に書かれていない事実（実績・数値・所属・体験）を捏造しない。',
+  '- 本文の代筆・完成例・「こう書きましょう」という書き換え文を一切出さない。',
+  '  あなたの役割は評価と助言であり、本人が自分で書き直せるようにすること。',
   '- 改善点・優先改善は「次に何をすればよいか」が分かる行動レベルの指示にする。',
   '  「具体性を上げましょう」のような抽象的な助言だけで終えない。',
   '- ランクや総合点は書かなくてよい（スコアから自動で決まる）。breakdown の 6 軸を必ず埋める。',
   '',
-  '【rewriteExample（改善後の完成例）のルール】',
-  '- 「改善案・方針」ではなく、そのまま提出できる完成版の本文を書く。',
-  '- 本文に書かれている事実・経験の範囲内で書く（新しい事実を足さない）。',
-  '- 盛りすぎ・誇張・テンプレ表現を避け、本人が自分の言葉で語れる自然な文にする。',
-  '- 文字数指定がある場合は、その文字数の ±10% 以内を目安にする。',
+  '【missingElements（不足している要素）のルール】',
+  '- この回答に足りていない観点・エピソード要素を指摘する（例:「成果を示す数字」「主体的に動いた具体行動」「なぜその会社かの根拠」）。',
+  '- 本文を書き足すのではなく、「何が欠けているか」を要素として挙げる。',
+  '',
+  '【recruiterComments（採用担当視点コメント）のルール】',
+  '- 採用担当がこの回答を読んだときにどう受け取るかを、担当者の視点で率直に述べる。',
+  '  例:「行動力は伝わる」「主体性が弱い」「成果の具体性が不足」「志望理由が浅い」。',
+  '- 良い受け取りも懸念も両方含めてよい。合否の断定はしない。',
   '',
   '【出力ルール】',
   '- 返答は必ず 1 つの JSON オブジェクトのみ。',
@@ -191,9 +197,10 @@ const SYSTEM_PROMPT = [
   '    "persuasion": number,          // 0〜100',
   '    "companyFit": number           // 0〜100',
   '  },',
-  '  "strengths": string[],           // 良い点（最大5件）',
+  '  "strengths": string[],           // 良かった点（最大5件）',
   '  "improvements": string[],        // 改善点（行動レベル、最大5件）',
-  '  "rewriteExample": string,        // そのまま提出できる完成版',
+  '  "missingElements": string[],     // 不足している要素（最大5件）',
+  '  "recruiterComments": string[],   // 採用担当視点コメント（最大5件）',
   '  "priorityActions": string[]      // 優先的に直すべき順（最大5件、0番目が最重要）',
   '}',
 ].join('\n');

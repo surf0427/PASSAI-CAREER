@@ -68,6 +68,9 @@ export type EsHistorySnapshot = {
   selfPr: string;
   motivation: string;
   appealPoints: string[];
+  // 新: ユーザーが自分で書いた ES 本文（ESトレーニングシステム化以降）。
+  // 旧生成ログには無いため optional。消費側は欠損を前提に扱うこと。
+  body?: string;
 };
 
 export function buildEsHistory(
@@ -77,7 +80,7 @@ export function buildEsHistory(
   if (!logs || logs.length === 0) return [];
   return logs
     .slice(0, Math.max(1, limit))
-    .map((log) => {
+    .map((log): EsHistorySnapshot | null => {
       const r = log?.result;
       if (!r) return null;
       return {
@@ -89,6 +92,8 @@ export function buildEsHistory(
         selfPr: truncate(r.selfPr, 160),
         motivation: truncate(r.motivation, 160),
         appealPoints: strList(r.appealPoints, 3, 40),
+        // 新: ユーザーが書いた本文。body 優先、無ければ result.answer（設問モード回答）。
+        body: truncate(log.body ?? r.answer, 200),
       };
     })
     .filter((s): s is EsHistorySnapshot => s !== null);

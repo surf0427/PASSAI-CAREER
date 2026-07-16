@@ -74,6 +74,11 @@ export type CareerEsReviewBreakdown = {
 };
 
 // ES添削AI の出力（API route app/api/career/es-review/route.ts の出力と 1:1）。
+//
+// 設計方針（ESトレーニングシステム化）:
+//   AI は本文の代筆・完成例を返さない（ai_policy 厳守）。添削は評価とアドバイスのみ。
+//   旧 rewriteExample（AI が書いた完成本文）は廃止した。代わりに「不足している要素」と
+//   「採用担当視点コメント」を返し、ユーザー自身が書き直せるようにする。
 export type CareerEsReview = {
   // 総合スコア（0〜100。breakdown 6 軸の平均から決定論で導出）。
   overallScore: number;
@@ -83,14 +88,58 @@ export type CareerEsReview = {
   overallComment: string;
   // 6 軸スコア。
   breakdown: CareerEsReviewBreakdown;
-  // 良い点。
+  // 良かった点。
   strengths: string[];
-  // 改善点。
+  // 改善点（行動レベル）。
   improvements: string[];
-  // そのまま提出できる完成版（盛りすぎ禁止・事実の捏造禁止）。
-  rewriteExample: string;
+  // 不足している要素（回答に足りていない観点・エピソード要素）。
+  missingElements: string[];
+  // 採用担当視点コメント（採用担当がこの回答をどう受け取るか）。
+  recruiterComments: string[];
   // 優先的に直すべきアクション（重要な順）。
   priorityActions: string[];
+};
+
+// ── ES 作成中ドラフト（careerEsLogs とは別ストア） ─────────────────────
+// 深掘りQ&Aの途中離脱・リロードで進捗が失われないよう、未完成の作成状態を保存する。
+// 正式ログ（careerEsLogs）とは意図的に分離する:
+//   - 未完成draftを matching / presentation / mypage / consultation / ES履歴 に露出させない。
+//   - 正式ログ化（careerEsLogs 追記）は「執筆ページで AI添削＝保存を確定した時点」以降。
+// 保存キーは 'careerEsDrafts'（app/career/es/esDraftStorage.ts）。owner 単位で分離する。
+export const ES_DRAFT_SCHEMA_VERSION = 1;
+
+export type CareerEsDraft = {
+  // draft の安定 ID（URL・保存キー・削除に使う）。
+  id: string;
+  // スキーマ版。読み込み時に不一致なら安全に破棄する（fail-safe migration）。
+  schemaVersion: number;
+  // 所有者境界。member は userId、guest は null。読み込み時に現在の owner で絞り込む。
+  ownerId: string | null;
+  // 作成モード。'deep'=深掘りしながら書く / 'write'=自力で書く。
+  mode: 'deep' | 'write';
+  createdAt: string;
+  updatedAt: string;
+
+  // ── 設問メタ（Step1 入力） ──
+  question: string;
+  charLimit?: number;
+  companyName?: string;
+  industry?: string;
+  jobType?: string;
+  selectionType?: CareerEsSelectionType;
+  // 設問種別（深掘りの質問数レンジ選定に使う。設問文から推定した値の記録）。
+  questionType?: string;
+
+  // ── 深掘り進捗（mode='deep'） ──
+  // Q&A 履歴（末尾が question なら未回答の保留質問）。
+  deepTurns?: { role: 'question' | 'answer'; content: string }[];
+  // 材料整理メモ（organize 完了後）。
+  memo?: string[];
+  // organize（材料整理）を終えたか。true で本文執筆フェーズへ。
+  organized?: boolean;
+
+  // ── 執筆中の本文 ──
+  body?: string;
 };
 
 // 完了済み ES作成 1 件分の localStorage スナップショット。
@@ -126,6 +175,25 @@ export type CareerEsLog = {
   submitted?: boolean;
   // 将来の編集保存用（今回は型のみ用意し、UI からは未書き込み）。
   editedResult?: CareerEsResult;
+
+  // ── ESトレーニングシステム（本文・添削・バージョン管理） ──────────────
+  // すべて optional・後方互換。既存の生成ログには存在しないため defensive に扱う。
+  //
+  // ユーザーが自分で書いた ES 本文（今後の canonical。AI は本文を書かない）。
+  body?: string;
+  // 永続化した添削結果（従来は画面 state のみだった。結果閲覧・版比較のため保存する）。
+  review?: CareerEsReview;
+  // バージョン管理のグループ ID（同一設問＋企業の版をまとめる）。欠損は単独版扱い。
+  groupId?: string;
+  // グループ内の版番号（1 始まり）。欠損は 1 版扱い。
+  version?: number;
+  // この版の作成モード。'deep'=深掘りしながら書く / 'write'=自力で書く。
+  mode?: 'deep' | 'write';
+  // 深掘りモードの材料（Q&A と AI 整理メモ）。面接機能との連携も見据えた一貫データ。
+  deepDive?: {
+    turns: { role: 'question' | 'answer'; content: string }[];
+    memo?: string[];
+  };
 
   // ── ログの出自（添削からの改善版保存など） ──────────────────────────
   // 既存ログには存在しないため、欠損を前提に防御的に扱うこと。

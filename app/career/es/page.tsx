@@ -1,33 +1,25 @@
 'use client';
 
-// PASSAI 就活版 — ES（エントリーシート）作成 ハブ画面
+// PASSAI 就活版 — ES（エントリーシート）トレーニング ハブ画面
 //
-// 現在地（入力データの有無 / 生成済み件数）を表示し、実行画面・結果画面へ導線を出す。
+// ES機能は「AIによる代筆」ではなく「ユーザー自身が書く力を鍛えるトレーニング」。
+// AI の役割は 深掘り質問 / 材料整理 / 添削 / 改善支援 に限定し、本文はユーザーが書く。
+// 4 機能を提示する:
+//   ① 深掘りしながら書く（Do）  → /career/es/new?mode=deep
+//   ② 自力で書く（Do）          → /career/es/new?mode=write
+//   ③ 添削結果を見る（View）    → /career/es/history
+//   ④ 改善する（Do）            → /career/es/history
 // DB / 課金 / usage には接続しない（localStorage のみ）。
 
 import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import {
-  loadActivityData,
-  hasAnyActivity,
-} from '@/app/career/activity/activityStorage';
-import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
-import { loadEsLogs } from './esStorage';
+import { loadEsGroupsLatest } from './esStorage';
 
 // マウント前 false / マウント後 true（hub と同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
-
-type Status = {
-  profileReady: boolean;
-  activityReady: boolean;
-  selfAnalysisReady: boolean;
-  esLogCount: number;
-};
 
 export default function CareerEsEntryPage() {
   const isMounted = useSyncExternalStore(
@@ -36,57 +28,62 @@ export default function CareerEsEntryPage() {
     getMountedServerSnapshot,
   );
 
-  const status = useMemo<Status | null>(() => {
-    if (!isMounted) return null;
-    return {
-      profileReady: !!loadBasicInfo(),
-      activityReady: hasAnyActivity(loadActivityData()),
-      selfAnalysisReady: loadSelfAnalysisLogs().length > 0,
-      esLogCount: loadEsLogs().length,
-    };
-  }, [isMounted]);
+  // 保存済み ES のグループ数（設問＋企業の束）。③④の導線活性判定に使う。
+  const groupCount = useMemo<number | null>(
+    () => (isMounted ? loadEsGroupsLatest().length : null),
+    [isMounted],
+  );
+  const hasLogs = (groupCount ?? 0) > 0;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
-        title="ES（エントリーシート）作成"
-        description="基本情報・活動整理・自己分析をもとに、ESのドラフトを生成します。"
+        title="ES（エントリーシート）トレーニング"
+        description="AIが代わりに書くのではなく、あなた自身がESを書く力を鍛えます。AIは深掘り質問・材料整理・添削・改善支援を担当します。"
       />
 
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">現在地</p>
-        <div className="grid grid-cols-2 gap-y-3 gap-x-4">
-          <StatusItem label="基本情報" value={displayReady(status?.profileReady)} />
-          <StatusItem label="活動整理" value={displayReady(status?.activityReady)} />
-          <StatusItem label="自己分析" value={displayReady(status?.selfAnalysisReady)} />
-          <StatusItem label="生成済みES" value={displayCount(status?.esLogCount)} />
-        </div>
-      </Card>
-
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
-        <p className="text-sm font-bold text-slate-800 mb-1">ESのドラフトを作る</p>
-        <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          ガクチカ・自己PR・志望動機などを、登録済みのデータからまとめて下書きします。
-        </p>
-        <Link
-          href="/career/es/run"
-          className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
-        >
-          ESを作成する →
-        </Link>
-      </Card>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+      {/* まず書く（Do）: ①深掘り / ②自力 */}
+      <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">まず書く</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
         <ModeCard
-          title="ESを作成する"
-          description="基本情報・活動整理・自己分析からESドラフトを生成します。"
-          href="/career/es/run"
+          badge="① 深掘りしながら書く"
+          title="AIと対話して整理してから書く"
+          description="AIの質問に答えて経験・考えを整理し、その要約メモを見ながら自分でESを書きます。"
+          href="/career/es/new?mode=deep"
+          primary
         />
         <ModeCard
-          title="過去の結果を見る"
-          description="生成済みESの結果を一覧から確認できます。"
-          href="/career/es/result"
+          badge="② 自力で書く"
+          title="いきなり自分で書く"
+          description="設問だけを見て、最初から最後まで自力でESを書き上げます。"
+          href="/career/es/new?mode=write"
+        />
+      </div>
+
+      {/* 見直す（View / Do）: ③結果を見る / ④改善する */}
+      <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">見直す・伸ばす</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <ModeCard
+          badge="③ 添削結果を見る"
+          title="過去のESと添削を振り返る"
+          description={
+            hasLogs
+              ? `保存済み ${groupCount} 件。設問・企業・点数・版番号を一覧で確認できます。`
+              : 'まだ保存されたESはありません。まず書いてみましょう。'
+          }
+          href="/career/es/history"
+          disabled={!hasLogs}
+        />
+        <ModeCard
+          badge="④ 改善する"
+          title="添削をもとに書き直して伸ばす"
+          description={
+            hasLogs
+              ? '前回の添削を見ながら本文を直し、再添削で点数の伸びを確認します。'
+              : '改善対象のESがまだありません。まず書いてみましょう。'
+          }
+          href="/career/es/history"
+          disabled={!hasLogs}
         />
       </div>
 
@@ -102,33 +99,48 @@ export default function CareerEsEntryPage() {
   );
 }
 
-const EM_DASH = '—';
-
-function displayReady(ready: boolean | undefined): string {
-  if (ready === undefined) return EM_DASH;
-  return ready ? 'あり' : EM_DASH;
-}
-
-function displayCount(count: number | undefined): string {
-  if (!count) return EM_DASH;
-  return `${count}件`;
-}
-
-function StatusItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[11px] text-slate-500 mb-0.5">{label}</p>
-      <p className="text-sm font-semibold truncate text-slate-800">{value}</p>
-    </div>
-  );
-}
-
 const CARD_BASE =
-  'block w-full text-left rounded-2xl bg-white ring-1 ring-slate-200 shadow-card transition-all p-4 sm:p-5 min-h-[110px] hover:shadow-md active:bg-slate-50';
+  'block w-full text-left rounded-2xl bg-white ring-1 ring-slate-200 shadow-card transition-all p-4 sm:p-5 min-h-[130px]';
 
-function ModeCard({ title, description, href }: { title: string; description: string; href: string }) {
+function ModeCard({
+  badge,
+  title,
+  description,
+  href,
+  primary = false,
+  disabled = false,
+}: {
+  badge: string;
+  title: string;
+  description: string;
+  href: string;
+  primary?: boolean;
+  disabled?: boolean;
+}) {
+  const badgeClass = primary
+    ? 'text-blue-700'
+    : disabled
+      ? 'text-slate-400'
+      : 'text-slate-500';
+
+  if (disabled) {
+    return (
+      <div className={`${CARD_BASE} opacity-60 cursor-not-allowed`} aria-disabled>
+        <p className={`text-[11px] font-bold tracking-wide mb-1.5 ${badgeClass}`}>{badge}</p>
+        <h2 className="text-sm sm:text-base font-bold mb-1.5 leading-snug text-slate-900">{title}</h2>
+        <p className="text-xs leading-relaxed text-slate-500">{description}</p>
+      </div>
+    );
+  }
+
   return (
-    <Link href={href} className={CARD_BASE}>
+    <Link
+      href={href}
+      className={`${CARD_BASE} hover:shadow-md active:bg-slate-50 ${
+        primary ? 'ring-blue-200' : ''
+      }`}
+    >
+      <p className={`text-[11px] font-bold tracking-wide mb-1.5 ${badgeClass}`}>{badge}</p>
       <h2 className="text-sm sm:text-base font-bold mb-1.5 leading-snug text-slate-900">{title}</h2>
       <p className="text-xs leading-relaxed text-slate-500">{description}</p>
     </Link>
