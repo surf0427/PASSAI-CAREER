@@ -53,6 +53,7 @@ Gate A（実 Postgres）/ Gate B（Vercel Preview）の手順・期待結果・�
 | GET は claim/reclaim/write しない（純粋 SELECT + 純粋 mapper） | `job/route.ts` / `summaryJobStatus.ts` / QA D6 |
 | retryable 判定は DB 値でなく server allowlist mapping | `constants.isRetryableErrorCode` / QA D5 |
 | pending に raw 本文 / result / error / secret を保存しない | `clientJob/types.ts` / `pendingStore` / QA D7 |
+| pilot targeting は **fail-closed**（flag OFF / 空・malformed・wildcard allowlist → 誰も job 経路に入れない・掲載 UUID exact 一致のみ） | `pilotTargeting.ts` / `flag.server.ts` / canary QA §1–7 |
 | client は server lease 定数を複製しない | `clientJob/constants.ts` / QA D3 |
 | 時間予算 provider+prep+reserve ≤ maxDuration・lease > maxDuration | `constants.timeBudgetIsConsistent` / QA D1–D2 |
 
@@ -177,7 +178,14 @@ server state / client state / 自動 retry / 手動 retry / 二重生成可否 /
 - **[C] E2E fake flow**（C1–C9）: 正常完了/応答喪失再送(同一 fingerprint)/reload resume/stale reclaim/手動 retry/logout/user switch/stale-response guard/保存失敗。
 - **[D] Durability・budget 不変条件**（D1–D9）: maxDuration↔定数一致 / 時間予算 / lease 非複製 / clamp / 未知 error_code 非 retryable / GET 非 write / pending 非保存(secret/9キー) / key 非送信 / completed 1回。
 
-回帰確認: `npm run qa:careerGenerationJob`（sql-contract 69 / core 33 / step2 50 / step3 55 / step4 79）ALL PASS。
+回帰確認: `npm run qa:careerGenerationJob`（sql-contract 69 / core 33 / step2 50 / step3 55 / step4 79 / **canary 46**）ALL PASS。
+
+- **[Canary] fail-closed pilot targeting**（`scripts/career-generation-job-canary-qa.ts`・46 checks）:
+  flag OFF / 空・whitespace・カンマのみ・malformed・wildcard(`*`/`all`)・valid+malformed 混在 allowlist →
+  **誰も job 経路に入れない**。valid non-empty allowlist は掲載 UUID の exact 一致（case 非破壊・substring 不可・
+  前後 trim）のみ対象。guest / 空・非 UUID userId は常に対象外。service routing に実 evaluator を DI し、
+  guest / 非掲載 member / 空 allowlist member → legacy、掲載 member → 202+schedule を検証。静的に
+  `flag.server.ts` の unsafe「空 allowlist → return true」経路が存在しないことも確認する。
 
 ---
 
@@ -220,8 +228,15 @@ server state / client state / 自動 retry / 手動 retry / 二重生成可否 /
 
 ## 6. Gate B — Vercel Preview 検証手順（未実行・operator 手動）
 
+> **詳細な operator 手順は [generation_job_gate_b_runbook.md](generation_job_gate_b_runbook.md)（Preview 専用・Production 非変更）。** 本節はゲート表の正本。
+
 **前提**: Preview deploy。env は Dashboard 上で**設定名の存在確認のみ**（値表示しない）。canary owner を 1 名設定。
 必須 env 名: `CAREER_SELF_ANALYSIS_JOB_PILOT_ENABLED` / `CAREER_SELF_ANALYSIS_JOB_CANARY_USER_IDS` / service-role・Supabase 系。
+
+**fail-closed 契約（Preview で必ず確認）**: `CAREER_SELF_ANALYSIS_JOB_CANARY_USER_IDS` は
+**空・未設定・malformed・wildcard(`*`/`all`) のいずれでも「誰も job 経路に入れない」**（= 全 member legacy）。
+job 経路に入るのは flag ON かつ allowlist に **exact 一致する UUID** の member のみ。
+「flag ON + 空 allowlist = 全 member pilot」は **誤り**（fail-closed へ是正済み・canary QA が回帰検出）。
 
 | # | test | account/flag | 操作 | expected HTTP | expected DB | expected client | expected logs |
 | --- | --- | --- | --- | --- | --- | --- | --- |

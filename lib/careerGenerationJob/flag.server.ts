@@ -13,29 +13,26 @@
 
 import 'server-only';
 
+import { isPilotEnabledForUser } from './pilotTargeting';
+
 /** members pilot 有効か（明示 'true' のときだけ ON）。 */
 export function isSelfAnalysisJobPilotEnabled(): boolean {
   return process.env.CAREER_SELF_ANALYSIS_JOB_PILOT_ENABLED === 'true';
 }
 
-/** canary allowlist（カンマ区切り user ID）。値は返さず、判定は allowlist 経由。 */
-export function selfAnalysisJobCanaryAllowlist(): readonly string[] {
-  const raw = process.env.CAREER_SELF_ANALYSIS_JOB_CANARY_USER_IDS ?? '';
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
-}
-
 /**
- * 指定 user に対し pilot が有効か。
- * allowlist が空なら pilot ON で全 member 対象。allowlist があれば掲載 user のみ。
+ * 指定 user に対し pilot が有効か（**fail-closed**）。
+ *   - flag OFF → false。
+ *   - flag ON かつ allowlist 未設定 / 空 / malformed / wildcard → false（誰も job 経路に入れない）。
+ *   - flag ON かつ valid allowlist → 掲載 UUID に exact 一致した member のみ true。
+ * 判定は pure evaluator（pilotTargeting.ts）へ委譲する（env 値は log/戻り値へ露出しない）。
  */
 export function isSelfAnalysisJobPilotEnabledForUser(userId: string): boolean {
-  if (!isSelfAnalysisJobPilotEnabled()) return false;
-  const allow = selfAnalysisJobCanaryAllowlist();
-  if (allow.length === 0) return true;
-  return allow.includes(userId);
+  return isPilotEnabledForUser({
+    flagEnabled: isSelfAnalysisJobPilotEnabled(),
+    rawAllowlist: process.env.CAREER_SELF_ANALYSIS_JOB_CANARY_USER_IDS,
+    userId,
+  });
 }
 
 /** local/test 環境か（undefined-table の legacy fallback を許す唯一の緩和条件）。 */
