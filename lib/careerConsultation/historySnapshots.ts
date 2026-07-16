@@ -251,6 +251,9 @@ export function normalizeEsHistory(raw: unknown): EsHistorySnapshot[] {
     .map((item) => {
       const r = rec(item);
       if (!r) return null;
+      // 新: client 側 buildEsHistory が保持した本人本文（body / 旧設問モード answer 投影）を
+      // server 側でも保持する。string 以外・空白のみは truncate が空文字へ正規化する。
+      const body = truncate(r.body, 200);
       const snap: EsHistorySnapshot = {
         createdAt: str(r.createdAt),
         companyName: truncate(r.companyName, 40),
@@ -260,8 +263,10 @@ export function normalizeEsHistory(raw: unknown): EsHistorySnapshot[] {
         selfPr: truncate(r.selfPr, 160),
         motivation: truncate(r.motivation, 160),
         appealPoints: strList(r.appealPoints, 3, 40),
+        ...(body ? { body } : {}),
       };
-      const hasContent = snap.gakuchika || snap.selfPr || snap.motivation || snap.headline;
+      // body-only ログ（旧生成 4 field が空）を content 判定で落とさない。空白 body は content 扱いしない。
+      const hasContent = body || snap.gakuchika || snap.selfPr || snap.motivation || snap.headline;
       return hasContent ? snap : null;
     })
     .filter((s): s is EsHistorySnapshot => s !== null)
@@ -373,9 +378,16 @@ export function formatEsHistoryForPrompt(
     const head = [s.createdAt.slice(0, 10) || '日付不明', s.companyName].filter(Boolean).join(' / ');
     const parts: string[] = [];
     if (s.question) parts.push(`設問:${s.question}`);
-    if (s.gakuchika) parts.push(`ガクチカ:${s.gakuchika}`);
-    if (s.selfPr) parts.push(`自己PR:${s.selfPr}`);
-    if (s.motivation) parts.push(`志望動機:${s.motivation}`);
+    // 新: ユーザー本人が書いた本文を最優先で出す。body があれば旧生成 4 field は出さない
+    // （body-only ログでは空。both は現行データモデルでは発生しない）。旧生成ログは従来どおり。
+    // 本文は本人執筆のみ（AI の添削・改善案は本文として出さない）。
+    if (s.body) {
+      parts.push(`本文:${s.body}`);
+    } else {
+      if (s.gakuchika) parts.push(`ガクチカ:${s.gakuchika}`);
+      if (s.selfPr) parts.push(`自己PR:${s.selfPr}`);
+      if (s.motivation) parts.push(`志望動機:${s.motivation}`);
+    }
     return `- ${head}：${parts.join(' / ')}`;
   });
   const memo: string[] = [];

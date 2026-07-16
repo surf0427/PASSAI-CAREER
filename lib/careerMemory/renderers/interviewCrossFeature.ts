@@ -50,6 +50,12 @@ export function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | und
 }
 
 // 直近の ES 結果を可読テキストに整形（interviewPrompt.ts renderEs と byte 一致）。
+//
+// ESトレーニングシステム化以降（f8edb26〜）、新ログは AI 代筆の 4 field を持たず、ユーザー本人が
+// 書いた本文だけを持つ（`createEsWorkspaceLog` が `result.answer = body` を投影する）。旧生成 4 field が
+// 空でも本文が面接コンテキストへ届くよう、4 field が 1 つも出ないときだけ本文（answer）を fallback で出す。
+//   - 4 field が 1 つでもある旧生成ログは従来どおり（本文行を足さない＝byte 互換）。
+//   - review・改善案を本人本文として使わない（answer は本人が書いた本文の投影のみ）。
 export function renderEs(result: CareerEsResult | null | undefined): string {
   if (!result) return '';
   const lines: string[] = [];
@@ -60,6 +66,8 @@ export function renderEs(result: CareerEsResult | null | undefined): string {
   push('ガクチカ', result.gakuchika);
   push('自己PR', result.selfPr);
   push('志望動機', result.motivation);
+  // body-only ログ（旧 4 field がすべて空）のときだけ、本人が書いた本文を出す。
+  if (lines.length === 0) push('本文', result.answer ?? '');
   return lines.join('\n');
 }
 

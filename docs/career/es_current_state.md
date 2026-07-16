@@ -86,7 +86,10 @@
   - matching（3 フィールド）: 志望動機系→`motivation` / それ以外→`selfPr`
   - presentation（4 フィールド）: 自己PR系→`selfPr` / 志望動機系→`motivation` / それ以外（ガクチカ・研究等）→`gakuchika`
   - snapshot が `esLogs[0]`（canonical な最新版）の body/question を渡す。**contract（フィールド数）は拡張しない**。review の有無は参照しない（未添削を負値扱いしない）。
-- [`lib/careerConsultation/historySnapshots.ts`](../../lib/careerConsultation/historySnapshots.ts) `buildEsHistory`（`body?` 追加）/ [`app/career/mypage/mypageSummary.ts`](../../app/career/mypage/mypageSummary.ts) snippet も `body` を fallback に読む。
+- [`lib/careerConsultation/historySnapshots.ts`](../../lib/careerConsultation/historySnapshots.ts) `buildEsHistory`（`body?`）＋ server 側 `normalizeEsHistory`（`body` 保持・`hasContent` に `body` 追加で body-only ログを落とさない）＋ `formatEsHistoryForPrompt`（body 優先で `本文:` を出力。旧生成ログは従来 field で byte 互換）。
+- [`lib/careerMemory/renderers/interviewCrossFeature.ts`](../../lib/careerMemory/renderers/interviewCrossFeature.ts) `renderEs` — 旧生成 4 field が 1 つも出ない body-only ログでは、本人本文（`result.answer` 投影）を `- 本文:` で fallback 出力（4 field があるログは本文行を足さず byte 互換）。
+- [`app/career/mypage/mypageSummary.ts`](../../app/career/mypage/mypageSummary.ts) snippet も `body` を fallback に読む。
+- いずれも AI 添削・改善案（review）を本人本文として渡さない（本文は `body` / `result.answer` 投影のみ）。回帰ガード: `scripts/career-es-cross-feature-closeout-qa.ts`（`npm run qa:careerEsCrossFeatureCloseout`）。
 
 **フォールバック順**: `body`（trim 後・非空）→ 旧 result フィールド → 空文字。body が空白のみなら legacy へフォールバック。
 **バージョン選択**: snapshot は既存の canonical `esLogs[0]`（最新更新＝最新版）を使用し、版選択を重複実装しない。

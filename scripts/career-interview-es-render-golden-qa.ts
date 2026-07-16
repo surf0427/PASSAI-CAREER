@@ -56,6 +56,8 @@ function renderEs(result: CareerEsResult | null | undefined): string {
   push('ガクチカ', result.gakuchika);
   push('自己PR', result.selfPr);
   push('志望動機', result.motivation);
+  // body-only ログ（旧 4 field がすべて空）のときだけ、本人が書いた本文（answer 投影）を出す。
+  if (lines.length === 0) push('本文', result.answer ?? '');
   return lines.join('\n');
 }
 
@@ -166,8 +168,26 @@ for (const c of CASES) {
 note(renderEs(null) === '', 'null → 空文字');
 note(renderEs(undefined) === '', 'undefined → 空文字');
 note(
-  renderEs({ ...makeEs(1, 1, 1), headline: '', gakuchika: '', selfPr: '', motivation: '' }) === '',
+  // 旧 4 field も本文（answer）もすべて空 → 空文字（block ごと落ちる現状を固定）。
+  renderEs({ ...makeEs(1, 1, 1), headline: '', gakuchika: '', selfPr: '', motivation: '', answer: '' }) === '',
   '全 field 空 → 空文字',
+);
+// ESトレーニングシステム: body-only ログ（旧 4 field 空・本文のみ）は本文が出て空にならない。
+{
+  const bodyOnly = renderEs({
+    ...makeEs(1, 1, 1),
+    headline: '',
+    gakuchika: '',
+    selfPr: '',
+    motivation: '',
+    answer: '私はゼミ活動で仮説検証を主導しました',
+  });
+  note(bodyOnly === '- 本文: 私はゼミ活動で仮説検証を主導しました', 'body-only ログは本文が render される');
+}
+// body + 旧 4 field 併存（現行データモデルでは発生しないが防御）→ 旧 field 優先で byte 互換維持。
+note(
+  !renderEs(makeEs(150, 150, 150)).includes('- 本文:'),
+  '旧 4 field があるログには本文行を足さない（byte 互換）',
 );
 const partial = renderEs({ ...makeEs(1, 1, 1), gakuchika: '', motivation: '' });
 note(
