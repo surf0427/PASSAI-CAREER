@@ -1,4 +1,3 @@
-@AGENTS.md
 # Required Reading
 
 Before any implementation:
@@ -14,3 +13,5 @@ Before any implementation:
 All implementation must follow these documents.
 
 Do not implement outside roadmap scope.
+
+@AGENTS.md
