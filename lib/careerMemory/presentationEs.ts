@@ -23,6 +23,7 @@
 
 import type { CareerEsResult } from '@/types/careerEs';
 import { truncate } from './summaryUtils';
+import { classifyEsQuestionType } from '@/lib/careerEs/deepDivePrompt';
 
 // truncate cap（文字数）。conservative cap 300（matching の 200 より保守的）。
 // headline は短文想定だが、異常に長い入力への安全弁として cap を設ける。
@@ -45,10 +46,37 @@ export type PresentationEsSummary = {
 // full CareerEsResult → presentation 用 strict summary。
 //   - result が無ければ null（従来の「esLogs[0] 不在 → null」と同じ null 安全）。
 //   - 各 field は str 正規化 + cap 済み（headline 80 / gakuchika・selfPr・motivation 300）。
+//
+// ESトレーニングシステム対応（後方互換）:
+//   opts.body（ユーザーが書いた本文）があれば優先し、設問種別（opts.question から推定）に応じて
+//   既存フィールドへ投影する（presentation は gakuchika を持つため 3 種にきれいに割り当てられる）:
+//     - 自己PR系 → selfPr / 志望動機系 → motivation / それ以外（ガクチカ・研究等）→ gakuchika
+//   opts が無い / body が空白のときは従来どおり result フィールドから作る（byte 不変）。
+//   contract（4 フィールド）は拡張しない。review の有無は一切参照しない。
 export function buildPresentationEsSummary(
   result: CareerEsResult | null | undefined,
+  opts?: { body?: string | null; question?: string | null },
 ): PresentationEsSummary | null {
   if (!result) return null;
+  const body = opts?.body?.trim() ?? '';
+  if (body) {
+    const type = classifyEsQuestionType(opts?.question?.trim() ?? '');
+    return {
+      headline: truncate(result.headline, PRESENTATION_ES_HEADLINE_CAP),
+      gakuchika:
+        type === 'selfPr' || type === 'motivation'
+          ? truncate(result.gakuchika, PRESENTATION_ES_GAKUCHIKA_CAP)
+          : truncate(body, PRESENTATION_ES_GAKUCHIKA_CAP),
+      selfPr:
+        type === 'selfPr'
+          ? truncate(body, PRESENTATION_ES_SELFPR_CAP)
+          : truncate(result.selfPr, PRESENTATION_ES_SELFPR_CAP),
+      motivation:
+        type === 'motivation'
+          ? truncate(body, PRESENTATION_ES_MOTIVATION_CAP)
+          : truncate(result.motivation, PRESENTATION_ES_MOTIVATION_CAP),
+    };
+  }
   return {
     headline: truncate(result.headline, PRESENTATION_ES_HEADLINE_CAP),
     gakuchika: truncate(result.gakuchika, PRESENTATION_ES_GAKUCHIKA_CAP),

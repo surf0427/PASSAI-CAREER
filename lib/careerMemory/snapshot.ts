@@ -284,7 +284,13 @@ export function buildPresentationSnapshot(
     // P7-F: full result carry をやめ、presentation-local strict summary（headline/gakuchika/
     //   selfPr/motivation・cap 済み）に落とす。presence 判定は従来どおり esLogs.length（空配列なら
     //   null）。gate（useCareerContext）は route 側で不変。interview snapshot は変更しない。
-    es: esLogs.length > 0 ? buildPresentationEsSummary(esLogs[0].result) : null,
+    es:
+      esLogs.length > 0
+        ? buildPresentationEsSummary(esLogs[0].result, {
+            body: esLogs[0].body,
+            question: esLogs[0].question,
+          })
+        : null,
     interview: interviewResults.length > 0 ? interviewResults[0].result : null,
     matching: matchingLogs.length > 0 ? matchingLogs[0].result : null,
     consultationInsights: collectConsultationInsights(input.consultationThreads),
@@ -305,7 +311,13 @@ export function buildMatchingSnapshot(
     selfAnalysis: selfAnalysisLogs.length > 0 ? selfAnalysisLogs[0].result : null,
     // P7-B: full result carry をやめ、matching-local strict summary に落とす（presence は従来どおり
     //   esLogs.length で判定。空配列なら null）。interview/presentation snapshot は変更しない。
-    es: esLogs.length > 0 ? buildMatchingEsSummary(esLogs[0].result) : null,
+    es:
+      esLogs.length > 0
+        ? buildMatchingEsSummary(esLogs[0].result, {
+            body: esLogs[0].body,
+            question: esLogs[0].question,
+          })
+        : null,
     interviewResult: interviewResults.length > 0 ? interviewResults[0].result : null,
     consultation: latestConsultationResult(input.consultationThreads),
     gdSnapshot,

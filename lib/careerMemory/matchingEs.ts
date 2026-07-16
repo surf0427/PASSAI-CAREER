@@ -20,6 +20,7 @@
 
 import type { CareerEsResult } from '@/types/careerEs';
 import { truncate } from './summaryUtils';
+import { classifyEsQuestionType } from '@/lib/careerEs/deepDivePrompt';
 
 // truncate cap（文字数）。selfPr / motivation は 200 字で丸める（P7-A の 160〜200 目安の上限側）。
 // headline は短文想定だが、異常に長い入力への安全弁として cap を設ける。
@@ -40,10 +41,35 @@ export type MatchingEsSummary = {
 // full CareerEsResult → matching 用 strict summary。
 //   - result が無ければ null（従来の「esLogs[0] 不在 → null」と同じ null 安全）。
 //   - 各 field は str 正規化 + cap 済み（selfPr / motivation は truncate、headline は安全 cap）。
+//
+// ESトレーニングシステム対応（後方互換）:
+//   opts.body（ユーザーが自分で書いた本文）があれば、それを優先して既存フィールドへ投影する。
+//   本文は 1 設問への 1 回答なので、設問種別（opts.question から推定）に応じて配置する:
+//     - 志望動機系 → motivation フィールド
+//     - それ以外   → selfPr フィールド（matching は gakuchika を持たないため汎用の selfPr に寄せる）
+//   opts が無い / body が空白のときは従来どおり result フィールドから作る（byte 不変）。
+//   contract（3 フィールド）は拡張しない。review の有無は一切参照しない。
 export function buildMatchingEsSummary(
   result: CareerEsResult | null | undefined,
+  opts?: { body?: string | null; question?: string | null },
 ): MatchingEsSummary | null {
   if (!result) return null;
+  const body = opts?.body?.trim() ?? '';
+  if (body) {
+    const type = classifyEsQuestionType(opts?.question?.trim() ?? '');
+    const excerpt = truncate(body, MATCHING_ES_SELFPR_CAP);
+    return {
+      headline: truncate(result.headline, MATCHING_ES_HEADLINE_CAP),
+      selfPr:
+        type === 'motivation'
+          ? truncate(result.selfPr, MATCHING_ES_SELFPR_CAP)
+          : excerpt,
+      motivation:
+        type === 'motivation'
+          ? excerpt
+          : truncate(result.motivation, MATCHING_ES_MOTIVATION_CAP),
+    };
+  }
   return {
     headline: truncate(result.headline, MATCHING_ES_HEADLINE_CAP),
     selfPr: truncate(result.selfPr, MATCHING_ES_SELFPR_CAP),
