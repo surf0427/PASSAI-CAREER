@@ -32,6 +32,8 @@ import type {
 import { CAREER_COMPANY_INTEREST_LABELS } from '@/types/careerCompanyResearch';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
+// P17-M1: Personal Memory（Layer 2）を owner-scoped で server read（flag OFF/gate deny では I/O ゼロ・fail-open）。
+import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
 
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -273,9 +275,17 @@ export async function POST(req: Request) {
     values: b.values ?? null,
     userInput: '',
   });
+  // P17-M1: Personal Memory を server read（base / self_analysis のみ）。企業の客観情報は歪めず、
+  //   「そのユーザーにとって注目すべき観点」の調整にだけ使う（renderer が injection 境界を付ける）。
+  //   flag OFF / gate deny / 未認証 では I/O ゼロで空配列。read 失敗も従来 prompt へ fail-open。
+  const personalMemory = (
+    await loadPersonalMemorySectionsForPrompt('company_research_review')
+  ).sections;
   // P3-C: base system prompt を Context Orchestrator（purpose=company_research_review）経由で取得する。
   //   委譲のため出力は現行と同一。添削対象の verifiedResearchText 等は user メッセージ側で不変。
-  const orchestrated = buildCareerContextForPurpose('company_research_review', context);
+  const orchestrated = buildCareerContextForPurpose('company_research_review', context, {
+    personalMemory,
+  });
 
   const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
   const matchingBlock = renderMatching(b.matching);
@@ -286,6 +296,8 @@ export async function POST(req: Request) {
     orchestrated.systemPrompt,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     matchingBlock ? `# 直近の企業マッチング結果\n${matchingBlock}` : '',
+    // P17-M1: Personal Memory 参考 block（低優先・ユーザー由来の参考情報）。空なら filter で除去＝従来互換。
+    orchestrated.personalMemoryContext,
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')
