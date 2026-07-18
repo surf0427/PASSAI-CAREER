@@ -215,24 +215,23 @@ export function buildSelfAnalysisMemorySection(logs: CareerSelfAnalysisLog[]): S
 export function buildEsMemorySection(logs: CareerEsLog[]): SectionRebuildResult {
   const valid = (Array.isArray(logs) ? logs : []).filter((l) => l && l.result);
   const sorted = sortByCreatedDesc(valid);
+  // ★ P17-M1: ESトレーニング再設計対応。設問メタ（企業名・設問）は log レベル（本人入力）を正とし、
+  //   旧 result.companyName / result.question へフォールバックする（旧ログ後方互換）。
+  //   AI 生成文（headline / gakuchika / selfPr / motivation / appealPoints）・AI 添削（review）・
+  //   本人本文（body / result.answer）は Personal Memory へ **載せない**（本人作成情報 ≠ AI 生成文、
+  //   かつ生本文全文は保存しない方針）。
   const latest = sorted.slice(0, HISTORY_LIMIT).map((log) => {
     const r = log.result;
     return {
       createdAt: str(log.createdAt),
-      companyName: str(r.companyName),
-      question: str(r.question),
-      headline: str(r.headline),
-      gakuchika: str(r.gakuchika),
-      selfPr: str(r.selfPr),
-      motivation: str(r.motivation),
-      appealPoints: strList(r.appealPoints, 8),
+      companyName: str(log.companyName) || str(r.companyName),
+      question: str(log.question) || str(r.question),
     };
   });
   const payload: EsMemorySummary = {
     meta: meta('es', valid.length, computeLogSectionLatestAt(valid)),
     latest,
     longTerm: {
-      recurringAppeal: recurring(latest.map((l) => l.appealPoints)),
       companies: [...new Set(latest.map((l) => l.companyName).filter((c) => c !== ''))],
     },
   };

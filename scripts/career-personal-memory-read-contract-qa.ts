@@ -36,6 +36,7 @@ import {
 import type { ExpectedMemoryMeta } from '@/lib/careerMemory/persistence/state';
 import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import type { CareerEsLog } from '@/types/careerEs';
+import type { EsMemorySummary } from '@/lib/careerMemory/types';
 import type { CareerInterviewResult } from '@/types/careerInterview';
 import type { CareerProfileContext } from '@/lib/careerAi';
 import type { CareerActivity } from '@/types/careerActivity';
@@ -85,12 +86,14 @@ const GOLDEN_SELF_PAYLOAD = {
   ],
   longTerm: { consistentStrengths: [], industryShift: [] },
 };
-const GOLDEN_ES_PAYLOAD = {
+// ES golden: P17-M1 で「本人が入力した設問メタのみ」へ縮小済み。
+//   ★ AI 生成本文（headline / gakuchika / selfPr / motivation / appealPoints）・その派生
+//     （recurringAppeal）・AI 添削・ES 生本文は golden に含めない。旧契約として残さないこと。
+//   EsMemorySummary 注釈により、旧 field を書き戻すと excess property check で tsc が赤になる。
+const GOLDEN_ES_PAYLOAD: EsMemorySummary = {
   meta: { feature: 'es', sourceCount: 1, latestAt: '2026-06-01', warnings: [] },
-  latest: [
-    { createdAt: '2026-06-01', companyName: 'Co-A', question: 'q', headline: 'h', gakuchika: 'g', selfPr: 'p', motivation: 'm', appealPoints: ['ap'] },
-  ],
-  longTerm: { recurringAppeal: [], companies: ['Co-A'] },
+  latest: [{ createdAt: '2026-06-01', companyName: 'Co-A', question: 'q' }],
+  longTerm: { companies: ['Co-A'] },
 };
 const GOLDEN_INTERVIEW_PAYLOAD = {
   meta: { feature: 'interview', sourceCount: 1, latestAt: '2026-05-01', warnings: [] },

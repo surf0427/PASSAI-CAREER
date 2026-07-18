@@ -238,21 +238,17 @@ export type SelfAnalysisLongTerm = {
 };
 export type SelfAnalysisMemorySummary = FeatureSummary<SelfAnalysisLatest, SelfAnalysisLongTerm>;
 
-// ES: 再利用可能な訴求素材（要約。raw essay body は載せない）。
+// ES: 本人が取り組んだ設問メタの要約。
+//   ★ P17-M1（ESトレーニング再設計対応）: ES は AI 代筆を廃止し、本人が本文を書く方式に変わった。
+//     Personal Memory には **本人が入力した設問メタ（企業名・設問）だけ**を載せ、
+//     AI 生成文（旧 headline / gakuchika / selfPr / motivation / appealPoints）・AI 添削コメント・
+//     生本文全文は載せない（req: AI 生成文は本人作成情報として扱わない / 生本文は保存しない）。
 export type EsLatest = {
   createdAt: string;
   companyName: string;
   question: string;
-  headline: string;
-  // 以下は truncate 済み要約（生の essay 本文ではない）。
-  gakuchika: string;
-  selfPr: string;
-  motivation: string;
-  appealPoints: string[];
 };
 export type EsLongTerm = {
-  // 複数社に共通して繰り返すアピール軸。
-  recurringAppeal: string[];
   // ES を書いた企業名の集合（志望動機の企業固有性チェック用）。
   companies: string[];
 };

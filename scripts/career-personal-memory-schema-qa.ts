@@ -27,6 +27,48 @@ import {
   stableStringify,
   payloadByteSize,
 } from '@/lib/careerMemory/persistence/validate';
+import type { EsMemorySummary } from '@/lib/careerMemory/types';
+import { buildEsMemorySection } from '@/lib/careerMemory/persistence/rebuild';
+import type { CareerEsLog } from '@/types/careerEs';
+
+/** fixture 用の型 cast（QA が production 型に合わせて肥大化するのを避ける）。 */
+const cast = <T>(v: unknown): T => v as T;
+
+/**
+ * P17-M1: ES memory へ二度と載せてはならない旧 field。
+ *   AI 生成本文（headline / gakuchika / selfPr / motivation / appealPoints）と
+ *   その派生（recurringAppeal）は「本人が作成した情報」ではないため保存しない。
+ *   ES 生本文・AI 添削コメントも同様に保存しない。
+ * 型注釈だけでは `as` や any 経由の混入を止められないため、実行時にも検査する。
+ */
+const ES_FORBIDDEN_LEGACY_KEYS = [
+  'headline',
+  'gakuchika',
+  'selfPr',
+  'motivation',
+  'appealPoints',
+  'recurringAppeal',
+  'body',
+  'answer',
+  'review',
+] as const;
+
+/** payload 全体を再帰的に走査し、禁止 field が 1 つでもあれば見つかった名前を返す。 */
+function findForbiddenEsKeys(value: unknown, found: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) findForbiddenEsKeys(item, found);
+    return found;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if ((ES_FORBIDDEN_LEGACY_KEYS as readonly string[]).includes(key) && !found.includes(key)) {
+        found.push(key);
+      }
+      findForbiddenEsKeys(child, found);
+    }
+  }
+  return found;
+}
 
 let failures = 0;
 const check = (ok: boolean, name: string) => {
@@ -42,7 +84,14 @@ const basePayload = {
   values: { priorities: ['成長'], avoidances: [], industries: [], jobTypes: [], workStyles: [], companyTypes: [], careerGoals: [], culturePreferences: [] },
 };
 const selfAnalysisPayload = { meta: meta('self_analysis', 2), latest: [{ createdAt: '2026-07-01', summary: 's', careerDirection: 'd', strengths: ['a'], weaknesses: [], valueKeywords: [], strengthKeywords: [], recommendedIndustries: ['IT'], recommendedJobs: [], companySelectionCriteria: [], gakuchikaIdeas: ['g'], nextActions: [] }], longTerm: { consistentStrengths: ['a'], industryShift: [] } };
-const esPayload = { meta: meta('es', 1), latest: [{ createdAt: '2026-06-01', companyName: 'Co', question: 'q', headline: 'h', gakuchika: 'g', selfPr: 'p', motivation: 'm', appealPoints: ['ap'] }], longTerm: { recurringAppeal: [], companies: ['Co'] } };
+// ES: P17-M1 で「本人が入力した設問メタのみ」へ縮小済み。
+//   EsMemorySummary 注釈により、旧 AI 生成 field（headline / gakuchika / selfPr / motivation /
+//   appealPoints / recurringAppeal）を書き戻すと excess property check で tsc が赤になる。
+const esPayload: EsMemorySummary = {
+  meta: { feature: 'es', sourceCount: 1, latestAt: '2026-07-01', warnings: [] },
+  latest: [{ createdAt: '2026-06-01', companyName: 'Co', question: 'q' }],
+  longTerm: { companies: ['Co'] },
+};
 const interviewPayload = { meta: meta('interview', 1), latest: [{ createdAt: '2026-05-01', mode: 'real', overallComment: 'oc', strengths: ['s'], improvements: ['i'], deepDiveTopics: [], nextActions: [], companyFit: 'f' }], longTerm: { recurringImprovements: [], stableStrengths: [] } };
 
 const V = CAREER_PERSONAL_MEMORY_SCHEMA_VERSION;
@@ -73,7 +122,18 @@ for (const bad of [null, undefined, [], 'str', 42, true] as unknown[]) {
 }
 
 console.log('[4] oversized');
-const big = { meta: meta('es', 1), latest: [{ createdAt: '2026-06-01', companyName: 'Co', question: 'q', headline: 'h', gakuchika: 'x'.repeat(CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES + 100), selfPr: '', motivation: '', appealPoints: [] }] };
+// oversize は「上限超過を検出できるか」だけを見る。旧 AI 生成 field を使わず、
+//   新形状のまま設問文を引き伸ばして超過させる（旧契約を fixture に残さない）。
+const big: EsMemorySummary = {
+  meta: { feature: 'es', sourceCount: 1, latestAt: '2026-07-01', warnings: [] },
+  latest: [
+    {
+      createdAt: '2026-06-01',
+      companyName: 'Co',
+      question: 'x'.repeat(CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES + 100),
+    },
+  ],
+};
 const ov = validateCareerPersonalMemorySection('es', V, big);
 check(!ov.ok && ov.reason === 'oversized', 'oversized payload → oversized');
 check(payloadByteSize(big) > CAREER_PERSONAL_MEMORY_MAX_PAYLOAD_BYTES, 'payloadByteSize measures oversize');
@@ -126,6 +186,58 @@ check(/UNIQUE \(user_id, section_key\)/.test(sql), 'SQL UNIQUE(user_id, section_
 check(/ENABLE ROW LEVEL SECURITY/.test(sql), 'SQL RLS enabled');
 check(/owner select/.test(sql) && /owner insert/.test(sql) && /owner update/.test(sql) && /owner delete/.test(sql), 'SQL 4 owner policies (incl DELETE)');
 check(!/TO anon|TO public/.test(sql), 'SQL no anon/public policy');
+
+// [11] P17-M1: ES memory に AI 生成本文・添削・生本文が混入しないことを実行時にも保証する。
+//   fixture（型注釈で守られる）と、実際の builder 出力（production 経路）の両方を検査する。
+//   builder 側が将来 field を戻した場合、型注釈は通ってもここで赤になる。
+console.log('[11] ES memory は本人入力の設問メタのみ（AI 生成本文・添削・生本文を持たない）');
+{
+  // 検査器そのものの自己検証。旧形状を渡して検出できなければ、
+  // 以降の「旧 field なし」は無意味な緑になる（検査器が壊れていても通ってしまう）。
+  const legacyShaped = {
+    meta: { feature: 'es' },
+    latest: [{ createdAt: '2026-06-01', companyName: 'Co', question: 'q', headline: 'h', appealPoints: ['ap'] }],
+    longTerm: { recurringAppeal: ['x'], companies: ['Co'] },
+  };
+  const selfTest = findForbiddenEsKeys(legacyShaped);
+  check(
+    selfTest.includes('headline') && selfTest.includes('appealPoints') && selfTest.includes('recurringAppeal'),
+    `検査器の自己検証: 旧形状を検出できる (${selfTest.join(', ')})`,
+  );
+
+  const fixtureHits = findForbiddenEsKeys(esPayload);
+  check(fixtureHits.length === 0, `fixture に旧 field なし${fixtureHits.length ? `: ${fixtureHits.join(', ')}` : ''}`);
+
+  const built = buildEsMemorySection([
+    cast<CareerEsLog>({
+      id: 'a',
+      createdAt: '2026-06-01',
+      companyName: 'Co-A',
+      question: '学生時代に力を入れたこと',
+      body: '本人が書いた ES 本文（Memory へ載ってはならない）',
+      result: {
+        companyName: 'Co-A',
+        question: '学生時代に力を入れたこと',
+        answer: 'AI 生成の回答（載ってはならない）',
+        headline: 'h',
+        gakuchika: 'g',
+        selfPr: 'p',
+        motivation: 'm',
+        appealPoints: ['ap'],
+      },
+      review: { summary: 'AI 添削コメント（載ってはならない）' },
+    }),
+  ]);
+  const builtPayload = built.section.payload;
+  const builtHits = findForbiddenEsKeys(builtPayload);
+  check(builtHits.length === 0, `builder 出力に旧 field なし${builtHits.length ? `: ${builtHits.join(', ')}` : ''}`);
+
+  const serialized = stableStringify(builtPayload);
+  check(!serialized.includes('本人が書いた ES 本文'), 'builder 出力に ES 生本文が含まれない');
+  check(!serialized.includes('AI 添削コメント'), 'builder 出力に AI 添削が含まれない');
+  check(!serialized.includes('AI 生成の回答'), 'builder 出力に AI 生成文が含まれない');
+  check(serialized.includes('Co-A') && serialized.includes('学生時代に力を入れたこと'), '設問メタ（企業名・設問）は保持される');
+}
 
 console.log('');
 console.log(failures === 0 ? 'career-personal-memory-schema-qa: ALL PASS' : `career-personal-memory-schema-qa: ${failures} FAIL`);
