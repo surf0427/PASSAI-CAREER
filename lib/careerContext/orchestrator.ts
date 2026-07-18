@@ -42,6 +42,11 @@ import {
   buildConsultationCrossFeatureContext,
   type ConsultationCrossFeatureInput,
 } from '@/lib/careerMemory/renderers/consultationCrossFeature';
+// P17-M1: Personal Memory（Data Spine Layer 2）を purpose 別に選択・render・budget enforce する純関数。
+//   read（I/O）は route 側の server loader が担い、本層へは検証済み section（optional）だけを渡す
+//   （Orchestrator は純関数のまま・DB read を内部に持ち込まない）。section 無しなら出力は従来と完全互換。
+import { renderPersonalMemoryForPurpose } from '@/lib/careerMemory/personalMemoryPromptContext';
+import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -64,6 +69,10 @@ export type CareerContextExtras = {
   esGeneration?: EsGenerationCrossFeatureInput;
   // P15-D: consultation のときだけ意味を持つ Personal Memory 由来 snapshot（Event Signal は含まない）。
   consultation?: ConsultationCrossFeatureInput;
+  // P17-M1: Data Spine Layer 2 Personal Memory の **検証済み fresh section**（route の server loader が read/gate 済み）。
+  //   purpose 別に本層が選択・render・budget enforce する。未指定 / 空なら personalMemoryContext は ''（従来互換）。
+  //   ★ ユーザー由来の参考情報であり信頼済み instruction ではない（renderer が injection 境界を付ける）。
+  personalMemory?: readonly CareerPersonalMemorySection[];
 };
 
 export type CareerPurposeContext = {
@@ -75,6 +84,10 @@ export type CareerPurposeContext = {
   //   purpose ごとに専用 renderer を呼ぶ（混在しない）。base system prompt はこの block を含まない
   //   （route が base と別に受け取る）。
   crossFeatureContext: string;
+  // P17-M1: Personal Memory（Layer 2）由来の参考 context block（injection 境界付き・budget enforce 済み）。
+  //   extras.personalMemory が無い / 空 / 対象外 purpose では ''（Memory 無しの prompt を従来と完全互換に保つ）。
+  //   route は base / crossFeature とは別に、低優先の参考情報としてこの block を prompt へ結合する。
+  personalMemoryContext: string;
   // 適用された purpose policy（宣言。実際の section 削減は P3-C 以降）。
   policy: CareerContextPolicy;
   // 観測用: base context の概算文字数。
@@ -138,12 +151,20 @@ export function buildCareerContextForPurpose(
     crossFeatureContext = buildConsultationCrossFeatureContext(extras.consultation);
   }
 
+  // P17-M1: Personal Memory を purpose 別に選択・render・budget enforce（純関数）。section 無しなら ''。
+  //   対象 purpose（renderer 側の allowlist で判定）以外・空 section では出力ゼロ＝従来 byte 互換。
+  const personalMemoryContext = renderPersonalMemoryForPurpose(
+    purpose,
+    extras?.personalMemory ?? null,
+  ).block;
+
   const estimatedChars = systemPrompt.length;
   const isOverPolicyBudget = estimatedChars > policy.maxContextChars;
   return {
     purpose,
     systemPrompt,
     crossFeatureContext,
+    personalMemoryContext,
     policy,
     estimatedChars,
     isOverPolicyBudget,
