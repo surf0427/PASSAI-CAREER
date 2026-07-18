@@ -52,14 +52,19 @@ function joinLikeRoute(parts: string[]): string {
   return parts.filter((s) => s !== '').join('\n\n');
 }
 
-// 現在 wiring 済みの全 target purpose（route が loader→orchestrator→personalMemoryContext を結合する）。
-const WIRED_PURPOSES = ['company_research_review', 'consultation', 'interview_practice'] as const;
+// renderer の PURPOSE_SECTIONS が「宣言している」purpose 群。
+//   ★ D-R2: runtime 結線されているのは company_research_review の 1 つだけである。
+//     consultation / interview_practice は将来の配線候補として宣言されているのみで、
+//     route からは呼ばれない（本 series では結線しない）。
+//   ここで 3 つとも回すのは、Memory 無し時の byte 互換性を「宣言済みの全 purpose」で
+//   先行して担保しておくためであり、結線済みであることを主張するものではない。
+const DECLARED_PURPOSES = ['company_research_review', 'consultation', 'interview_practice'] as const;
 
 function main() {
   const PURPOSE = 'company_research_review';
 
-  console.log('[1] Memory 無し（extras 無 / [] / undefined）→ 出力完全一致・personalMemoryContext ==="" — 全 wired purpose');
-  for (const p of WIRED_PURPOSES) {
+  console.log('[1] Memory 無し（extras 無 / [] / undefined）→ 出力完全一致・personalMemoryContext ==="" — 宣言済み全 purpose（結線は company_research のみ）');
+  for (const p of DECLARED_PURPOSES) {
     const noExtras = buildCareerContextForPurpose(p, ctx());
     const emptyArr = buildCareerContextForPurpose(p, ctx(), { personalMemory: [] });
     const undef = buildCareerContextForPurpose(p, ctx(), { personalMemory: undefined });
