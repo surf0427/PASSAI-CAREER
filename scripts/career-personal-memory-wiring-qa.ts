@@ -124,27 +124,45 @@ async function main() {
 
   console.log('[7] static: production callsites = 対象 4 section のみ・save 後配置');
   {
-    const wire: Array<{ file: string; fn: string; after: RegExp }> = [
-      { file: 'app/career/self-analysis/run/page.tsx', fn: 'shadowWriteSelfAnalysisMemory', after: /upsertCareerSelfAnalysisResultsToSupabase/ },
-      { file: 'app/career/es/run/page.tsx', fn: 'shadowWriteEsMemory', after: /upsertCareerEsLogsToSupabase/ },
-      { file: 'app/career/interview/session/page.tsx', fn: 'shadowWriteInterviewMemory', after: /upsertCareerInterviewResultsToSupabase/ },
-      { file: 'app/career/profile/ProfileClient.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerProfileToSupabase/ },
-      { file: 'app/career/activity/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerActivityToSupabase/ },
-      { file: 'app/career/values/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerValuesToSupabase/ },
+    // ★ ES は「AI 代筆廃止（360be22）」で es/run/page.tsx が削除され、
+    //   確定経路が es/[id]（添削完了・改善版保存）と es/draft/[draftId]（新規確定）の 2 file 3 経路へ分かれた。
+    // ★ self-analysis は 9e06fdf で確定処理が finalizeSummary.ts へ移設された。
+    //   どちらも「実装が動いたのに QA の参照先が旧 path のまま」だったため、実経路へ追随させる。
+    // count は「その file 内で期待する callsite 数」。ES の 3 経路を数で担保する。
+    const wire: Array<{ file: string; fn: string; after: RegExp; count: number; label: string }> = [
+      { file: 'app/career/self-analysis/finalizeSummary.ts', fn: 'shadowWriteSelfAnalysisMemory', after: /upsertCareerSelfAnalysisResultsToSupabase/, count: 1, label: '自己分析確定' },
+      { file: 'app/career/es/[id]/page.tsx', fn: 'shadowWriteEsMemory', after: /upsertCareerEsLogsToSupabase/, count: 2, label: 'ES添削完了 + 改善版保存' },
+      { file: 'app/career/es/draft/[draftId]/page.tsx', fn: 'shadowWriteEsMemory', after: /upsertCareerEsLogsToSupabase/, count: 1, label: '新規ES確定' },
+      { file: 'app/career/interview/session/page.tsx', fn: 'shadowWriteInterviewMemory', after: /upsertCareerInterviewResultsToSupabase/, count: 1, label: '面接完了' },
+      { file: 'app/career/profile/ProfileClient.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerProfileToSupabase/, count: 1, label: 'プロフィール保存' },
+      { file: 'app/career/activity/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerActivityToSupabase/, count: 1, label: '活動保存' },
+      { file: 'app/career/values/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerValuesToSupabase/, count: 1, label: '価値観保存' },
     ];
     for (const w of wire) {
       const src = readFileSync(join(ROOT, w.file), 'utf8');
-      const callIdx = src.indexOf(`void ${w.fn}()`);
+      const needle = `void ${w.fn}()`;
+      const occurrences = src.split(needle).length - 1;
+      const firstCallIdx = src.indexOf(needle);
       const saveIdx = src.search(w.after);
-      check(callIdx >= 0, `${w.file}: ${w.fn} 呼出あり`);
-      check(callIdx > saveIdx && saveIdx >= 0, `${w.file}: shadow write は canonical save/mirror の後`);
+      check(occurrences === w.count, `${w.file}: ${w.fn} 呼出 ${w.count} 件（${w.label}）: got ${occurrences}`);
+      check(firstCallIdx > saveIdx && saveIdx >= 0, `${w.file}: shadow write は canonical save/mirror の後`);
+    }
+
+    // ES の 3 経路が「別々の確定処理」に紐づいていること（同じ箇所の重複ではない）。
+    {
+      const editor = readFileSync(join(ROOT, 'app/career/es/[id]/page.tsx'), 'utf8');
+      const draft = readFileSync(join(ROOT, 'app/career/es/draft/[draftId]/page.tsx'), 'utf8');
+      check(/添削完了[\s\S]{0,240}?void shadowWriteEsMemory\(\)/.test(editor), 'ES: 添削完了の確定後に再構築');
+      check(/改善版[\s\S]{0,240}?void shadowWriteEsMemory\(\)/.test(editor), 'ES: 改善版保存の確定後に再構築');
+      check(/deleteEsDraft[\s\S]{0,240}?void shadowWriteEsMemory\(\)/.test(draft), 'ES: 新規確定（draft 削除）の後に再構築');
     }
     // 他の career route/page に shadow write が混入していない（対象 6 callsite + 定義ファイルのみ）。
     const callers = execGrep('shadowWrite\\(Base\\|SelfAnalysis\\|Es\\|Interview\\)Memory(');
     const files = new Set(callers.map((l) => l.split(':')[0]));
     const expected = new Set([
       'app/career/personalMemoryShadowWrite.ts',
-      'app/career/self-analysis/run/page.tsx', 'app/career/es/run/page.tsx',
+      'app/career/self-analysis/finalizeSummary.ts',
+      'app/career/es/[id]/page.tsx', 'app/career/es/draft/[draftId]/page.tsx',
       'app/career/interview/session/page.tsx', 'app/career/profile/ProfileClient.tsx',
       'app/career/activity/page.tsx', 'app/career/values/page.tsx',
     ]);

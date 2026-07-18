@@ -37,6 +37,8 @@ import { EsReviewPanel } from '../components/EsReviewPanel';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
+// P17-M1: ES canonical ログ確定後の Personal Memory shadow-write（flag OFF/canary deny では no-op・fire-and-forget）。
+import { shadowWriteEsMemory } from '@/app/career/personalMemoryShadowWrite';
 import type { CareerEsLog, CareerEsReview } from '@/types/careerEs';
 
 const subscribeMount = () => () => {};
@@ -147,6 +149,9 @@ export default function CareerEsEditorPage() {
       if (userId) {
         void upsertCareerEsLogsToSupabase(userId, [{ ...log, body, review: data.review }]);
       }
+      // 添削完了 = 本人が確定保存した ES 本文が確定。canonical ログ確定後に Personal Memory を再構築する
+      //   （AI 添削コメントは Memory へ載らない。設問メタのみ。同一 Source は CAS が unchanged で skip）。
+      void shadowWriteEsMemory();
       void recordCareerEvent(userId, {
         feature: 'es',
         eventType: 'ai_generated',
@@ -185,6 +190,8 @@ export default function CareerEsEditorPage() {
     });
     appendEsLog(next);
     if (userId) void upsertCareerEsLogsToSupabase(userId, [next]);
+    // 改善版（次版）を canonical ログへ確定。新しい版が加わったので Personal Memory を再構築する。
+    void shadowWriteEsMemory();
     router.push(`/career/es/${encodeURIComponent(next.id)}`);
   }, [log, body, groupId, persistBody, userId, router]);
 

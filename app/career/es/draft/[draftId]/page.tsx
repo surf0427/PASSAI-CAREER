@@ -24,6 +24,8 @@ import { classifyEsQuestionType, type EsTurn } from '@/lib/careerEs/deepDiveProm
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
+// P17-M1: ES 正式ログ化（新規作成）確定後の Personal Memory shadow-write（flag OFF/canary deny では no-op）。
+import { shadowWriteEsMemory } from '@/app/career/personalMemoryShadowWrite';
 import type { CareerEsDraft, CareerEsLog, CareerEsReview } from '@/types/careerEs';
 
 const subscribeMount = () => () => {};
@@ -176,6 +178,8 @@ export default function CareerEsDraftEditorPage() {
       });
       // 正式ログの保存を確認できたときだけ draft を削除する。
       deleteEsDraft(draft.id, userId);
+      // 新規 ES が canonical ログへ確定。Personal Memory を再構築する（設問メタのみ・本文/添削は載せない）。
+      void shadowWriteEsMemory();
       router.push(`/career/es/${encodeURIComponent(log.id)}`);
     } catch (e) {
       // 添削失敗: log は作らず draft を残す（進捗は失われない）。
