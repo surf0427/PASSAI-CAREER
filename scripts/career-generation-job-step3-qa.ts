@@ -19,7 +19,11 @@ import { keyForOwner, readPending } from '../lib/careerSelfAnalysis/clientJob/pe
 import { computeClientFingerprint } from '../lib/careerSelfAnalysis/clientJob/fingerprint';
 import { MAX_ACTIVE_POLL_MS, MAX_POLL_MS } from '../lib/careerSelfAnalysis/clientJob/constants';
 import { mapOwnedJobToStatusResponse } from '../lib/careerSelfAnalysis/summaryJobStatus';
-import type { HttpResult, SelfAnalysisRequestBody } from '../lib/careerSelfAnalysis/clientJob/types';
+import type { GenerationView, HttpResult, SelfAnalysisRequestBody } from '../lib/careerSelfAnalysis/clientJob/types';
+// Issue #19: 待機体験の表示は純関数 genStatusCopy に集約されているため、
+//   文字列 grep ではなく実際に呼び出して state / errorCode / canRetry との対応を検証する。
+//   statusCopy.ts は React 非依存の pure module なので、UI を起動せずに検証できる。
+import { genStatusCopy } from '../lib/careerSelfAnalysis/clientJob/statusCopy';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string): void {
@@ -637,6 +641,165 @@ console.log('[F] server recoveryAction mapper + source contracts');
   const src = readFileSync(join(process.cwd(), 'app', 'api', 'career', 'self-analysis', 'job', 'route.ts'), 'utf8');
   check('status route が lease_expires_at を select', /lease_expires_at/.test(src));
   check('status route が Date.now() を mapper に渡す', /Date\.now\(\)/.test(src));
+}
+
+// ── [G] 待機体験の表示契約（Issue #19） ──────────────────────────────
+//
+// 文字列の存在確認ではなく、genStatusCopy を実際に呼んで
+// state / errorCode / canRetry と文言の対応関係そのものを検証する。
+console.log('[G] 生成待機中の表示（state / errorCode / canRetry との対応）');
+{
+  const copy = (over: Partial<GenerationView>) =>
+    genStatusCopy({ state: 'idle', canRetry: false, canRecheck: false, errorCode: null, ...over });
+
+  // 開発用語・内部コードを画面へ出さないための共通検査。
+  const DEV_TERMS = [
+    'schema', 'Schema', 'parse', 'Parse', 'JSON', 'json', 'errorCode', 'error code',
+    'null', 'undefined', 'API', 'HTTP', 'polling', 'timeout', 'token', 'lease',
+  ];
+  const INTERNAL_CODES = [
+    'INVALID_INPUT', 'PARSE_FAILED', 'SCHEMA_VALIDATION_FAILED', 'RETRY_LIMIT_REACHED',
+    'SAVE_FAILED', 'AUTH_TEMPORARILY_UNAVAILABLE', 'ACTIVE_POLL_LIMIT_REACHED', 'UNKNOWN',
+  ];
+  const allCases: Array<{ label: string; view: Partial<GenerationView> }> = [
+    { label: 'submitting', view: { state: 'submitting' } },
+    { label: 'running', view: { state: 'running', canRecheck: true } },
+    { label: 'reconnecting/generic', view: { state: 'reconnecting', canRecheck: true } },
+    { label: 'reconnecting/cap', view: { state: 'reconnecting', canRecheck: true, errorCode: 'ACTIVE_POLL_LIMIT_REACHED' } },
+    ...INTERNAL_CODES.map((c) => ({ label: `failed/${c}/retry`, view: { state: 'failed' as const, errorCode: c, canRetry: true } })),
+    ...INTERNAL_CODES.map((c) => ({ label: `failed/${c}/noretry`, view: { state: 'failed' as const, errorCode: c, canRetry: false } })),
+  ];
+
+  // 1. submitting と running が区別できる（title / detail のどちらも同一でない）。
+  const sub = copy({ state: 'submitting' });
+  const run = copy({ state: 'running', canRecheck: true });
+  check('G1 submitting と running の title が異なる', sub.title !== run.title, `${sub.title} / ${run.title}`);
+  check('G1 submitting と running の detail が異なる', sub.detail !== run.detail);
+  check('G1 submitting/running とも非空', !!sub.title && !!sub.detail && !!run.title && !!run.detail);
+
+  // 2. polling 上限到達を接続障害と断定しない。
+  const cap = copy({ state: 'reconnecting', canRecheck: true, errorCode: 'ACTIVE_POLL_LIMIT_REACHED' });
+  check('G2 上限到達で「接続」を原因と断定しない', !/接続/.test(cap.title + cap.detail), cap.detail);
+  check('G2 上限到達は「時間がかかっている」と伝える', /時間/.test(cap.title + cap.detail));
+  // 具体的な分数を出さない（定数変更で文言が陳腐化しないため）。
+  check('G2 具体的な制限時間（分/秒）を表示しない', !/\d+\s*(分|秒)/.test(cap.title + cap.detail));
+
+  // 3. 自動確認が停止しているケースは手動 recheck を明示する。
+  check('G3 上限到達で自動確認の停止を明示', /自動確認を停止/.test(cap.detail));
+  check('G3 上限到達で「処理状況を再確認」へ誘導', /処理状況を再確認/.test(cap.detail));
+  const recon = copy({ state: 'reconnecting', canRecheck: true });
+  check('G3 汎用 reconnecting も手動導線を案内', /処理状況を再確認/.test(recon.detail), recon.detail);
+  // 自動確認が続いていると断定しない（continue/halt を view から判別できないため）。
+  check('G3 汎用 reconnecting は自動確認中と断定しない', !/自動で再確認しています|自動確認しています/.test(recon.detail));
+  check('G3 上限到達と汎用 reconnecting の文言が異なる', cap.title !== recon.title && cap.detail !== recon.detail);
+
+  // 4. canRetry=false で再試行可能と読める文言を出さない（最重要の回帰防止）。
+  //    「もう一度試す」は retry ボタンのラベルであり、ボタンが無い状態で書いてはいけない。
+  for (const c of INTERNAL_CODES) {
+    const v = copy({ state: 'failed', errorCode: c, canRetry: false });
+    check(
+      `G4 failed/${c} canRetry=false は「もう一度試す」と書かない`,
+      !/もう一度試す/.test(v.detail) && !/もう一度試すことができます/.test(v.detail),
+      v.detail,
+    );
+    check(`G4 failed/${c} canRetry=false でも行動を案内する`, v.detail.length > 0 && /ください|お試し/.test(v.detail));
+  }
+
+  // 5. canRetry=true では retry 導線（ボタン文言）と整合する。
+  for (const c of ['SAVE_FAILED', 'AUTH_TEMPORARILY_UNAVAILABLE', 'UNKNOWN']) {
+    const v = copy({ state: 'failed', errorCode: c, canRetry: true });
+    check(`G5 failed/${c} canRetry=true は再試行を案内`, /もう一度/.test(v.detail), v.detail);
+  }
+
+  // 6. errorCode 別に文言が分岐している（全部同じ文言ではない）。
+  const failedDetails = new Set(
+    ['INVALID_INPUT', 'PARSE_FAILED', 'RETRY_LIMIT_REACHED', 'SAVE_FAILED', 'AUTH_TEMPORARILY_UNAVAILABLE', 'UNKNOWN'].map(
+      (c) => copy({ state: 'failed', errorCode: c, canRetry: false }).detail,
+    ),
+  );
+  check('G6 errorCode 別に文言が分岐している（4 種類以上）', failedDetails.size >= 4, `distinct=${failedDetails.size}`);
+  // 入力起因だけはユーザー自身が直せるので、必ず入力の見直しを促す。
+  check('G6 INVALID_INPUT は入力の見直しを促す', /見直|確認/.test(copy({ state: 'failed', errorCode: 'INVALID_INPUT' }).detail));
+  // 保存失敗は「保存に失敗した」ことが分かる。
+  check('G6 SAVE_FAILED は保存の失敗だと分かる', /保存/.test(copy({ state: 'failed', errorCode: 'SAVE_FAILED', canRetry: true }).detail));
+
+  // G6b SAVE_FAILED は「保存だけをやり直す」と誤解させない。
+  //   retry() は submit() を呼ぶため、実際には生成からやり直しになる。
+  //   「保存をやり直せます」等と書くと、ユーザーは再生成が走らないと誤解する。
+  {
+    const s = copy({ state: 'failed', errorCode: 'SAVE_FAILED', canRetry: true });
+    const text = `${s.title}${s.detail}`;
+    check(
+      'G6b SAVE_FAILED は「保存だけ再試行」と読める表現を使わない',
+      !/保存(だけ|のみ)?を?(やり直|再試行|再実行)せます/.test(text) &&
+        !/保存をやり直/.test(text) &&
+        !/保存のみ/.test(text) &&
+        !/保存だけ/.test(text),
+      s.detail,
+    );
+    check(
+      'G6b SAVE_FAILED は retry で作成からやり直すと明示',
+      /作成と保存を再実行|作成からやり直|もう一度生成/.test(s.detail),
+      s.detail,
+    );
+    check('G6b SAVE_FAILED は入力が保持される旨を伝える', /入力内容は保持/.test(s.detail));
+    // canRetry=false 側でも「保存だけ」と読ませない。
+    const sNo = copy({ state: 'failed', errorCode: 'SAVE_FAILED', canRetry: false });
+    check(
+      'G6b SAVE_FAILED canRetry=false も「保存だけ再試行」と読めない',
+      !/保存をやり直/.test(sNo.detail) && !/保存のみ/.test(sNo.detail) && !/保存だけ/.test(sNo.detail),
+      sNo.detail,
+    );
+  }
+  check('G6 RETRY_LIMIT_REACHED は時間を置く案内', /時間/.test(copy({ state: 'failed', errorCode: 'RETRY_LIMIT_REACHED' }).detail));
+
+  // 7. idle / completed は空文字（パネル非表示条件は呼び出し側で維持）。
+  check('G7 idle は空文字', copy({ state: 'idle' }).title === '' && copy({ state: 'idle' }).detail === '');
+  check('G7 completed は空文字', copy({ state: 'completed' }).title === '' && copy({ state: 'completed' }).detail === '');
+  {
+    const page = readFileSync(join(process.cwd(), 'app', 'career', 'self-analysis', 'run', 'page.tsx'), 'utf8');
+    check(
+      'G7 パネルは idle / completed を除外して描画（既存条件を維持）',
+      /gen\.view\.state !== 'idle' && gen\.view\.state !== 'completed'/.test(page),
+    );
+    check('G7 パネルは member（userId）限定のまま', /userId && gen\.view\.state !== 'idle'/.test(page));
+    // 8. anonymous legacy 経路は不変。
+    check('G8 anonymous は legacyGenerate のまま', /if \(userId\)\s*\{\s*gen\.start\(\)/.test(page) && /void legacyGenerate\(\)/.test(page));
+    check('G8 legacy の同期生成文言は不変', /generatingNow \? '分析を作成中…' : '自己分析を生成する →'/.test(page));
+
+    // G8b 表示コピーは statusCopy.ts に集約され、page.tsx は import して使うだけ。
+    //   page.tsx に QA 専用の named export を残さない（default export のみ）。
+    check('G8b page は statusCopy から genStatusCopy を import', /import \{ genStatusCopy \} from '@\/lib\/careerSelfAnalysis\/clientJob\/statusCopy'/.test(page));
+    check('G8b page に genStatusCopy の定義が残っていない', !/function genStatusCopy/.test(page) && !/function genFailedCopy/.test(page));
+    const pageNamedExports = [...page.matchAll(/^export\s+(?!default\b)(?:async\s+)?(?:function|const|let|class|type|interface)\s+(\w+)/gm)].map((m) => m[1]);
+    check('G8b page に named export が無い（default のみ）', pageNamedExports.length === 0, pageNamedExports.join(','));
+  }
+
+  // 開発用語・内部コードが 1 つも画面文言へ出ないこと（全ケース横断）。
+  for (const { label, view } of allCases) {
+    const v = copy(view);
+    const text = `${v.title}${v.detail}`;
+    const leakedCode = INTERNAL_CODES.find((c) => text.includes(c));
+    check(`G9 ${label}: 内部 errorCode を表示しない`, leakedCode === undefined, leakedCode);
+    const leakedTerm = DEV_TERMS.find((t) => text.includes(t));
+    check(`G9 ${label}: 開発用語を表示しない`, leakedTerm === undefined, leakedTerm);
+  }
+}
+
+// 10. controller: 上限到達分岐が表示用ラベルを付けるが、制御フローは変わっていない。
+{
+  const src = readFileSync(join(process.cwd(), 'lib', 'careerSelfAnalysis', 'clientJob', 'controller.ts'), 'utf8');
+  const capBranch = /if \(this\.pollCount >= MAX_ACTIVE_POLLS \|\| this\.deps\.now\(\) - this\.activeStartAt >= MAX_ACTIVE_POLL_MS\) \{\s*this\.setState\('reconnecting', \{ canRecheck: true, errorCode: 'ACTIVE_POLL_LIMIT_REACHED' \} \);?\s*return;\s*\}/;
+  check(
+    'G10 上限到達は reconnecting + canRecheck のまま errorCode を付けるだけ',
+    capBranch.test(src.replace(/\/\/.*$/gm, '').replace(/\s+/g, ' ').replace(/\{ /g, '{ ').replace(/ \}/g, ' }')) ||
+      /setState\('reconnecting', \{ canRecheck: true, errorCode: 'ACTIVE_POLL_LIMIT_REACHED' \}\)/.test(src),
+  );
+  // 上限到達分岐に timer を張らない（従来どおり自動 poll を止める）。
+  const capIdx = src.indexOf("errorCode: 'ACTIVE_POLL_LIMIT_REACHED'");
+  const afterCap = src.slice(capIdx, capIdx + 120);
+  check('G10 上限到達分岐は timer を張らない（従来どおり）', !/scheduleTimer|startPolling/.test(afterCap));
+  check('G10 上限到達分岐は pending を消さない（従来どおり）', !/clearPending/.test(afterCap));
 }
 }
 

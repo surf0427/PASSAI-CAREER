@@ -327,8 +327,10 @@ export class SelfAnalysisGenerationController {
   private async pollOnce(token: ActiveGenerationToken): Promise<void> {
     if (!this.isActive(token) || !token.jobId) return;
     // active polling 上限: pending を消さず・completed にせず・新 attempt もせず「再確認」へ。
+    //   errorCode は **表示判別用のラベルのみ**（UI が「接続不安定」と誤って断定しないようにする）。
+    //   state / canRecheck / timer / pending / 制御フローは従来と同一で、遷移先も 'reconnecting' のまま。
     if (this.pollCount >= MAX_ACTIVE_POLLS || this.deps.now() - this.activeStartAt >= MAX_ACTIVE_POLL_MS) {
-      this.setState('reconnecting', { canRecheck: true });
+      this.setState('reconnecting', { canRecheck: true, errorCode: 'ACTIVE_POLL_LIMIT_REACHED' });
       return;
     }
     this.pollCount += 1;

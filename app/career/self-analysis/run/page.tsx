@@ -31,7 +31,7 @@ import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import { saveCompletedSelfAnalysis } from '../finalizeSummary';
 import { useSelfAnalysisGeneration } from '../useSelfAnalysisGeneration';
-import type { GenerationClientState } from '@/lib/careerSelfAnalysis/clientJob/types';
+import { genStatusCopy } from '@/lib/careerSelfAnalysis/clientJob/statusCopy';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -46,35 +46,6 @@ const MAX_TURNS = 6;
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
-
-// member 生成の進行表示（実際に確認できる状態のみ・架空進行なし）。
-function genStatusTitle(state: GenerationClientState): string {
-  switch (state) {
-    case 'submitting':
-    case 'running':
-      return '自己分析を生成しています';
-    case 'reconnecting':
-      return '生成状況を確認しています';
-    case 'failed':
-      return '生成に失敗しました';
-    default:
-      return '';
-  }
-}
-function genStatusDetail(state: GenerationClientState): string {
-  switch (state) {
-    case 'submitting':
-      return '生成を開始しています。';
-    case 'running':
-      return '生成は続いています。ページを再読み込みしても復元できます。';
-    case 'reconnecting':
-      return '接続が不安定なため、処理状況を再確認しています。ページを再読み込みしても復元できます。';
-    case 'failed':
-      return 'もう一度試すことができます。入力内容は保持されています。';
-    default:
-      return '';
-  }
-}
 
 // クライアント側のタイムアウト（サーバ無応答でも操作不能にならないよう上限を設ける）。
 // 質問生成は軽い（サーバ AI timeout 30s）ため 35s。結果生成は重い（サーバ 60s）ため 70s。
@@ -491,8 +462,8 @@ export default function CareerSelfAnalysisRunPage() {
       {/* member 生成の進行・復旧（202→poll→復元）。実際に確認できる状態のみ表示。 */}
       {userId && gen.view.state !== 'idle' && gen.view.state !== 'completed' && (
         <Card variant="soft" padding="md" className="mb-5">
-          <p className="text-sm font-bold text-slate-800 mb-1">{genStatusTitle(gen.view.state)}</p>
-          <p className="text-xs text-slate-500 leading-relaxed mb-3">{genStatusDetail(gen.view.state)}</p>
+          <p className="text-sm font-bold text-slate-800 mb-1">{genStatusCopy(gen.view).title}</p>
+          <p className="text-xs text-slate-500 leading-relaxed mb-3">{genStatusCopy(gen.view).detail}</p>
           {(gen.view.canRetry || gen.view.canRecheck) && (
             <div className="flex flex-col sm:flex-row gap-3">
               {gen.view.canRetry && (
