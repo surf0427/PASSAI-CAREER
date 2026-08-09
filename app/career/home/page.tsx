@@ -108,7 +108,7 @@ export default function CareerHomePage() {
   if (!basicInfo) return null; // mount 済 + 未入力。上記 effect で /career/profile へ replace 中
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
 
       {/* ユーザー情報 */}
       <div className="mb-10">
@@ -139,7 +139,7 @@ export default function CareerHomePage() {
         className="mb-8 ring-1 ring-blue-100 bg-blue-50/40"
       >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-brand-600 mb-1">就活の司令塔AI</p>
             <h2 className="text-lg font-bold text-gray-800 mb-1.5">迷ったら、まずここで相談</h2>
             <p className="text-sm text-gray-600 leading-relaxed">
@@ -216,7 +216,7 @@ export default function CareerHomePage() {
           既存の企業マッチング（/career/matching）へ接続する。 */}
       <Card variant="soft" padding="md" className="mb-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold text-gray-800 mb-1.5">キャリア適性診断</h2>
             <p className="text-sm text-gray-600 leading-relaxed">
               あなたの強みや価値観から、向いている業界・職種の傾向を分析します。
@@ -304,7 +304,7 @@ export default function CareerHomePage() {
         <p className="text-xs text-gray-500 mb-3 px-1">就活の振り返り</p>
         <Card variant="soft" padding="md">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <h2 className="text-base font-bold text-gray-800 mb-1.5">マイページ</h2>
               <p className="text-sm text-gray-600 leading-relaxed">
                 就活の進捗・練習履歴・次にやることをまとめて確認できます。
