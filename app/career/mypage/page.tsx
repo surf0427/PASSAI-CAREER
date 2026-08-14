@@ -7,6 +7,8 @@ import { LinkButton } from '@/components/ui/LinkButton';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard';
 import CareerEventTimelineSection from './CareerEventTimeline';
+// NEXT-7: 同意取得カード。gate（運用 flag + 法務承認 + readiness）が閉じている間は null を返し何も描画しない。
+import CareerConsentCard from './CareerConsentCard';
 import {
   buildMypageSummary,
   type MypageSummary,
@@ -114,6 +116,12 @@ export default function CareerMypagePage() {
           AI prompt / context / body には接続しない本人専用表示）。 */}
       <div className="mt-8">
         <CareerEventTimelineSection />
+      </div>
+
+      {/* 9. データ利用の同意（NEXT-7）。既定では API が enabled:false を返すため何も描画されない
+          （＝現行 UI は不変）。法務承認 + readiness + 運用 flag が揃ったときだけ現れる。 */}
+      <div className="mt-8">
+        <CareerConsentCard />
       </div>
     </div>
   );

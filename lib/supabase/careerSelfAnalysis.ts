@@ -16,20 +16,19 @@
 
 import { devWarn } from "@/lib/devLog";
 import { getBrowserSupabaseClient } from "./browserClient";
-import type { CareerSelfAnalysisLog, CareerSelfAnalysisResult } from "@/types/careerSelfAnalysis";
+import type { CareerSelfAnalysisLog } from "@/types/careerSelfAnalysis";
+// row→domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
+import {
+  CAREER_SELF_ANALYSIS_SELECT_COLUMNS,
+  rowToCareerSelfAnalysisLog,
+  type CareerSelfAnalysisResultRow,
+} from "@/lib/careerSourceData/rowMappers";
 import type { SelfPR } from "@/types/selfPR";
 
 const RESULTS_TABLE = "career_self_analysis_results";
 const SELF_PRS_TABLE = "career_self_prs";
 
 // ── 自己分析 結果履歴 ────────────────────────────────────────────────
-
-type SelfAnalysisResultRow = {
-  client_id: string;
-  user_input: unknown;
-  result: unknown;
-  created_at: string;
-};
 
 /** 自己分析の結果ログを upsert（best-effort）。1 件保存・backfill 兼用で配列を受ける。 */
 export async function upsertCareerSelfAnalysisResultsToSupabase(
@@ -69,19 +68,14 @@ export async function listCareerSelfAnalysisResultsFromSupabase(
   try {
     const { data, error } = await supabase
       .from(RESULTS_TABLE)
-      .select("client_id, user_input, result, created_at")
+      .select(CAREER_SELF_ANALYSIS_SELECT_COLUMNS)
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error) {
       devWarn("[careerSelfAnalysis] results list error", error);
       return [];
     }
-    return ((data ?? []) as SelfAnalysisResultRow[]).map((row) => ({
-      id: row.client_id,
-      createdAt: row.created_at,
-      userInput: typeof row.user_input === "string" ? row.user_input : "",
-      result: (row.result ?? {}) as CareerSelfAnalysisResult,
-    }));
+    return ((data ?? []) as CareerSelfAnalysisResultRow[]).map(rowToCareerSelfAnalysisLog);
   } catch (err) {
     devWarn("[careerSelfAnalysis] results list threw", err);
     return [];

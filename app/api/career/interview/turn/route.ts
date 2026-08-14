@@ -31,6 +31,8 @@ import {
   buildFollowupUserPrompt,
   countAnswers,
 } from '../interviewPrompt';
+// NEXT-6: base context（profile/activity/values）の由来解決。flag OFF なら request body のまま（byte 互換）。
+import { resolveInterviewBaseInputs } from '../resolveBaseInputs';
 
 export const maxDuration = 80;
 
@@ -105,13 +107,15 @@ export async function POST(req: Request) {
     { role: 'answer', content: answer },
   ];
 
+  // NEXT-6: flag OFF（既定）では request body をそのまま使う＝従来と byte 互換。
+  const base = await resolveInterviewBaseInputs(b, req);
   const interviewType = resolveInterviewType(b.interviewType);
   // target は followup（次質問の operative 指示）と system の両方で使うため一度だけ正規化する。
   const target = normalizeInterviewTarget(b.target);
   const system = buildInterviewBaseSystem({
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    values: b.values ?? null,
+    profile: base.profile,
+    activity: base.activity,
+    values: base.values,
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
     matching: b.matching ?? null,

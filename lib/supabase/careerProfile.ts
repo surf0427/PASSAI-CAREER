@@ -15,6 +15,10 @@
 
 import { devWarn } from "@/lib/devLog";
 import { getBrowserSupabaseClient } from "./browserClient";
+import {
+  enqueueLatestMirrorWrite,
+  mirrorWriteKey,
+} from "@/lib/careerSourceData/mirrorWriteQueue";
 import type { CareerProfile } from "@/types/careerProfile";
 
 const TABLE = "career_profiles";
@@ -88,10 +92,14 @@ export async function saveCareerProfileToSupabase(
     data: profile,
   };
 
-  try {
-    const { error } = await supabase.from(TABLE).upsert(row, { onConflict: "user_id" });
-    if (error) devWarn("[careerProfile] upsert error", error);
-  } catch (err) {
-    devWarn("[careerProfile] upsert threw", err);
-  }
+  // D-S3: 同一 user の write を直列化し、遅延応答による mirror 巻き戻り（W4）を防ぐ。
+  //   全文書 upsert なので、待機中の古い write は最新へ coalesce してよい。
+  await enqueueLatestMirrorWrite(mirrorWriteKey(TABLE, userId), async () => {
+    try {
+      const { error } = await supabase.from(TABLE).upsert(row, { onConflict: "user_id" });
+      if (error) devWarn("[careerProfile] upsert error", error);
+    } catch (err) {
+      devWarn("[careerProfile] upsert threw", err);
+    }
+  });
 }

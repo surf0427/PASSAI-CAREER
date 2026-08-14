@@ -17,78 +17,23 @@
 
 import { devWarn } from "@/lib/devLog";
 import { getBrowserSupabaseClient } from "./browserClient";
-import type {
-  CareerValues,
-  CareerValuesNotes,
-  CareerValuesSelections,
-} from "@/types/careerValues";
+import {
+  enqueueLatestMirrorWrite,
+  mirrorWriteKey,
+} from "@/lib/careerSourceData/mirrorWriteQueue";
+import type { CareerValues } from "@/types/careerValues";
+import {
+  CAREER_VALUES_SELECT_COLUMNS,
+  rowToCareerValues,
+  type CareerValuesRow,
+} from "@/lib/careerSourceData/rowMappers";
 
 const TABLE = "career_values";
 
-// DB 行（flat なカラム構成）。selections は 8 カテゴリのカラムに分割して持つ。
-type CareerValuesRow = {
-  user_id: string;
-  priorities: unknown;
-  avoidances: unknown;
-  industries: unknown;
-  job_types: unknown;
-  work_styles: unknown;
-  company_types: unknown;
-  career_goals: unknown;
-  culture_preferences: unknown;
-  notes: unknown;
-  overall_note: string | null;
-  updated_at: string | null;
-};
+// DB 行の shape / row→domain の変換は lib/careerSourceData/rowMappers（純関数・単一実装）へ委譲する。
+//   Layer 1 の server reader（serverReader.server.ts）も同じ mapper を使うため、二重実装を作らない。
 
-const SELECT_COLUMNS =
-  "user_id, priorities, avoidances, industries, job_types, work_styles, " +
-  "company_types, career_goals, culture_preferences, notes, overall_note, updated_at";
-
-function strArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
-}
-
-function rowToSelections(row: CareerValuesRow): CareerValuesSelections {
-  return {
-    priorities: strArray(row.priorities),
-    avoidances: strArray(row.avoidances),
-    industries: strArray(row.industries),
-    jobTypes: strArray(row.job_types),
-    workStyles: strArray(row.work_styles),
-    companyTypes: strArray(row.company_types),
-    careerGoals: strArray(row.career_goals),
-    culturePreferences: strArray(row.culture_preferences),
-  };
-}
-
-function rowToNotes(row: CareerValuesRow): CareerValuesNotes {
-  const raw =
-    row.notes && typeof row.notes === "object"
-      ? (row.notes as Record<string, unknown>)
-      : {};
-  const pick = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
-  return {
-    priorities: pick("priorities"),
-    avoidances: pick("avoidances"),
-    industries: pick("industries"),
-    jobTypes: pick("jobTypes"),
-    workStyles: pick("workStyles"),
-    companyTypes: pick("companyTypes"),
-    careerGoals: pick("careerGoals"),
-    culturePreferences: pick("culturePreferences"),
-  };
-}
-
-function rowToCareerValues(row: CareerValuesRow): CareerValues {
-  return {
-    selections: rowToSelections(row),
-    notes: rowToNotes(row),
-    overallNote: typeof row.overall_note === "string" ? row.overall_note : "",
-    updatedAt: row.updated_at ?? undefined,
-  };
-}
+const SELECT_COLUMNS = CAREER_VALUES_SELECT_COLUMNS;
 
 export type LoadCareerValuesResult =
   | { kind: "ok"; values: CareerValues }
@@ -158,18 +103,25 @@ export async function saveCareerValuesToSupabase(
     overall_note: values.overallNote,
   };
 
-  try {
-    const { error } = await supabase
-      .from(TABLE)
-      .upsert(row, { onConflict: "user_id" });
-    if (error) {
-      devWarn("[careerValues] upsert error", error);
-      return { kind: "error", message: error.message ?? "upsert failed" };
+  // D-S3: 同一 user の write を直列化し、遅延応答による mirror 巻き戻り（W4）を防ぐ。
+  //   全文書 upsert なので、待機中の古い write は最新へ coalesce してよい。
+  let outcome: SaveCareerValuesResult = { kind: "ok" };
+  await enqueueLatestMirrorWrite(mirrorWriteKey(TABLE, userId), async () => {
+    try {
+      const { error } = await supabase
+        .from(TABLE)
+        .upsert(row, { onConflict: "user_id" });
+      if (error) {
+        devWarn("[careerValues] upsert error", error);
+        outcome = { kind: "error", message: error.message ?? "upsert failed" };
+        return;
+      }
+      outcome = { kind: "ok" };
+    } catch (err) {
+      devWarn("[careerValues] upsert threw", err);
+      const message = err instanceof Error ? err.message : "upsert threw";
+      outcome = { kind: "error", message };
     }
-    return { kind: "ok" };
-  } catch (err) {
-    devWarn("[careerValues] upsert threw", err);
-    const message = err instanceof Error ? err.message : "upsert threw";
-    return { kind: "error", message };
-  }
+  });
+  return outcome;
 }

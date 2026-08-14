@@ -34,6 +34,8 @@ import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 // P17-M1: Personal Memory（Layer 2）を owner-scoped で server read（flag OFF/gate deny では I/O ゼロ・fail-open）。
 import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
+// D-R2: client canonical revision（header 由来・veto 専用）。未提示なら Memory は使われない。
+import { readSourceSyncSignal } from '@/lib/careerSourceSync/request.server';
 
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -279,7 +281,10 @@ export async function POST(req: Request) {
   //   「そのユーザーにとって注目すべき観点」の調整にだけ使う（renderer が injection 境界を付ける）。
   //   flag OFF / gate deny / 未認証 では I/O ゼロで空配列。read 失敗も従来 prompt へ fail-open。
   const personalMemory = (
-    await loadPersonalMemorySectionsForPrompt('company_research_review')
+    await loadPersonalMemorySectionsForPrompt(
+      'company_research_review',
+      readSourceSyncSignal(req),
+    )
   ).sections;
   // P3-C: base system prompt を Context Orchestrator（purpose=company_research_review）経由で取得する。
   //   委譲のため出力は現行と同一。添削対象の verifiedResearchText 等は user メッセージ側で不変。

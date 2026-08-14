@@ -375,10 +375,18 @@ function isolationChecks(): void {
   // production consumer（新 module 自身 + P17-E composition/shadow 層は除外）。
   //   P17-E の server composition（careerAggregate/server/*）・shadow dispatcher/evidence は、
   //   scaffold を組み立てる sanctioned な server-only 統合層であり production consumer ではない。
+  // NEXT-7: consent capture gate は readiness register を **閉じるために** 読む sanctioned gate 層。
+  //   scaffold の「データを消費する production consumer」ではないため除外する。
+  //   代わりに G4b で「readiness/config 以外の Data Spine scaffold を触っていない」ことを実証する。
+  const CONSENT_GATE_FILES = [
+    join(ROOT, 'lib/careerConsent/captureGate.ts'),
+    join(ROOT, 'lib/careerConsent/captureGate.server.ts'),
+  ];
   const isNewModuleFile = (f: string) =>
     f.includes('/careerDataSpineDb/') || f.includes('/careerDataSpinePolicy/') ||
     f.includes('/careerDataSpineGate/') || f.includes('/careerContextLoaders/server/') ||
     f.includes('/careerAggregate/server/') ||
+    CONSENT_GATE_FILES.includes(f) ||
     f.endsWith('/careerAggregate/shadowDispatcher.server.ts') ||
     f.endsWith('/careerAggregate/shadowEvidence.ts') ||
     f.endsWith('/careerAggregate/syntheticShadowReadRepository.ts') ||
@@ -396,6 +404,32 @@ function isolationChecks(): void {
   check('G2 app/api/ から import 0', apiFiles.filter((f) => importsNew(readFileSync(f, 'utf8'))).length === 0);
   check('G3 production prompt から import 0', promptFiles.filter((f) => importsNew(readFileSync(f, 'utf8'))).length === 0);
   check('G4 production consumer 全体で import 0', consumerFiles.filter((f) => importsNew(readFileSync(f, 'utf8'))).length === 0);
+
+  // G4b: 除外した consent gate が「readiness を読むだけ」であることを実証する（除外の正当性検証）。
+  //   DB client / repository / loader / aggregate pipeline へは触らせない。
+  {
+    const forbiddenForGate = [
+      'careerDataSpineDb',
+      'careerDataSpineGate',
+      'careerContextLoaders',
+      'careerAggregate',
+      'careerCompanyKnowledge',
+      'supabaseReadRepository',
+      'supabaseBatchRepository',
+    ];
+    const offenders: string[] = [];
+    for (const f of CONSENT_GATE_FILES) {
+      if (!existsSync(f)) { offenders.push(`${f}:missing`); continue; }
+      const src = readFileSync(f, 'utf8');
+      for (const m of forbiddenForGate) {
+        if (new RegExp(`from\\s+['"][^'"]*${m}[^'"]*['"]`).test(src)) offenders.push(`${f}:${m}`);
+      }
+      if (!/careerDataSpinePolicy\/(readiness|config\.server)/.test(src)) {
+        offenders.push(`${f}:readiness-import-missing`);
+      }
+    }
+    check('G4b consent gate は readiness のみ参照（scaffold データ経路に触れない）', offenders.length === 0, offenders.join(','));
+  }
 
   const orch = readFileSync(join(ROOT, 'lib/careerContext/orchestrator.ts'), 'utf8');
   check('G5 orchestrator 未変更（新 scaffold 非 import）', !NEW_MODULES.some((m) => orch.includes(m)));

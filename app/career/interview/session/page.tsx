@@ -33,6 +33,8 @@ import type {
   CareerInterviewSession,
   CareerInterviewResult,
 } from '@/types/careerInterview';
+import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
+import { BASE_CONTEXT_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -152,7 +154,10 @@ export default function CareerInterviewSessionPage() {
     try {
       const res = await fetch('/api/career/interview/turn', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withSourceSyncHeader(
+          { 'Content-Type': 'application/json' },
+          BASE_CONTEXT_SYNC_KINDS,
+        ),
         body: JSON.stringify({
           ...ctx,
           interviewType: session.interviewType,
@@ -213,7 +218,10 @@ export default function CareerInterviewSessionPage() {
     try {
       const res = await fetch('/api/career/interview/complete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withSourceSyncHeader(
+          { 'Content-Type': 'application/json' },
+          BASE_CONTEXT_SYNC_KINDS,
+        ),
         body: JSON.stringify({
           ...ctx,
           interviewType: session.interviewType,

@@ -11,24 +11,15 @@
 
 import { devWarn } from "@/lib/devLog";
 import { getBrowserSupabaseClient } from "./browserClient";
-import type {
-  CareerEsLog,
-  CareerEsResult,
-  CareerEsSelectionType,
-} from "@/types/careerEs";
+import type { CareerEsLog } from "@/types/careerEs";
+// row→domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
+import {
+  CAREER_ES_SELECT_COLUMNS,
+  rowToCareerEsLog,
+  type CareerEsLogRow,
+} from "@/lib/careerSourceData/rowMappers";
 
 const TABLE = "career_es_logs";
-
-type EsLogRow = {
-  client_id: string;
-  user_input: unknown;
-  result: unknown;
-  edited_result: unknown | null;
-  favorite: boolean;
-  submitted: boolean;
-  meta: unknown;
-  created_at: string;
-};
 
 // CareerEsLog のメタ情報（昇格カラム以外）を meta jsonb にまとめる。
 function toMeta(log: CareerEsLog): Record<string, unknown> {
@@ -90,44 +81,14 @@ export async function listCareerEsLogsFromSupabase(userId: string): Promise<Care
   try {
     const { data, error } = await supabase
       .from(TABLE)
-      .select("client_id, user_input, result, edited_result, favorite, submitted, meta, created_at")
+      .select(CAREER_ES_SELECT_COLUMNS)
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error) {
       devWarn("[careerEs] list error", error);
       return [];
     }
-    return ((data ?? []) as EsLogRow[]).map((row) => {
-      const meta = (row.meta && typeof row.meta === "object" ? row.meta : {}) as Record<
-        string,
-        unknown
-      >;
-      const log: CareerEsLog = {
-        id: row.client_id,
-        createdAt: row.created_at,
-        userInput: typeof row.user_input === "string" ? row.user_input : "",
-        result: (row.result ?? {}) as CareerEsResult,
-        favorite: row.favorite,
-        submitted: row.submitted,
-      };
-      if (row.edited_result) log.editedResult = row.edited_result as CareerEsResult;
-      if (typeof meta.companyName === "string") log.companyName = meta.companyName;
-      if (typeof meta.question === "string") log.question = meta.question;
-      if (typeof meta.charLimit === "number") log.charLimit = meta.charLimit;
-      if (typeof meta.selectionType === "string")
-        log.selectionType = meta.selectionType as CareerEsSelectionType;
-      if (typeof meta.industry === "string") log.industry = meta.industry;
-      if (typeof meta.jobType === "string") log.jobType = meta.jobType;
-      if (typeof meta.sourceLogId === "string") log.sourceLogId = meta.sourceLogId;
-      if (meta.sourceType === "generated" || meta.sourceType === "review_rewrite")
-        log.sourceType = meta.sourceType;
-      if (typeof meta.companyResearchLogId === "string")
-        log.companyResearchLogId = meta.companyResearchLogId;
-      if (meta.companyResearchSnapshot && typeof meta.companyResearchSnapshot === "object")
-        log.companyResearchSnapshot =
-          meta.companyResearchSnapshot as CareerEsLog["companyResearchSnapshot"];
-      return log;
-    });
+    return ((data ?? []) as CareerEsLogRow[]).map(rowToCareerEsLog);
   } catch (err) {
     devWarn("[careerEs] list threw", err);
     return [];

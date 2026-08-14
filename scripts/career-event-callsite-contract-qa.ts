@@ -24,8 +24,8 @@
  * 終了コード: 全 assertion PASS → 0 / いずれか FAIL → 1。
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { CAREER_EVENT_FEATURES, CAREER_EVENT_TYPES } from '@/types/careerEvents';
 
 let failures = 0;
@@ -38,17 +38,30 @@ function check(name: string, cond: boolean, detail?: string): void {
   }
 }
 
-// 9 call site の manifest（label / 相対パス / 期待 feature / 期待 eventType）。
+// call site の manifest（label / 相対パス / 期待 feature / 期待 eventType）。
+//
+// ★ NEXT-1（Data Spine 2026-08-14）: ESトレーニング再設計で `app/career/es/run/page.tsx` が廃止され、
+//   ES は new（起票）/ draft（初回添削）/ [id]（再添削）の 3 call site へ分割された。自己分析は
+//   `run/page.tsx` から `finalizeSummary.ts`（完了時の canonical 保存点）へ移動した。
+//   manifest を現構造へ追随させる（assertion は削っていない。むしろ [6] で「manifest 網羅性」を追加した）。
 const CALL_SITES = [
   { label: 'matching', file: 'app/career/matching/page.tsx', feature: 'matching', eventType: 'matching_run' },
   { label: 'consultation', file: 'app/career/consultation/page.tsx', feature: 'consultation', eventType: 'consultation_asked' },
   { label: 'interview', file: 'app/career/interview/session/page.tsx', feature: 'interview', eventType: 'feature_completed' },
-  { label: 'es', file: 'app/career/es/run/page.tsx', feature: 'es', eventType: 'ai_generated' },
+  { label: 'es_new', file: 'app/career/es/new/page.tsx', feature: 'es', eventType: 'feature_started' },
+  { label: 'es_draft_review', file: 'app/career/es/draft/[draftId]/page.tsx', feature: 'es', eventType: 'ai_generated' },
+  { label: 'es_log_review', file: 'app/career/es/[id]/page.tsx', feature: 'es', eventType: 'ai_generated' },
   { label: 'presentation', file: 'app/career/presentation/session/page.tsx', feature: 'presentation', eventType: 'feature_completed' },
   { label: 'company_research', file: 'app/career/company-research/do/page.tsx', feature: 'company_research', eventType: 'company_researched' },
-  { label: 'self_analysis', file: 'app/career/self-analysis/run/page.tsx', feature: 'self_analysis', eventType: 'ai_generated' },
+  { label: 'self_analysis', file: 'app/career/self-analysis/finalizeSummary.ts', feature: 'self_analysis', eventType: 'ai_generated' },
   { label: 'gd_solo', file: 'app/career/gd/session/page.tsx', feature: 'gd', eventType: 'feature_completed' },
   { label: 'gd_room', file: 'app/career/gd/room/[roomId]/page.tsx', feature: 'gd', eventType: 'feature_completed' },
+] as const;
+
+// 主要 8 機能（feature 単位の網羅性。call site 数は feature ごとに 1 とは限らない）。
+const EXPECTED_FEATURES = [
+  'matching', 'consultation', 'interview', 'es', 'presentation',
+  'company_research', 'self_analysis', 'gd',
 ] as const;
 
 // recordCareerEvent 引数へ現れてはならない本文 / PII の object key（`key:` 形で検査）。
@@ -125,8 +138,42 @@ console.log('[5] enum 部分集合');
   for (const t of foundEventTypes) {
     check(`eventType "${t}" ⊆ CAREER_EVENT_TYPES`, (CAREER_EVENT_TYPES as readonly string[]).includes(t));
   }
-  check('主要 8 機能 + GD 2 経路 = 9 call site を検査', CALL_SITES.length === 9);
+  for (const f of EXPECTED_FEATURES) {
+    check(`主要機能 "${f}" の call site が manifest にある`, CALL_SITES.some((c) => c.feature === f));
+  }
   check('GD は solo/room の 2 経路が feature=gd で存在', CALL_SITES.filter((c) => c.feature === 'gd').length === 2);
+  check('ES は new/draft/[id] の 3 経路が feature=es で存在', CALL_SITES.filter((c) => c.feature === 'es').length === 3);
+}
+
+// ── 6. manifest 網羅性（stale manifest の再発防止） ─────────────────
+//   app/ 配下で recordCareerEvent( を呼ぶ実 call site 集合と manifest が **完全一致** すること。
+//   これにより「機能が移動して manifest が古くなる」（NEXT-1 の原因）が次回は自動検知される。
+console.log('[6] manifest 網羅性（実 call site 集合 === manifest）');
+{
+  const APP_DIR = join(process.cwd(), 'app');
+  const actual = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.next') continue;
+        walk(abs);
+        continue;
+      }
+      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      const src = readFileSync(abs, 'utf8');
+      // import 行ではなく実呼び出しのみ（`recordCareerEvent(`）。
+      if (/(?:^|[^.\w])recordCareerEvent\s*\(/m.test(src)) {
+        actual.add(relative(process.cwd(), abs).split(sep).join('/'));
+      }
+    }
+  };
+  walk(APP_DIR);
+  const declared = new Set<string>(CALL_SITES.map((c) => c.file));
+  const missing = [...actual].filter((f) => !declared.has(f)).sort();
+  const stale = [...declared].filter((f) => !actual.has(f)).sort();
+  check('manifest 未登録の call site が無い', missing.length === 0, missing.join(','));
+  check('manifest に存在しない / event を送らない stale entry が無い', stale.length === 0, stale.join(','));
 }
 
 console.log('');

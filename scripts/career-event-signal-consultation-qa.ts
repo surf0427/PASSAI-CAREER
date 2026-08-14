@@ -215,7 +215,8 @@ void (async () => {
     // 他の career API route に renderer / eventSignals が混入していないこと。
     const otherRoutes = [
       'app/api/career/matching/route.ts',
-      'app/api/career/es/route.ts',
+      'app/api/career/es/deep/route.ts',
+      'app/api/career/es/organize/route.ts',
       'app/api/career/es-review/route.ts',
       'app/api/career/interview/complete/route.ts',
       'app/api/career/interview/turn/route.ts',
@@ -231,7 +232,7 @@ void (async () => {
     // loader の production call site は consultation page のみ。
     const consultPage = readFileSync(join(root, 'app/career/consultation/page.tsx'), 'utf8');
     check('consultation page が loader を呼ぶ', /loadCareerEventSignalSummary/.test(consultPage));
-    for (const rel of ['app/career/matching/page.tsx', 'app/career/es/run/page.tsx', 'app/career/interview/session/page.tsx']) {
+    for (const rel of ['app/career/matching/page.tsx', 'app/career/es/new/page.tsx', 'app/career/es/draft/[draftId]/page.tsx', 'app/career/es/[id]/page.tsx', 'app/career/interview/session/page.tsx']) {
       const src = readFileSync(join(root, rel), 'utf8');
       check(`${rel} は loader を呼ばない`, !/loadCareerEventSignalSummary/.test(src));
     }

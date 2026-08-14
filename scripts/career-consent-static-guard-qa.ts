@@ -20,7 +20,7 @@
  */
 
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { DEFAULT_CONSENT_MANIFEST } from '@/lib/careerConsent/policy';
 
 let failures = 0;
@@ -94,11 +94,36 @@ console.log('[3] domain boundary: matching → careerConsent import なし');
   check('matching が careerConsent を import しない', offenders.length === 0, offenders.join(','));
 }
 
-console.log('[4] production consumer 未接続');
+console.log('[4] production consumer は gated capture surface に限る');
 {
+  // ★ NEXT-7 で契約を更新（弱体化ではない）:
+  //   consent capture surface（/api/career/consent）だけが careerConsent を import してよい。
+  //   それ以外の app ファイルからの import は従来どおり禁止（AI route / matching / 機能画面へ
+  //   consent を持ち込ませない）。さらに許可した 1 ファイルには **fail-closed の実体検査**を課す。
+  const ALLOWED_APP_IMPORTERS: readonly string[] = ['app/api/career/consent/route.ts'];
   const appFiles = ['app/career', 'app/api'].map((d) => join(ROOT, d)).flatMap(walk);
-  const offenders = appFiles.filter((f) => /from\s+['"][^'"]*careerConsent[^'"]*['"]/.test(readFileSync(f, 'utf8')));
-  check('production consumer（app）が careerConsent を import しない', offenders.length === 0, offenders.join(','));
+  const importers = appFiles.filter((f) =>
+    /from\s+['"][^'"]*careerConsent[^'"]*['"]/.test(readFileSync(f, 'utf8')),
+  );
+  const rel = (f: string) => f.slice(ROOT.length + 1).split(sep).join('/');
+  const offenders = importers.map(rel).filter((f) => !ALLOWED_APP_IMPORTERS.includes(f));
+  check(
+    'gated capture surface 以外の app ファイルが careerConsent を import しない',
+    offenders.length === 0,
+    offenders.join(','),
+  );
+
+  // 許可した surface の fail-closed 実体（gate 評価・production repository 未接続・service role 不使用）。
+  const routePath = join(ROOT, 'app/api/career/consent/route.ts');
+  if (existsSync(routePath)) {
+    const src = readFileSync(routePath, 'utf8');
+    check('capture surface が gate を評価する', /loadConsentCaptureGate\(\)/.test(src));
+    check('capture surface は gate 閉時に何も書かない', /if\s*\(!gate\.enabled\)\s*return\s+disabledResponse/.test(src));
+    check('capture surface の production repository は未接続', /repository:\s*null/.test(src));
+    check('capture surface が service role を使わない', !/serviceRole|SERVICE_ROLE/.test(src));
+  } else {
+    check('capture surface が存在する', false, 'app/api/career/consent/route.ts が無い');
+  }
 }
 
 console.log('[5] Layer 5 分離');

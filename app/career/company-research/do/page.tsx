@@ -46,6 +46,8 @@ import {
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerCompanyResearchLogsToSupabase } from '@/lib/supabase/careerCompanyResearch';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
+import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
+import { PERSONAL_MEMORY_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
 import type { BasicInfo } from '@/types/basicInfo';
 import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
@@ -273,7 +275,12 @@ function CompanyResearchDoInner() {
     try {
       const res = await fetch('/api/career/company-research', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // D-R2: Personal Memory を server 側で使ってよいかの証明（canonical revision token のみ）。
+        //   生データは送らない。未送信・不一致なら server は Memory を使わない（安全側）。
+        headers: withSourceSyncHeader(
+          { 'Content-Type': 'application/json' },
+          PERSONAL_MEMORY_SYNC_KINDS,
+        ),
         body: JSON.stringify({
           companyName: companyName.trim(),
           industry: industry.trim(),

@@ -27,6 +27,8 @@ import {
   buildInterviewBaseSystem,
   buildSeedUserPrompt,
 } from '../interviewPrompt';
+// NEXT-6: base context（profile/activity/values）の由来解決。flag OFF なら request body のまま（byte 互換）。
+import { resolveInterviewBaseInputs } from '../resolveBaseInputs';
 
 export const maxDuration = 80;
 
@@ -60,8 +62,10 @@ export async function POST(req: Request) {
     userInput?: string;
   };
 
-  const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
-  const hasActivity = !!b.activity && Object.keys(b.activity).length > 0;
+  // NEXT-6: flag OFF（既定）では request body をそのまま返す＝従来と完全に同じ入力・同じ検証。
+  const base = await resolveInterviewBaseInputs(b, req);
+  const hasProfile = !!base.profile && Object.keys(base.profile).length > 0;
+  const hasActivity = !!base.activity && Object.keys(base.activity).length > 0;
   if (!hasProfile && !hasActivity) {
     return Response.json(
       { error: '基本情報または活動整理のいずれかを入力してください。' },
@@ -73,9 +77,9 @@ export async function POST(req: Request) {
   // target は seed（初回質問の operative 指示）と system の両方で使うため一度だけ正規化する。
   const target = normalizeInterviewTarget(b.target);
   const system = buildInterviewBaseSystem({
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    values: b.values ?? null,
+    profile: base.profile,
+    activity: base.activity,
+    values: base.values,
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
     matching: b.matching ?? null,

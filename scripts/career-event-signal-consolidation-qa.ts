@@ -227,7 +227,7 @@ void (async () => {
   console.log('[8] non-consumer isolation (consultation only)');
   {
     const otherRoutes = [
-      'app/api/career/matching/route.ts', 'app/api/career/es/route.ts', 'app/api/career/es-review/route.ts',
+      'app/api/career/matching/route.ts', 'app/api/career/es/deep/route.ts', 'app/api/career/es/organize/route.ts', 'app/api/career/es-review/route.ts',
       'app/api/career/interview/complete/route.ts', 'app/api/career/interview/turn/route.ts',
       'app/api/career/presentation/evaluate/route.ts', 'app/api/career/gd/feedback/route.ts',
       'app/api/career/self-analysis/route.ts', 'app/api/career/company-research/route.ts',
@@ -235,7 +235,7 @@ void (async () => {
     const sigRe = /eventSignalPilotGuard|resolveConsultationEventSignalsBlock|renderCareerEventSignalsCompact|loadCareerEventSignalSummary|eventSignals/;
     for (const rel of otherRoutes) check(`${rel} に signals/guard 非混入`, !sigRe.test(read(rel)));
     const pages = [
-      'app/career/matching/page.tsx', 'app/career/es/run/page.tsx', 'app/career/interview/session/page.tsx',
+      'app/career/matching/page.tsx', 'app/career/es/new/page.tsx', 'app/career/es/draft/[draftId]/page.tsx', 'app/career/es/[id]/page.tsx', 'app/career/interview/session/page.tsx',
       'app/career/presentation/session/page.tsx', 'app/career/gd/session/page.tsx', 'app/career/self-analysis/run/page.tsx',
     ];
     for (const rel of pages) check(`${rel} に guard/loader 非混入`, !/eventSignalPilotGuard|loadCareerEventSignalSummary/.test(read(rel)));

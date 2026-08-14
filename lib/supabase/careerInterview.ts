@@ -13,7 +13,6 @@
 import { devWarn } from "@/lib/devLog";
 import { getBrowserSupabaseClient } from "./browserClient";
 import type {
-  CareerInterviewFinalResult,
   CareerInterviewMode,
   CareerInterviewResult,
   CareerInterviewSession,
@@ -21,6 +20,12 @@ import type {
   CareerInterviewType,
 } from "@/types/careerInterview";
 import type { CompanyResearchSnapshot } from "@/types/careerCompanyResearch";
+// 結果履歴の row→domain 変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
+import {
+  CAREER_INTERVIEW_RESULT_SELECT_COLUMNS,
+  rowToCareerInterviewResult,
+  type CareerInterviewResultRow,
+} from "@/lib/careerSourceData/rowMappers";
 
 // jsonb 列に保存した企業研究スナップショットを防御的に取り出す。
 function snapshotOf(value: unknown): CompanyResearchSnapshot | undefined {
@@ -128,17 +133,6 @@ export async function listCareerInterviewSessionsFromSupabase(
 
 // ── 最終評価結果 ─────────────────────────────────────────────────────
 
-type InterviewResultRow = {
-  client_id: string;
-  mode: string;
-  interview_type: string;
-  turns: unknown;
-  result: unknown;
-  company_research_log_id: string | null;
-  company_research_snapshot: unknown;
-  created_at: string;
-};
-
 /** 面接の最終評価結果を upsert（1 件保存・backfill 兼用 / best-effort）。 */
 export async function upsertCareerInterviewResultsToSupabase(
   userId: string,
@@ -181,31 +175,14 @@ export async function listCareerInterviewResultsFromSupabase(
   try {
     const { data, error } = await supabase
       .from(RESULTS_TABLE)
-      .select(
-        "client_id, mode, interview_type, turns, result, company_research_log_id, company_research_snapshot, created_at",
-      )
+      .select(CAREER_INTERVIEW_RESULT_SELECT_COLUMNS)
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error) {
       devWarn("[careerInterview] results list error", error);
       return [];
     }
-    return ((data ?? []) as InterviewResultRow[]).map((row) => {
-      const result: CareerInterviewResult = {
-        id: row.client_id,
-        createdAt: row.created_at,
-        mode: row.mode as CareerInterviewMode,
-        interviewType: row.interview_type as CareerInterviewType,
-        turns: turnsOf(row.turns),
-        result: (row.result ?? {}) as CareerInterviewFinalResult,
-      };
-      if (typeof row.company_research_log_id === "string") {
-        result.companyResearchLogId = row.company_research_log_id;
-      }
-      const snap = snapshotOf(row.company_research_snapshot);
-      if (snap) result.companyResearchSnapshot = snap;
-      return result;
-    });
+    return ((data ?? []) as CareerInterviewResultRow[]).map(rowToCareerInterviewResult);
   } catch (err) {
     devWarn("[careerInterview] results list threw", err);
     return [];

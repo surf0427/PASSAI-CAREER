@@ -41,6 +41,8 @@ import {
   CAREER_COMPANY_INTEREST_LABELS,
   type CareerCompanyResearchLog,
 } from '@/types/careerCompanyResearch';
+import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
+import { BASE_CONTEXT_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
 
 // 回答ターン上限（サーバ CAREER_INTERVIEW_MAX_TURNS=5 と一致。進行バー表示に使う）。
 const MAX_TURNS = 5;
@@ -112,7 +114,11 @@ export default function CareerInterviewSetupPage() {
     try {
       const res = await fetch('/api/career/interview/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // D-R2: base context を server Source から出してよいかの証明（revision token のみ・生データ非送信）。
+        headers: withSourceSyncHeader(
+          { 'Content-Type': 'application/json' },
+          BASE_CONTEXT_SYNC_KINDS,
+        ),
         body: JSON.stringify({ ...payload, interviewType, target }),
       });
       if (!res.ok) {
