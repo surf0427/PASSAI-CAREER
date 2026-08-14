@@ -367,31 +367,69 @@ policy_not_ready, user_not_canary, …]` となり、決して有効化されな
 空 allowlist の全許可 / 法務未設定の approved 化 / moderation module の存在だけ、
 これらはいずれも activation の根拠として認めない。
 
-## 5.3.6 ★ residual boundary（隠さない）
+## 5.3.6 ~~residual boundary~~ → **解決済み**（`D-R1` / 2026-08-14）
 
-**member request path から service-role read port へ到達しうる経路が 1 本ある。**
+Closure Batch では以下を residual boundary として記録していた:
 
 ```text
 app/api/career/consultation/route.ts（member request）
-  → dispatchAggregatedInsightConsultationShadow（fire-and-forget）
-    → runAggregatedInsightConsultationShadow
+  → dispatchAggregatedInsightConsultationShadow
+    → createAggregatedInsightRuntime.server
       → getSharedServiceRoleReadPort   ← service role
 ```
 
-現在の制限（QA `CI-extra service-role boundary` が固定）:
+**Decision Resolution Batch で構造的に解消した。**
 
-- master flag / consumer flag が **両方 OFF**（既定）なら runtime に入らず I/O ゼロ
-- `synthetic-only` の既定が **安全側の true**（real 化には明示 `false` が必要）
-- real mode は privileged client 生成 **前**に `real_mode_blocked` へ倒れる
-- read port は raw client を上位へ出さない
-- prompt / response には一切触れない（shadow）
+| | 変更前 | 変更後 |
+|---|---|---|
+| member path | shadow runtime（privileged port を import） | `server/memberGateProbe.server.ts`（**privileged 非 import / DB read ゼロ**） |
+| privileged path | 同上（route から到達可能） | `batch/aggregatedInsightPrivilegedShadow.batch.ts`（**route から到達不能**） |
 
-**それでも、これは Human 指示 §31 の「member-request path で service role を使わない」に
-厳密には反する残存境界である。** real-mode activation の **前に** この shadow 経路を
-member request path から外し、backoffice job へ移す必要がある（→ H-L8 の必須項目に含めた）。
+検証（QA `HDR-1` / `HDR-2` が **推移的 import graph** を実測）:
 
-Personal Optimization 経路（`careerSourceData` / `careerServerContext` /
-`careerMemory/persistence`）と Layer 5 は service role を **一切使わない**（QA が固定）。
+```text
+app/ 配下 363 ファイル → sharedServiceRolePorts への到達経路: 0
+app/ 配下 363 ファイル → *.batch.ts への到達経路:            0
+```
+
+member path が行う I/O は **auth 解決のみ**（canary 判定用）。DB read は一切ない。
+返り値の型 `MemberGateProbeResult` は `performedRead: false` / `privilegedAccess: false` を
+**型として**持ち、契約が構造的に固定されている。
+
+## 5.3.7 Layer 5 identity strategy = **I2**（`D-R2`）
+
+`contributor が opaque key のままでは owner-scoped RLS を張れない` という blocker を解決した。
+
+| 案 | 判定 |
+|---|---|
+| I1 contribution row が直接 `auth.uid()` を持つ | ❌ contribution table が「誰が何を投稿したか」の台帳になる |
+| **I2 subject 対応表（`auth.uid()` ↔ opaque key）** | ★ **採用** |
+| I3 完全 anonymous | ❌ 撤回・削除・本人確認が原理的に不可能 |
+
+I2 の利点:
+- contribution 本体に識別子が入らないまま owner RLS を張れる（対応表越しの subquery）
+- **subject を unlink すると contribution は再識別不能になる**（強い削除手段）
+- `revoked → future contributions blocked` を構造的に保証できる（unlink 後は opaque key を解決できない）
+
+純粋ロジックは `lib/careerCompanyKnowledge/contributorIdentity.ts` に実装済み。
+DDL は `supabase/prototype/collective_intelligence_activation_draft.sql` に draft（**未適用**）。
+
+## 5.3.8 ETL / batch infrastructure（`D-R3`）
+
+`lib/careerAggregate/batch/batchRunner.ts` に **provider-neutral** runner を実装した。
+特定 cloud SDK を import せず、I/O はすべて injected port（`BatchPorts`）。
+
+| 要件 | 実装 |
+|---|---|
+| idempotency | `runKey = (metric, version, window)`。succeeded なら再実行を skip |
+| retry safety | 失敗しても cursor を進めず、同じ window を再試行できる |
+| cursor / checkpoint | window 単位。中断しても続きから |
+| dry-run | 書き込みゼロで「実行されるか」だけ返す |
+| failure state | 失敗を enum で記録（握り潰さない） |
+| rebuild | invalidation 由来を通常実行と同じ経路で処理 |
+
+**保証しないこと（誇張しない）:** 分散ロック（排他は port 実装＝DB の UNIQUE / advisory lock の責務）、
+scheduling（cron の時刻・再試行間隔は provider 側）。
 
 ---
 

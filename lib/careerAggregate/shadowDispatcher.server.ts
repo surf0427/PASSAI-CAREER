@@ -1,11 +1,19 @@
 /**
- * Aggregated Insight — consultation shadow dispatcher（P17-E §7-8・server-only）。
+ * Aggregated Insight — consultation gate probe dispatcher（server-only）。
  *
  * consultation route から `void dispatchAggregatedInsightConsultationShadow()` で fire-and-forget
  * 呼び出しされる。**prompt / response には一切触れない**。never-throw・短 timeout。
  *
- * flag OFF（default）では runtime に入る前に return（DB query 0）。
- * gate 通過時のみ synthetic shadow を実行し、safe evidence を構造化ログへ出す（raw / secret を出さない）。
+ * ★ Decision Resolution Batch（`D-R1`）で **privileged read を切り離した**:
+ *   以前はここから `createAggregatedInsightRuntime.server` 経由で service-role read port へ
+ *   到達しうる import graph があった（synthetic-only + real-mode block で囲ってはいたが、
+ *   member request path に privileged 到達性がある状態だった）。
+ *
+ *   現在:
+ *     member path  → `memberGateProbe.server`（**privileged port を import しない / DB read ゼロ**）
+ *     batch path   → `batch/aggregatedInsightPrivilegedShadow.batch`（別 entrypoint・route から不可達）
+ *
+ *   QA `HDR-1` が app/ から `sharedServiceRolePorts` への **推移的到達性ゼロ**を固定する。
  */
 
 import 'server-only';
@@ -14,8 +22,10 @@ import {
   isAggregatedInsightReadEnabled,
   isAggregatedInsightConsultationEnabled,
 } from '@/lib/careerDataSpineGate/flags.server';
-import { runAggregatedInsightConsultationShadow } from './server/createAggregatedInsightRuntime.server';
-import { isShadowEvidenceSafe } from './shadowEvidence';
+import {
+  probeAggregatedInsightGates,
+  type MemberGateProbeResult,
+} from './server/memberGateProbe.server';
 
 /** shadow の最大許容時間（本処理と独立・超過で打ち切り）。 */
 const SHADOW_TIMEOUT_MS = 800;
@@ -57,15 +67,14 @@ export async function dispatchAggregatedInsightConsultationShadow(input: {
     // flag OFF（default）なら runtime に入らず即 return（DB query 0・I/O 0）。
     if (!isAggregatedInsightReadEnabled() || !isAggregatedInsightConsultationEnabled()) return;
 
-    const evidence = await withTimeout(
-      runAggregatedInsightConsultationShadow({ runId: input.runId, timestamp: input.timestamp }),
+    const probe: MemberGateProbeResult | null = await withTimeout(
+      probeAggregatedInsightGates({ runId: input.runId, timestamp: input.timestamp }),
       SHADOW_TIMEOUT_MS,
       null,
     );
-    if (evidence && isShadowEvidenceSafe(evidence)) {
-      // safe metadata のみ（raw artifact / uid / secret を含まない）。operator が Phase 13 で収集。
-      console.info('[data-spine-shadow]', JSON.stringify(evidence));
-    }
+    // gate 判定（enum + boolean のみ）。artifact / uid / secret は構造的に含まれない
+    //   （`MemberGateProbeResult` にそれらの field が存在しない）。
+    if (probe) console.info('[data-spine-gate-probe]', JSON.stringify(probe));
   } catch {
     // never-throw: shadow の失敗で consultation 本処理を失敗させない。
   }

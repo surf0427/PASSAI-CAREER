@@ -1,5 +1,25 @@
 /**
- * Aggregated Insight — production composition root（P17-E §5 / P17-E2・server-only）。
+ * Aggregated Insight — **privileged（service-role）composition root**。
+ *
+ * ★ Decision Resolution Batch（`D-R1`）で `lib/careerAggregate/server/` から
+ *   `lib/careerAggregate/batch/` へ移設した。理由:
+ *
+ *   移設前は consultation route（member request）から import graph を辿ると
+ *   この module 経由で service-role read port へ到達できた。
+ *   synthetic-only 固定で囲ってはいたが、**member request path に privileged 到達性がある**
+ *   という構造そのものが Human 指示 §31 の境界に反していた。
+ *
+ *   現在の分離:
+ *     member request → `../server/memberGateProbe.server`（privileged 非 import / DB read ゼロ）
+ *     offline batch  → 本 module（`*.batch.ts`。route から import されない）
+ *
+ *   ★ `.batch.ts` という命名は規約であり、QA `HDR-2` が
+ *     「app/ 配下のどのファイルからも `.batch.ts` へ到達しない」ことを推移的に固定する。
+ *
+ * 呼び出し方（現在 production entrypoint は無い・意図的）:
+ *   operator が offline script / 将来の admin batch runner から明示的に呼ぶ。
+ *
+ * 以下は移設前と同じ（P17-E §5 / P17-E2・server-only）:
  *
  * gate を **privileged client 生成の前** に評価する。順序（P17-E2 §4）:
  *   1 master flag → 2 synthetic-only flag → 3 synthetic readiness → 4 consumer flag →
@@ -27,8 +47,8 @@ import {
 import { evaluateCanary, type CanaryDecision } from '@/lib/careerDataSpineGate/canary';
 import { getServerReadinessConfig } from '@/lib/careerDataSpinePolicy/config.server';
 import { isSyntheticReadyForShadow } from '@/lib/careerDataSpinePolicy/syntheticReadiness';
-import { composeAggregatedInsightShadow } from './aggregatedInsightShadowCore';
-import type { ResolvePrivilegedRead, SharedAuthUserId, SyntheticShadowReadFn } from './runtimeTypes';
+import { composeAggregatedInsightShadow } from '../server/aggregatedInsightShadowCore';
+import type { ResolvePrivilegedRead, SharedAuthUserId, SyntheticShadowReadFn } from '../server/runtimeTypes';
 import type { ShadowEvidence } from '@/lib/careerAggregate/shadowEvidence';
 
 const INELIGIBLE: CanaryDecision = { eligible: false, reason: 'invalid_user' };

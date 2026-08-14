@@ -1,5 +1,12 @@
 # PASSAI CAREER — Collective Intelligence Decision Packet
 
+> ⚠ **この文書は Closure Batch 時点の版です。**
+> Decision Resolution Batch（`D-R1`〜`D-R3`）で H-L8 の technical 部分が解決したため、
+> **最新の決裁票は `COLLECTIVE_INTELLIGENCE_RECOMMENDED_DECISIONS.md`** を参照してください。
+> そちらには各 decision の **Claude 推奨案**が付いており、YES / NO で処理できます。
+>
+> 本文書は「何が論点か」の詳細な背景として保持します（推奨案は含みません）。
+
 **目的:** Layer 4 / Layer 5 を有効化する前に **Human が答える必要がある項目だけ**を、
 選択肢付きで一覧にする。議論の材料ではなく **決裁票**。
 
@@ -198,15 +205,17 @@ Code default until decision: FAIL CLOSED（legalApproved=false → 全 layer act
 | moderation backend | 審査 UI / queue |
 | retention sweep | service-role batch（member path から分離） |
 
-**★ real-mode activation の前に必須（`D-C7` / STATE §5.3.6）:**
+**~~real-mode activation の前に必須~~ → 解決済み（`D-R1`）:**
 
 ```text
-consultation route → shadow dispatcher → service-role read port
-という member-request 経路を backoffice job へ移す。
+member path  → server/memberGateProbe.server（privileged 非 import / DB read ゼロ）
+batch path   → batch/*.batch.ts（route から到達不能）
 ```
 
-現在は synthetic-only 固定 + real mode ブロックで囲ってあるが、
-real mode を開けるならこの経路の分離が **前提条件**。
+QA `HDR-1` / `HDR-2` が推移的 import graph で到達性ゼロを固定した。**Human 判断は不要。**
+
+**~~identity strategy~~ → 解決済み（`D-R2`）:** I2（subject 対応表）を採用。
+**~~ETL 基盤~~ → 解決済み（`D-R3`）:** provider-neutral runner を実装。
 
 ```text
 Code default until decision: FAIL CLOSED（infrastructureReady=false）

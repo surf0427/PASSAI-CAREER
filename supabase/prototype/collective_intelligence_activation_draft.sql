@@ -90,21 +90,69 @@
 --     (b) 一般 member が shared knowledge を読む  → **published のみ・contributor 非開示**
 --   この 2 つを同じ policy / 同じ view で扱わない。
 
--- 2.1 (a) contributor 本人の寄与（owner-scoped）。
---   ⚠ 現在の contribution table は contributor を opaque key で持つ設計
---     （型に auth user id が存在しない）。owner RLS を張るには
---     `contributor_user_id uuid` 列 + `auth.uid() = contributor_user_id` が必要。
---     ★ これは **identity strategy の Human decision（H-L8 / readiness key `identity_strategy`）**。
---     opaque key のまま owner RLS を張ることはできない（照合できない）ため、
---     activation 時に方式を決める必要がある。
--- ALTER TABLE career_company_knowledge_contributions
---   ADD COLUMN IF NOT EXISTS contributor_user_id uuid;  -- ★ 方式未確定
+-- 2.1 (a) contributor 本人の寄与（owner-scoped）— **identity strategy: I2 を採用**（`D-R2`）。
+--
+--   検討した 3 案:
+--     I1 contribution row が直接 auth.uid() を持つ
+--        → owner RLS は最も単純だが、contribution table 自体が
+--          「誰が何を投稿したか」の台帳になる（漏洩面が広い）。
+--     I2 別テーブルで auth.uid() ↔ opaque contributor id を対応させる ★採用
+--        → contribution 本体に識別子が入らないまま owner RLS を張れる。
+--          対応表を unlink すれば contribution は **再識別不能**になる（強い削除手段）。
+--     I3 完全 anonymous（対応表なし）
+--        → 撤回・削除・本人の寄与一覧が原理的に不可能。§18 の
+--          「revoked → future contributions blocked」を保証できないため不採用。
+--
+--   純粋ロジックは `lib/careerCompanyKnowledge/contributorIdentity.ts` に実装済み
+--   （QA `HDR-3` / `HDR-4` が owner 判定・偽造拒否・unlink 後の再識別不能性を固定）。
+
+-- I2: subject 対応表（★ 未適用 draft）。
+-- CREATE TABLE IF NOT EXISTS career_ck_contributor_subjects (
+--   auth_user_id  uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+--   opaque_key    text        NOT NULL,
+--   linked_at     timestamptz NOT NULL DEFAULT now(),
+--   unlinked_at   timestamptz,
+--   CONSTRAINT career_ck_contributor_subjects_pk PRIMARY KEY (auth_user_id),
+--   CONSTRAINT career_ck_contributor_subjects_opaque_uniq UNIQUE (opaque_key)
+-- );
+-- ALTER TABLE career_ck_contributor_subjects ENABLE ROW LEVEL SECURITY;
+-- -- 本人のみ自分の行を読める（opaque_key は本人には見えてよい）。
+-- GRANT SELECT ON career_ck_contributor_subjects TO authenticated;
+-- CREATE POLICY "career_ck_subjects owner select"
+--   ON career_ck_contributor_subjects
+--   FOR SELECT TO authenticated
+--   USING (auth.uid() = auth_user_id);
+-- -- ⚠ INSERT / UPDATE policy は張らない（対応表の作成・unlink は RPC 経由）。
+
+-- I2: contribution の owner-scoped read（対応表越しに auth.uid() と照合）。
 -- CREATE POLICY "career_ck_contributions owner select"
 --   ON career_company_knowledge_contributions
 --   FOR SELECT TO authenticated
---   USING (auth.uid() = contributor_user_id);
+--   USING (
+--     contributor_opaque_key IN (
+--       SELECT s.opaque_key FROM career_ck_contributor_subjects s
+--        WHERE s.auth_user_id = auth.uid() AND s.unlinked_at IS NULL
+--     )
+--   );
 --   -- ⚠ INSERT policy は **張らない**。寄与は moderation を挟むため
---   --    service-role gated な SECURITY DEFINER RPC 経由にする（直 INSERT 禁止）。
+--   --    SECURITY DEFINER RPC 経由にする（直 INSERT 禁止）。
+--   -- ★ contribution table に auth user id 列を **足さない**のが I2 の要点。
+
+-- I2: 撤回 / アカウント削除の unlink（★ 未適用 draft）。
+-- CREATE OR REPLACE FUNCTION career_ck_unlink_subject()
+-- RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- DECLARE v_uid uuid := auth.uid();
+-- BEGIN
+--   IF v_uid IS NULL THEN RAISE EXCEPTION 'LOGIN_REQUIRED'; END IF;
+--   -- ★ subject は auth.uid() から導出。caller-selected uuid は受け付けない。
+--   UPDATE career_ck_contributor_subjects
+--      SET unlinked_at = now()
+--    WHERE auth_user_id = v_uid AND unlinked_at IS NULL;
+--   -- unlink 後は opaque key を解決できない ＝ 新規寄与を作れない（future blocked）。
+--   -- 既存 contribution 本体は触らない（既 publish の扱いは H-L5）。
+-- END $$;
+-- REVOKE ALL ON FUNCTION career_ck_unlink_subject() FROM PUBLIC, anon;
+-- GRANT EXECUTE ON FUNCTION career_ck_unlink_subject() TO authenticated;
 
 -- 2.2 (b) 一般 member の shared knowledge read。
 --   ★ contribution table を直接読ませない。**published 済みの projection 専用 view / table** を読ませる。
@@ -180,7 +228,9 @@
 --   [ ] H-L5 撤回後の既 publish knowledge の扱いが決定済み
 --   [ ] H-L6 moderation operational owner が決定済み
 --   [ ] H-L7 legal / privacy approval 取得済み
---   [ ] H-L8 production infrastructure activation（project / identity strategy / table placement）
+--   [ ] H-L8 production infrastructure activation（project / table placement / batch 実行基盤）
+--       ※ identity strategy は `D-R2` で **技術的に解決済み**（I2 採用）。適用のみ残る。
+--       ※ member-request → service-role 到達性は `D-R1` で **構造的に解消済み**。
 --
 -- 1 つでも欠けている間は、この draft を `*_apply.sql` へ移さないこと。
 -- ============================================================================

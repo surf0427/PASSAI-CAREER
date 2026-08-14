@@ -747,7 +747,7 @@ async function main() {
     //   consultation route（member request）→ shadow dispatcher → runtime → service-role read port
     //   という経路が **存在する**。ただし以下で厳しく制限されている。ここではその制限を固定する。
     const runtime = readFileSync(
-      join(ROOT, 'lib/careerAggregate/server/createAggregatedInsightRuntime.server.ts'), 'utf8',
+      join(ROOT, 'lib/careerAggregate/batch/aggregatedInsightPrivilegedShadow.batch.ts'), 'utf8',
     );
     const core = readFileSync(
       join(ROOT, 'lib/careerAggregate/server/aggregatedInsightShadowCore.ts'), 'utf8',

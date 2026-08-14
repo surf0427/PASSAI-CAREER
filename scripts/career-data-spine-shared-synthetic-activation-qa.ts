@@ -204,7 +204,7 @@ async function main(): Promise<void> {
       'lib/careerDataSpineDb/sharedServiceRolePorts.server.ts',
       'lib/careerAggregate/syntheticShadowReadRepository.ts',
       'lib/careerAggregate/server/aggregatedInsightShadowCore.ts',
-      'lib/careerAggregate/server/createAggregatedInsightRuntime.server.ts',
+      'lib/careerAggregate/batch/aggregatedInsightPrivilegedShadow.batch.ts',
       'lib/careerAggregate/shadowDispatcher.server.ts',
       'lib/careerAggregate/shadowEvidence.ts',
     ].map((f) => join(ROOT, f));
@@ -257,7 +257,7 @@ async function main(): Promise<void> {
   // ══════════════════════════════════════════════════════════════
   console.log('[J] Canary identity (shared auth UID)');
   {
-    const runtime = read('lib/careerAggregate/server/createAggregatedInsightRuntime.server.ts');
+    const runtime = read('lib/careerAggregate/batch/aggregatedInsightPrivilegedShadow.batch.ts');
     check('J1 shared auth UID を使う（getServerSupabaseClient）', runtime.includes('getServerSupabaseClient') && runtime.includes('resolveSharedAuthUserId'));
     // CAREER OTP を「import しない」ことを検査（コメント中の語ではなく実 import 文）。
     check('J2 CAREER OTP UID を使わない（careerSupabase を import しない）', !/from\s+['"]@\/lib\/careerSupabase/.test(runtime) && !/from\s+['"][^'"]*CareerAuthProvider/.test(runtime));

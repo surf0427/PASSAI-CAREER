@@ -386,6 +386,10 @@ function isolationChecks(): void {
     f.includes('/careerDataSpineDb/') || f.includes('/careerDataSpinePolicy/') ||
     f.includes('/careerDataSpineGate/') || f.includes('/careerContextLoaders/server/') ||
     f.includes('/careerAggregate/server/') ||
+    // Decision Resolution Batch（`D-R1`/`D-R3`）: privileged composition と batch runner の置き場。
+    //   ★ ここは **member route から到達不能**であることを別 QA（HDR-1/HDR-2）が
+    //     推移的 import graph で固定している。scaffold 層として consumer から除外する。
+    f.includes('/careerAggregate/batch/') ||
     CONSENT_GATE_FILES.includes(f) ||
     f.endsWith('/careerAggregate/shadowDispatcher.server.ts') ||
     f.endsWith('/careerAggregate/shadowEvidence.ts') ||

@@ -500,7 +500,11 @@ console.log('[J] Production isolation (static guard)');
   ].map((f) => join(ROOT, f));
   // P17-E: server composition（careerAggregate/server/*）も sanctioned な統合層として除外。
   const isNewModule = (f: string) =>
-    NEW_DIRS.some((p) => f.startsWith(p)) || NEW_AGG_FILES.includes(f) || f.includes('/careerAggregate/server/');
+    NEW_DIRS.some((p) => f.startsWith(p)) ||
+    NEW_AGG_FILES.includes(f) ||
+    f.includes('/careerAggregate/server/') ||
+    // Decision Resolution Batch（`D-R1`/`D-R3`）: batch 層（route から到達不能・HDR-2 が固定）。
+    f.includes('/careerAggregate/batch/');
 
   const consumerFiles = [
     ...walk(join(ROOT, 'app')),

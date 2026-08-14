@@ -1159,6 +1159,146 @@ owner-scoped RLS を張るには `contributor_user_id uuid` + `auth.uid() = cont
 
 ---
 
+# 2.10 Decision Resolution（`D-R1` 〜 `D-R3` / 2026-08-14）
+
+## D-R1 — member request path から service-role 到達性を構造的に除去
+
+**Decision ID:** D-R1 / **Status:** LOCKED
+
+### 解決した問題
+
+`D-C7` / STATE §5.3.6 で residual boundary として記録していた経路:
+
+```text
+consultation route（member request）
+  → shadowDispatcher
+    → createAggregatedInsightRuntime.server   ← service-role port を import
+      → getSharedServiceRoleReadPort
+```
+
+synthetic-only 固定 + real-mode ブロックで囲ってはいたが、
+**import graph 上の到達性そのもの**が Human 指示 §31 の境界に反していた。
+
+### なぜ「gate 判定だけ残す」形にしたか
+
+shadow が読んでいたのは **synthetic 固定行**であり、member traffic で読む価値が無い
+（同じ行を batch でも読める）。member path に必要なのは「実 request 条件下で gate が
+どう判定されたか」だけ。したがって:
+
+| | 変更前 | 変更後 |
+|---|---|---|
+| member path | shadow runtime（privileged import + synthetic read） | `server/memberGateProbe.server.ts`（**privileged 非 import・DB read ゼロ**） |
+| privileged path | 同上 | `batch/aggregatedInsightPrivilegedShadow.batch.ts`（route から不可達） |
+
+### 検証方法（宣言ではなく実測）
+
+QA `HDR-1` / `HDR-2` は **推移的 import graph を実際に構築**して到達性を測る
+（`@/` alias と相対 import を解決し、app/ 配下 363 ファイルを seed に探索）。
+
+```text
+app/ → sharedServiceRolePorts : 到達経路 0
+app/ → *.batch.ts            : 到達経路 0
+```
+
+`.batch.ts` という命名は規約であり、新しい privileged module を作っても
+この命名に従えば同じ guard が自動的に効く。
+
+### 契約を型で固定
+
+`MemberGateProbeResult` は `performedRead: false` / `privilegedAccess: false` を
+**リテラル型**として持つ。実装が read を行うようになれば型が壊れる。
+
+---
+
+## D-R2 — Layer 5 contributor identity strategy = I2（subject 対応表）
+
+**Decision ID:** D-R2 / **Status:** LOCKED（DDL は draft・未適用）
+
+### 解決した blocker
+
+> contribution は contributor を opaque key で持ち、型に auth user id が無い。
+> owner-scoped RLS を張るには `auth.uid()` と照合できる必要があるが、照合できない。
+
+### 3 案の比較
+
+| 案 | owner RLS | 撤回/削除 | privacy | 判定 |
+|---|---|---|---|---|
+| I1 contribution が直接 `auth.uid()` を持つ | ◎ 単純 | ◎ cascade | ✗ contribution table が投稿者台帳になる | 不採用 |
+| **I2 subject 対応表** | ○ subquery 越し | ◎ unlink で完結 | ◎ 本体に識別子なし | **採用** |
+| I3 完全 anonymous | ✗ 不可 | ✗ 原理的に不可 | ◎ | 不採用 |
+
+### I2 を選んだ決め手
+
+1. **contribution 本体を変えずに済む**。既存の型・projection・dedupe・fingerprint は無改修。
+2. **unlink が強い削除手段になる**。対応表を切れば contribution は再識別不能になり、
+   「本体を消さずに匿名化する」という H-L5 の選択肢が現実的になる。
+3. `revoked → future contributions blocked` を **構造的に**保証できる
+   （unlink 後は opaque key を解決できない ⟹ 新規寄与を自分の key で作れない）。
+
+I3 は privacy は最強だが、Human 指示 §18 の撤回保証と両立しない。
+
+### 実装範囲
+
+純粋ロジック（`resolveContributorOpaqueKey` / `isOwnContribution` / `unlinkSubject` /
+`canCreateContribution` / `containsIdentityLeak`）は実装済み。
+DDL は `supabase/prototype/collective_intelligence_activation_draft.sql` に draft のみ。
+
+QA `HDR-3` / `HDR-4` が偽造 uid の拒否・owner 判定・unlink 後の再識別不能性を固定する。
+
+---
+
+## D-R3 — provider-neutral batch runner
+
+**Decision ID:** D-R3 / **Status:** LOCKED
+
+`lib/careerAggregate/batch/batchRunner.ts`。特定 cloud SDK を import せず、
+I/O はすべて injected port。Vercel Cron / pg_cron / GitHub Actions / 手動のどれからでも
+同じ contract で呼べる。
+
+| 要件 | 実装 |
+|---|---|
+| idempotency | `runKey = (metric, calculationVersion, window)`。succeeded なら skip |
+| retry safety | 失敗時は **cursor を進めない**。同じ window を再試行できる |
+| cursor | window 単位の checkpoint |
+| dry-run | 書き込みゼロで「実行されるか」だけ返す |
+| failure state | enum で記録（raw error / stack を持たない） |
+| rebuild | invalidation 由来を通常実行と同じ経路で処理 |
+
+### 保証しないこと（誇張しない）
+
+- **分散ロックは提供しない**。排他は `claimRun` port の実装（DB の UNIQUE 制約 /
+  advisory lock）に委ねる契約。runner はその結果に従うだけ。
+- scheduling（cron の時刻・再試行間隔）は provider 側の責務。
+
+QA `HDR-7` / `HDR-8` が duplicate 防止・dry-run の書き込みゼロ・
+失敗後の cursor 据え置き・retry 成功を固定する。
+
+---
+
+## D-R4 — Human decision を 8 件から 6 件へ削減
+
+**Decision ID:** D-R4 / **Status:** LOCKED
+
+`D-R1` 〜 `D-R3` により H-L8 の technical 部分（service-role boundary / identity /
+ETL）が解決したため、**技術的な未決事項はゼロ**になった。
+
+残る Human decision（`COLLECTIVE_INTELLIGENCE_RECOMMENDED_DECISIONS.md` に推奨案付きで記載）:
+
+| ID | 種別 | Claude 推奨 |
+|---|---|---|
+| H-L1 cohort 閾値 | MIXED | B（現状値 10/20/50/100 を確定） |
+| H-L2 retention | MIXED | 5 種別に分ける（90/30/730/400/180 日） |
+| H-L3 利用目的 | HUMAN POLICY | B（internal + user-facing。**AI context は今回外す**） |
+| H-L4 sharing policy | HUMAN POLICY | B（一度 opt-in + 投稿ごと確認）。C は privacy invariant に矛盾するため採用不可 |
+| H-L5 撤回後の published | HUMAN POLICY | B（状態別。derived は残す） |
+| H-L6 moderation | MIXED | B（自動 pre-screen + 人手承認） |
+| H-L7 法務 | LEGAL | 10 項目の checklist へ変換済み |
+| H-L8 infra | 技術解決済み・provisioning 判断のみ | — |
+
+★ 推奨値は **production default へ適用していない**。承認前は全て FAIL CLOSED。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、
