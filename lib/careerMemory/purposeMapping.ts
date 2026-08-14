@@ -48,12 +48,6 @@ export const CAREER_MEMORY_PURPOSE_MAP = [
     note: '名称一致。deep-dive 質問生成 builder。',
   },
   {
-    memory: 'es_generation',
-    context: ['es_generation'],
-    oneToOne: true,
-    note: '名称一致。ES は B判定（inline body・非抽出）。',
-  },
-  {
     memory: 'es_review',
     context: ['es_review'],
     oneToOne: true,

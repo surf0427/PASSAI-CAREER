@@ -24,7 +24,7 @@
 import 'server-only';
 
 import type { CareerContextPurpose } from '@/lib/careerContext/purpose';
-import { loadCareerSourceData } from '@/lib/careerSourceData/serverReader.server';
+import { loadRequestSourceSnapshot } from '@/lib/careerSourceData/requestSnapshot.server';
 import {
   EMPTY_CAREER_SOURCE_BUNDLE,
   emptySourceStatuses,
@@ -32,6 +32,7 @@ import {
   type CareerSourceKind,
   type CareerSourceReadOutcome,
   type CareerSourceReadStatus,
+  requiresSourceSync,
 } from '@/lib/careerSourceData/types';
 import { computeSourceSyncRevisions } from '@/lib/careerSourceSync/revision';
 import {
@@ -72,15 +73,20 @@ export type CrossFeatureSourceResult = {
 
 export type CrossFeatureSourceDeps = {
   loadCanaryConfig: () => ServerContextCanaryConfig;
+  /**
+   * `req` は **request-local snapshot の key**（`D-S13`）。同じ request 内で
+   * Personal Memory resolver が同じ kind を再度読まないようにするために渡す。
+   */
   loadSources: (
     kinds: readonly CareerSourceKind[],
     authorize?: (userId: string) => boolean,
+    req?: Request,
   ) => Promise<CareerSourceReadOutcome>;
 };
 
 const realDeps: CrossFeatureSourceDeps = {
   loadCanaryConfig: loadServerContextCanaryConfigFromEnv,
-  loadSources: (kinds, authorize) => loadCareerSourceData(kinds, undefined, authorize),
+  loadSources: (kinds, authorize, req) => loadRequestSourceSnapshot(kinds, req, authorize),
 };
 
 function allBridge(
@@ -111,26 +117,42 @@ export async function loadVerifiedCrossFeatureSources(
     const canary = deps.loadCanaryConfig();
     if (!isServerContextPurposeEnabled(purpose, canary)) return allBridge('purpose_disabled');
 
-    const outcome = await deps.loadSources(kinds, (userId) =>
-      isServerContextCanaryUser(userId, canary),
+    const outcome = await deps.loadSources(
+      kinds,
+      (userId) => isServerContextCanaryUser(userId, canary),
+      req,
     );
     if (outcome.meta.outcome === 'unauthorized') return allBridge('user_not_canary');
 
     const signal: CareerSourceSyncSignal = req
       ? readSourceSyncSignal(req)
       : EMPTY_SOURCE_SYNC_SIGNAL;
+    // Source-Sync は **Class 1 の kind だけ**に対して評価する
+    //   （Class 2 に claim を要求すると永久 mismatch になり機能が無効化される）。
+    const syncKinds = kinds.filter((k) => requiresSourceSync(k));
     const verdicts = verifySourceSync(
       signal,
-      computeSourceSyncRevisions(outcome.bundle, kinds),
+      computeSourceSyncRevisions(outcome.bundle, syncKinds),
       outcome.meta.statuses,
     );
 
-    // kind 単位で採用元を決める（verified のみ server）。
+    // kind 単位で採用元を決める。
+    //
+    // ★ authority class で判定が分かれる（`D-S10`）:
+    //   - Class 1（device-canonical + mirrored）: Source-Sync verified のときだけ server。
+    //   - Class 2（server-authoritative / gd_room）: **client claim を要求しない**。
+    //     server が著者なのだから client cache との一致を求めるのは意味が無く、
+    //     求めると「client の cache が古い ⟹ 正しい server データを使えない」という
+    //     逆向きの誤りになる。read が権威的（status='ok'）であることだけを条件にする。
+    //     ※ authorization は免除されない（purpose gate + canary gate + owner-scoped RLS は同じ）。
     const origin = {} as Record<CareerSourceKind, SourceOrigin>;
     let serverCount = 0;
     for (const k of Object.keys(emptySourceStatuses()) as CareerSourceKind[]) {
       const wanted = kinds.includes(k);
-      const ok = wanted && isSourceUsable(verdicts[k]);
+      const usable = requiresSourceSync(k)
+        ? isSourceUsable(verdicts[k])
+        : outcome.meta.statuses[k] === 'ok';
+      const ok = wanted && usable;
       origin[k] = ok ? 'server' : 'bridge';
       if (ok) serverCount += 1;
     }
@@ -163,5 +185,6 @@ export function serverOnlyBundle(result: CrossFeatureSourceResult): CareerSource
     companyResearchLogs: o.company_research === 'server' ? b.companyResearchLogs : [],
     presentationResults: o.presentation === 'server' ? b.presentationResults : [],
     consultationThreads: o.consultation === 'server' ? b.consultationThreads : [],
+    gdRoomLogs: o.gd_room === 'server' ? b.gdRoomLogs : [],
   };
 }

@@ -58,7 +58,7 @@ import {
 import { loadPersonalMemoryServerSourceConfigFromEnv } from './serverSourceFlagConfig.server';
 import type { PersonalMemoryServerSourceConfig } from './serverSourceFlag';
 import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
-import { loadCareerSourceData } from '@/lib/careerSourceData/serverReader.server';
+import { loadRequestSourceSnapshot } from '@/lib/careerSourceData/requestSnapshot.server';
 import type {
   CareerSourceBundle,
   CareerSourceKind,
@@ -127,7 +127,11 @@ export type PersonalMemoryReadServerDeps = {
   // client を 1 回生成して reader を返す（env 未設定 / 生成失敗は null）。
   createReader: () => Promise<PersonalMemoryServerReader | null>;
   // NEXT-3: Layer 1 Source の owner-scoped server read（既定は careerSourceData の実 reader）。
-  loadSources: (kinds: readonly CareerSourceKind[]) => Promise<CareerSourceReadOutcome>;
+  /** `req` は request-local snapshot の key（`D-S13`）。重複 Layer 1 read を避ける。 */
+  loadSources: (
+    kinds: readonly CareerSourceKind[],
+    req?: Request,
+  ) => Promise<CareerSourceReadOutcome>;
   // 観測用の経過時間計測（DI 可能・テストは固定値）。
   now: () => number;
 };
@@ -240,7 +244,7 @@ const realDeps: PersonalMemoryReadServerDeps = {
   isEnabled: isPersonalMemoryReadEnabled,
   loadGateConfig: loadPersonalMemoryReadGateConfigFromEnv,
   loadSourceConfig: loadPersonalMemoryServerSourceConfigFromEnv,
-  loadSources: (kinds) => loadCareerSourceData(kinds),
+  loadSources: (kinds, req) => loadRequestSourceSnapshot(kinds, req),
   now: () => Date.now(),
   createReader: async () => {
     const client = await getCareerServerSupabaseClient();
@@ -287,6 +291,11 @@ export async function loadPersonalMemorySectionsForPrompt(
    */
   syncSignal: CareerSourceSyncSignal = EMPTY_SOURCE_SYNC_SIGNAL,
   deps: PersonalMemoryReadServerDeps = realDeps,
+  /**
+   * `D-S13`: request-local Layer 1 snapshot の key。同じ request で Server Context resolver が
+   * 既に読んだ kind を **再 read しない**ために渡す。未指定なら従来どおり単独 read。
+   */
+  req?: Request,
 ): Promise<PersonalMemoryReadOutcome> {
   try {
     const sectionKeys = personalMemorySectionsForPurpose(purpose);
@@ -313,7 +322,7 @@ export async function loadPersonalMemorySectionsForPrompt(
     //   ★ Source read は **常に** 行う。これを飛ばす経路（旧 D-R1）は存在しない。
     const [memoryRes, sourceOutcome] = await Promise.all([
       reader.selectSections(userId, sectionKeys),
-      deps.loadSources(sourceKindsForSections(sectionKeys)),
+      deps.loadSources(sourceKindsForSections(sectionKeys), req),
     ]);
     const durationMs = deps.now() - started;
 

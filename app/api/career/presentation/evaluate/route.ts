@@ -30,6 +30,7 @@ import {
   buildEvaluateUserPrompt,
   buildEvaluateInstruction,
 } from '../presentationPrompt';
+import { resolvePresentationContextInputs } from '../resolveContextInputs';
 
 export const maxDuration = 80;
 
@@ -157,16 +158,18 @@ export async function POST(req: Request) {
   const timeLimitSec = clampSecond(b.timeLimitSec);
   const durationSec = clampSecond(b.durationSec);
 
+  // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
+  const ctx = await resolvePresentationContextInputs(b, req);
   const system = [
     buildPresentationBaseSystem({
-      profile: b.profile ?? null,
-      activity: b.activity ?? null,
-      values: b.values ?? null,
-      selfAnalysis: b.selfAnalysis ?? null,
-      es: b.es ?? null,
-      interview: b.interview ?? null,
-      matching: b.matching ?? null,
-      consultationInsights: b.consultationInsights ?? null,
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
+      es: ctx.es as typeof b.es,
+      interview: ctx.interview as typeof b.interview,
+      matching: ctx.matching as typeof b.matching,
+      consultationInsights: ctx.consultationInsights,
       config,
       theme,
     }),

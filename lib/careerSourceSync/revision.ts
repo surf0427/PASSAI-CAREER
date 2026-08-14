@@ -201,6 +201,10 @@ function syncViewForKind(kind: CareerSourceKind, bundle: CareerSourceBundle): un
         };
       });
 
+    // ★ `gd_room` は **server-authoritative**（`D-S10`）。client canonical が存在しないため
+    //   sync view を定義しない（default の null に落ちる）。仮に claim が送られてきても
+    //   全 kind 共通の revision 計算は「null の revision」になり、consumer 側は
+    //   `requiresSourceSync()` が false なので **そもそも verdict を見ない**。
     default:
       return null;
   }

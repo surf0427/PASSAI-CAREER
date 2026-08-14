@@ -719,6 +719,239 @@ base 専用の `loadServerBaseContext` を呼ぶ **route は無くなった**。
 
 ---
 
+## D-S8 — Canary 期間中の `FULL_SERVER` の定義
+
+**Decision ID:** D-S8 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+`FULL_SERVER` を「request body に fallback field が物理的に存在しない」と定義すると、
+canary 期間中は **永久に到達不可能**になり、分類が意味を失う（safety fallback は必須だから）。
+
+```text
+FULL_SERVER =
+  この purpose が通常の verified flow で使う personal-context source が
+  すべて server-derived にできる。
+  bridge は unverified / flag OFF / non-canary / unreadable のときの
+  safety fallback としてのみ残る。
+```
+
+この定義の帰結:
+- fallback bridge の存在は **完成度を下げない**（`D-S14` の分類で debt と区別する）。
+- 逆に「server 化できない source が 1 つでもある」purpose は `HYBRID` に留まる
+  （`consultation` / `matching` は solo GD があるため HYBRID）。
+
+---
+
+## D-S9 — 残存 LIVE purpose の一括移行（matching / presentation / self-analysis ×2）
+
+**Decision ID:** D-S9 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+Closure Batch の call graph 監査で、**Batch 2 時点の分類に誤りがあった**ことが判明した:
+
+> `self_analysis` を DORMANT と記録していたが、実際は
+> `lib/careerSelfAnalysis/summaryPrompt.ts`（`app/api/career/self-analysis/route.ts` 経由）から
+> **live で呼ばれていた**。docs だけを見ていたら見逃していた。
+> → 分類は必ず **実 call graph** を authority にする（`POC-1` が manifest と実体の一致を強制）。
+
+移行した purpose: `matching` / `presentation_feedback` / `self_analysis` / `self_analysis_deep_dive`。
+いずれも既存の shared 部品だけで実現し、**purpose 別の独自実装を増やしていない**:
+Layer 1 reader / Source-Sync / shared pure selector / `loadPurposeServerContext` / canary gate /
+bridge fallback / diagnostics。
+
+### matching 固有の注意（記録しておく）
+
+`matching` は prompt だけでなく **決定的スコアエンジン**（`buildMeasuredReadiness` / `runCareerMatch`）
+にも同じ personal data を渡す。したがって server 化は「AI 入力」だけでなく「スコア入力」も切り替える。
+安全性の根拠は prompt と同じ: verified ⟹ mirror == client canonical ⟹ 同じ selector が同じ値を返す。
+readiness gate（400 判定）も resolver 解決後の値で行うため、server 由来でも同じ条件で判定される。
+
+### self_analysis 固有の注意
+
+要約生成は generation job 経路を持ち、job identity（idempotency hash）に profile/activity/values が入る。
+verified ⟹ 内容一致なので hash は変わらない。`conversation` / `userInput` は request 固有入力であり
+Layer 1 source ではないため server 化対象外。
+
+---
+
+## D-S10 — Source authority class と server-authoritative source（`gd_room`）
+
+**Decision ID:** D-S10 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+すべての source が同じ authority ではないことを型で明示した（`CAREER_SOURCE_AUTHORITY`）。
+
+| Class | 意味 | Authority |
+|---|---|---|
+| 1 device-canonical + mirrored | canonical は端末 localStorage、Supabase は mirror | client claim + server mirror + **Source-Sync** |
+| 2 server-authoritative | **server が著者**、client は表示 cache | authenticated owner + **owner-scoped RLS** + server state |
+| 3 client-only / no mirror | server-visible representation なし | （server から到達不能） |
+
+### `gd_room` を Class 2 と判定した根拠（実装を追って確認）
+
+- **writer**: `app/api/career/gd/room/[roomId]/result/route.ts` が service-role で
+  `(room_id, user_id)` に upsert する。**client は evaluation を著さない**。
+- **canonical store**: `career_gd_room_results`。localStorage `careerGdRoomLogs` は履歴表示用 cache。
+- **authorization**: room API は `authenticateGdMember()`（member 必須・anonymous 拒否）。
+  読み出し側は `supabase/career_gd_results_hydrate_apply.sql` の
+  owner-select policy `USING (auth.uid() = user_id)` + `GRANT SELECT TO authenticated`。
+- **ownership**: 行は user 単位。self_feedback / ranking / matching_hints / overall_summary は
+  いずれも **その user 向けに server が算出した projection**。
+
+### なぜ Class 2 に Source-Sync を適用してはいけないか
+
+client canonical が存在しないため、client cache と mirror の一致を要求すると
+「**client の cache が古い ⟹ 正しい server データを使えない**」という逆向きの誤りになる
+（＝機能が永久に無効化される）。よって `requiresSourceSync('gd_room') === false`。
+
+### ただし免除されるのは verification だけ
+
+purpose opt-in / canary allowlist / owner-scoped read は **他 kind と完全に同じ**。
+`POC-7` が「偽造 claim でも結果が変わらない」「claim 無しでも server 由来になる」
+「それでも non-canary は拒否される」を同時に固定する。
+
+### 他 room member のデータが混ざらないこと
+
+read は `user_id = <server auth の userId>` で絞られ、RLS の owner policy と二重化されている。
+prompt へ載せるのは既存 selector の `buildLatestGdRoomSignals(logs, 3)` projection（最新 3 件・圧縮）
+のみで、room 全体・他参加者の raw answer は **元の row にも含まれていない**。
+
+---
+
+## D-S11 — solo GD は structural bridge として据え置く（G1 採用）
+
+**Decision ID:** D-S11 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+### 再確認した事実（repo / schema 全走査）
+
+- `supabase/*.sql` の `public.career_*` 全 table を列挙 → solo GD の table は **存在しない**。
+- `lib/supabase/career*.ts` の全 mirror module を列挙 → solo GD の mirror module は **存在しない**。
+- canonical は localStorage key `careerGdResults`（`app/career/gd/gdStorage.ts`）のみ。
+
+### Option 比較
+
+| | G1 keep bridge | G2 add mirror architecture |
+|---|---|---|
+| 必要作業 | なし（現状維持） | 新 DDL + RLS + client mirror writer + Source-Sync kind + round-trip QA |
+| 影響範囲 | — | schema / migration / client / server / QA |
+| 得られるもの | — | consultation / matching の **補助文脈**が server 化される |
+
+### 判定ルール（Human 指示 §7）との照合
+
+| 条件 | 判定 |
+|---|---|
+| solo GD が複数 live purpose で **重要に**使われている | ❌ 2 purpose で使われるが、いずれも**補助文脈**。matching では決定的エンジンに入れず AI 補助 10〜20% 相当と route コメントに明記 |
+| current bridge retirement の **主要 blocker** | ❌ 他の 11 source は既に server 化済み。これ 1 件が全体を止めていない |
+| existing mirror architecture へ自然に追加できる | ⭕ 可能 |
+| privacy boundary が明確 | ⭕ 自分の練習結果のみ |
+| production 適用せず code/schema draft まで完成可能 | ⭕ 可能 |
+| large product decision を必要としない | ⭕ |
+
+**2 条件が不成立 → G1 を採用。**
+
+> 「完全 server 化率を上げるためだけに DB を増やさない」という指示に従う。
+> これは **意図的な bridge exception** であり、隠れた debt ではない。
+> 観測上も `gd_solo:not_server_capable` として safety fallback と **別に**数える。
+
+**再検討トリガ:** solo GD が主情報として使われるようになる / 別デバイス同期要求が出る。
+
+---
+
+## D-S12 — `es_generation` purpose の retirement
+
+**Decision ID:** D-S12 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+### 最終監査の結果（すべて成立）
+
+| 確認項目 | 結果 |
+|---|---|
+| live route callsite | **0** |
+| orchestrator callsite | **0**（`purpose === 'es_generation'` 分岐は到達不能だった） |
+| 現行 ES flow | `es/deep` / `es/organize` / `es-review` の 3 本。いずれも career context を **使わない** |
+| ghost-writing flow | 存在しない（ES 再設計で廃止済み） |
+| 削除による production 挙動変化 | なし |
+
+### 削除したもの
+
+- `CareerContextPurpose` の member と `CAREER_CONTEXT_REGISTRY` entry
+- `CareerMemoryPurpose` の member と `CAREER_MEMORY_PURPOSE_MAP` entry
+- orchestrator の `esGeneration` extras / 分岐 / import
+- `lib/careerMemory/renderers/esGenerationCrossFeature.ts`（**この orphan 専用**の renderer）
+- `career-context-budget-qa` の es_generation scenario
+
+### 削除しなかったもの（と理由）
+
+- **`lib/careerCompanyKnowledge/policy.ts` の `PURPOSE_CONTENT_ALLOWLIST`**:
+  Layer 5 は `Record<string, ...>` の **独自 string-keyed vocabulary** を持つ別 subsystem
+  （`company_research_review` ではなく `company_research` を使っていることが証拠）。
+  `CareerContextPurpose` と型で結合しておらず、fail-closed で production consumer もゼロ。
+  Personal Optimization の purpose retirement は Layer 5 に波及しない。
+  `POC-10` がこの **非結合であること自体**を assertion で固定し、暗黙依存化を防ぐ。
+
+### 再接続しない
+
+`es_review` / `es_deep` / `es_organize` へ**勝手に再マッピングしない**。
+現行 product に career context が必要という live requirement が無いため、
+orphan は再利用ではなく retirement とする（Human 指示 §10）。
+
+---
+
+## D-S13 — request-local Layer 1 snapshot（重複 read の排除）
+
+**Decision ID:** D-S13 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+### 発見した欠陥（実測）
+
+`company_research_review` は 1 request で Layer 1 を **2 回**読んでいた:
+1. Server Context resolver → profile / activity / values / self_analysis / matching
+2. Personal Memory resolver → base / self_analysis …（同じ table を再 select）
+
+同じ table を二度叩くだけでなく、2 read の間に write が入ると
+**request 内で異なる snapshot** を見る（cross-source skew）。
+
+### 解決
+
+`Request` instance を key にした `WeakMap` で、その request 中に読んだ kind を保持する。
+2 番目の consumer は **不足 kind だけ**を読む。
+
+### 安全性のために崩さなかったもの
+
+- **cache hit でも `authorize(userId)` を再評価する**。userId は reader が authorize hook へ渡す
+  server auth 由来の値を捕捉して entry 内に保持（meta にも log にも出さない）。
+  捕捉できていない entry は cache から返さず再 read する（fail-closed）。
+  → 「緩い gate の consumer が読んだ結果を、厳しい gate の consumer が受け取る」経路を作らない。
+- `unauthorized` / `unauthenticated` の read は **cache しない**。
+- never-throw。cache 機構が壊れたら通常 read へ落ちる。
+
+### 保証範囲（過大主張しない）
+
+```text
+保証する  : read-once per kind per request
+保証しない: 複数 table を跨ぐ single transaction snapshot
+```
+
+kind ごとに別 select であり、その間の write は依然観測されうる。
+read 安全性は `D-S1` の Source-Sync veto が担保する（stale prompt 注入は起きない）。
+
+---
+
+## D-S14 — bridge を 2 種類に分類する（safety fallback / structural）
+
+**Decision ID:** D-S14 / **Date:** 2026-08-14（Closure Batch） / **Status:** LOCKED
+
+「bridge が残っている」を一括で debt と数えると、**意図的な安全装置**と
+**本当に未解決の architecture 欠落**が区別できなくなる。
+
+| 種別 | 定義 | debt か |
+|---|---|---|
+| **Safety fallback bridge** | server path は完成。mismatch / flag OFF / non-canary / unreadable のときだけ使う | ❌ 設計どおり |
+| **Structural bridge dependency** | server-readable source が存在せず、normal verified flow でも client bridge が必要 | ⭕ architecture debt |
+
+観測でも分ける:
+- `<kind>:bridge` … safety fallback
+- `gd_solo:not_server_capable` … structural
+
+この区別が無いと、canary 中の高い `bridge` 率を見て「移行が進んでいない」と誤読する。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

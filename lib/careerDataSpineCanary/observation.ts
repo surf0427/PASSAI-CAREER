@@ -49,8 +49,23 @@ export const CANARY_CONTEXT_OUTCOMES: readonly CanaryContextOutcome[] = [
 // ── Batch 2: source kind 別の観測 ───────────────────────────────────
 // 「purpose 全体」ではなく「どの source が server 化できたか / なぜ落ちたか」を見るための enum。
 // 記録するのは **kind 名と enum の組だけ**（件数のみ。識別子・本文は持たない）。
-export type CanarySourceOrigin = 'server' | 'bridge';
-export const CANARY_SOURCE_ORIGINS: readonly CanarySourceOrigin[] = ['server', 'bridge'];
+//   - `server`: verified（class 1）/ 権威的 read（class 2）で server 由来を採用した。
+//   - `bridge` : safety fallback bridge を使った（server path は存在するが今回使わなかった）。
+//   - `not_server_capable`: **structural bridge**。そもそも server-readable representation が
+//     存在しない source（solo GD）。`bridge` と混ぜると「同期していないだけ」に見えてしまい、
+//     architecture debt が観測から消えるため別値にする（`D-S11`）。
+export type CanarySourceOrigin = 'server' | 'bridge' | 'not_server_capable';
+export const CANARY_SOURCE_ORIGINS: readonly CanarySourceOrigin[] = [
+  'server',
+  'bridge',
+  'not_server_capable',
+];
+
+/**
+ * server-readable representation が存在しない source（structural bridge）。
+ * `CareerSourceKind` に **存在しない**ため、観測語彙としてここに明示する。
+ */
+export const CANARY_STRUCTURAL_BRIDGE_SOURCES: readonly string[] = ['gd_solo'];
 
 /** purpose 単位の server 化度合い。partial は「一部 kind だけ server」。 */
 export type CanaryPurposeCoverage = 'full_server' | 'partial_server' | 'bridge_fallback' | 'gated_off';

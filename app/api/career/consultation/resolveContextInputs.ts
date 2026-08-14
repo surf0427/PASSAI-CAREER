@@ -4,9 +4,12 @@
 // Layer 1 read で cross-feature（selfAnalysisHistory / esHistory / interviewHistory /
 // presentationHistory / companyResearch / matching）も **kind 単位**で server 化する。
 //
-// ★ server 化しないもの（意図的・`D-S6`）:
-//   - `gd`（ソロ GD）: Supabase mirror が存在しない → server から読めない。永続 bridge。
-//   - `gdRoom`: mirror はあるが **server 側が書く**データで canonical 前提が異なる。永続 bridge。
+// ★ Closure Batch（`D-S10`）: `gdRoom` は **server-authoritative（class 2）** として server 化した。
+//   client claim（Source-Sync）は要求しない。authority は authenticated owner + owner-scoped RLS。
+//
+// ★ server 化しないもの（意図的・`D-S6` / `D-S11`）:
+//   - `gd`（ソロ GD）: Supabase table も mirror module も存在しない → server から読めない。
+//     **structural bridge**（architecture debt として明示）。
 //   - `eventSignals`: Layer 3 由来。route が現行位置で resolve する（`D-L3` の層分離）。触らない。
 //   - 旧 client 互換の単数 field（`selfAnalysis` / `es` / `interviewResult` / `presentationResult`）:
 //     renderer が「history があれば history、無ければ単数」を選ぶため、
@@ -29,6 +32,7 @@ import type {
 import { normalizeContextOutcome } from '@/lib/careerDataSpineCanary/observation';
 import { recordCanaryObservation } from '@/lib/careerDataSpineCanary/counters.server';
 import {
+  markStructuralBridges,
   pickSourceOrigins,
   pickSourceVerdicts,
   toPurposeCoverage,
@@ -45,6 +49,8 @@ export const CONSULTATION_SOURCE_KINDS: readonly CareerSourceKind[] = [
   'presentation',
   'company_research',
   'matching',
+  // Closure Batch: server-authoritative（Source-Sync 対象外）。
+  'gd_room',
 ];
 
 type ConsultationCross = {
@@ -54,6 +60,7 @@ type ConsultationCross = {
   presentationHistory: unknown[];
   companyResearch: unknown[];
   matching: unknown[];
+  gdRoom: unknown[];
 };
 
 export type ConsultationContextField = keyof ConsultationCross | 'base';
@@ -74,6 +81,7 @@ const FIELD_KIND: Readonly<Record<keyof ConsultationCross, CareerSourceKind>> = 
   presentationHistory: 'presentation',
   companyResearch: 'company_research',
   matching: 'matching',
+  gdRoom: 'gd_room',
 };
 
 export type ConsultationBridgeInputs = ConsultationCross & {
@@ -103,6 +111,7 @@ export async function resolveConsultationContextInputs(
     presentationHistory: bridge.presentationHistory,
     companyResearch: bridge.companyResearch,
     matching: bridge.matching,
+    gdRoom: bridge.gdRoom,
     source: 'flag_off',
     origins: {
       base: 'bridge',
@@ -112,6 +121,7 @@ export async function resolveConsultationContextInputs(
       presentationHistory: 'bridge',
       companyResearch: 'bridge',
       matching: 'bridge',
+      gdRoom: 'bridge',
     },
   };
   try {
@@ -124,7 +134,12 @@ export async function resolveConsultationContextInputs(
       context: normalizeContextOutcome(ctx.baseReason),
       memorySectionCount: 0,
       // Batch 2: source kind 別の採用元 / verdict / coverage（enum のみ）。
-      sourceOrigins: pickSourceOrigins(ctx, CONSULTATION_SOURCE_KINDS),
+      sourceOrigins: {
+        ...pickSourceOrigins(ctx, CONSULTATION_SOURCE_KINDS),
+        // ★ solo GD は server-readable representation が無い **structural bridge**。
+        //   safety fallback bridge と混同しないよう別値で数える（`D-S11`）。
+        ...markStructuralBridges(['gd_solo']),
+      },
       sourceVerdicts: pickSourceVerdicts(ctx, CONSULTATION_SOURCE_KINDS),
       coverage: toPurposeCoverage(ctx.status),
     });
@@ -141,7 +156,8 @@ export async function resolveConsultationContextInputs(
       presentationResults: ctx.sources.presentationResults ?? [],
       companyResearchLogs: ctx.sources.companyResearchLogs ?? [],
       gdResults: [],
-      gdRoomLogs: [],
+      // gd_room は server-authoritative。selector の同一 projection（最新 3 件・圧縮）を通す。
+      gdRoomLogs: ctx.sources.gdRoomLogs ?? [],
       matchingLogs: ctx.sources.matchingLogs ?? [],
       gdResultId: null,
     });
@@ -153,6 +169,7 @@ export async function resolveConsultationContextInputs(
       presentationHistory: serverPayload.presentationHistory,
       companyResearch: serverPayload.companyResearch,
       matching: serverPayload.matching,
+      gdRoom: serverPayload.gdRoom,
     };
 
     const out = { ...fallback, source: ctx.baseReason } as ConsultationContextInputs;

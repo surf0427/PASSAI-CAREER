@@ -271,6 +271,7 @@ export async function POST(req: Request) {
       presentationHistory,
       companyResearch,
       matching: matchingSnapshots,
+      gdRoom: gdRoomSignals,
     },
     req,
   );
@@ -291,7 +292,7 @@ export async function POST(req: Request) {
       presentationHistory: ctx.presentationHistory as typeof presentationHistory,
       companyResearch: ctx.companyResearch as typeof companyResearch,
       gd: gdSnapshots,
-      gdRoom: gdRoomSignals,
+      gdRoom: ctx.gdRoom as typeof gdRoomSignals,
       matching: ctx.matching as typeof matchingSnapshots,
     },
     eventSignalsBlock,

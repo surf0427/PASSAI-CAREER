@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { readdirSync as readdirSyncLocal } from 'node:fs';
 import { join } from 'node:path';
 import {
   coordinateShadowWrite,
@@ -181,8 +182,14 @@ async function main() {
     // Orchestrator / renderer が productionShadowWriter / repository read を import していない（prompt 経路清浄）。
     const orch = readFileSync(join(ROOT, 'lib/careerContext/orchestrator.ts'), 'utf8');
     check(!/productionShadowWriter|persistence\/repository|readCareerPersonalMemorySections/.test(orch), 'orchestrator は Memory read/coordinator を import しない');
-    for (const r of ['presentationCrossFeature', 'interviewCrossFeature', 'esGenerationCrossFeature', 'consultationCrossFeature']) {
-      const src = readFileSync(join(ROOT, `lib/careerMemory/renderers/${r}.ts`), 'utf8');
+    // ★ manifest を固定列挙しない: renderer ディレクトリの **実体を走査**する。
+    //   renderer が増減しても陳腐化せず、新 renderer が persistence を掴めば即 FAIL する
+    //   （PROTOCOL §6.1 の網羅性 check）。
+    const rendererDir = join(ROOT, 'lib/careerMemory/renderers');
+    const renderers = readdirSyncLocal(rendererDir).filter((f) => f.endsWith('.ts'));
+    check(renderers.length >= 3, `renderer が検出できる（${renderers.length} 件）`);
+    for (const r of renderers) {
+      const src = readFileSync(join(rendererDir, r), 'utf8');
       check(!/persistence\/|productionShadowWriter|readCareerPersonalMemorySections/.test(src), `${r}: persistence を import しない（prompt 経路清浄）`);
     }
   }

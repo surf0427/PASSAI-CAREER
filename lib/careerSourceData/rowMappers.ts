@@ -46,6 +46,10 @@ import type {
 } from '@/types/careerCompanyResearch';
 import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import type { CareerGdRoomLog } from '@/types/careerGd';
+// ★ normalizeGdRoomLog は GD 履歴の正本 normalizer。server 側でも **同じ関数**を使い、
+//   client hydrate 経路（lib/supabase/careerGdRoomResults.ts）と表現を一致させる。
+import { normalizeGdRoomLog } from '@/app/career/gd/gdRoomLogStorage';
 import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerConsultationThread } from '@/types/careerConsultation';
 
@@ -375,4 +379,47 @@ export function rowToCareerConsultationThread(
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? row.created_at,
   } as CareerConsultationThread;
+}
+
+// ── Closure Batch: gd_room（**server-authoritative** / authority class 2）─────────
+//
+// career_gd_room_results は app/api/career/gd/room/[roomId]/result/route.ts が
+// `(room_id, user_id)` で upsert する **server 著作**データ。client の localStorage
+// （`careerGdRoomLogs`）は表示用 cache であり canonical ではない。
+//
+// ★ owner-scoped RLS（`auth.uid() = user_id`）で **自分の行だけ**が返る。
+//   row には他参加者の raw answer は含まれない（self_feedback / ranking / matching_hints /
+//   overall_summary はいずれも server が算出した自分向け projection）。
+//   theme / format / 所要時間は本 table に無いため既定値になる
+//   （client hydrate 経路 lib/supabase/careerGdRoomResults.ts と同じ割り切り）。
+export const CAREER_GD_ROOM_SELECT_COLUMNS =
+  'room_id, participant_id, self_feedback, ranking, matching_hints, overall_summary, created_at' as const;
+
+export type CareerGdRoomResultRow = {
+  room_id?: unknown;
+  participant_id?: unknown;
+  self_feedback?: unknown;
+  ranking?: unknown;
+  matching_hints?: unknown;
+  overall_summary?: unknown;
+  created_at?: unknown;
+};
+
+export function rowToCareerGdRoomLog(row: CareerGdRoomResultRow): CareerGdRoomLog | null {
+  const rankingLen = Array.isArray(row.ranking) ? row.ranking.length : 0;
+  return normalizeGdRoomLog({
+    id: row.room_id,
+    roomId: row.room_id,
+    participantId: row.participant_id,
+    createdAt: row.created_at,
+    theme: {},
+    format: 'free',
+    participantCount: rankingLen,
+    humanCount: rankingLen,
+    durationSec: 0,
+    evaluation: row.self_feedback,
+    ranking: row.ranking,
+    matchingHints: row.matching_hints,
+    consultationSummary: row.overall_summary,
+  });
 }

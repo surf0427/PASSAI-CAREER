@@ -12,6 +12,7 @@ import {
   buildCareerAiContext,
   buildCareerFeatureInstruction,
 } from '@/lib/careerAi';
+import { resolveMatchingContextInputs } from './resolveContextInputs';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import type {
   CareerProfileInput,
@@ -274,9 +275,32 @@ export async function POST(req: Request) {
     userInput?: string;
   };
 
-  const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
-  const hasActivity = !!b.activity && Object.keys(b.activity).length > 0;
-  const hasSelfAnalysis = !!b.selfAnalysis;
+  // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
+  //   solo gd（gdSnapshot）は server-readable representation が無いため bridge のまま。
+  const gdRoomSignalsBridge = Array.isArray(b.gdRoomSignals)
+    ? b.gdRoomSignals
+        .map((s) => normalizeGdRoomSignal(s))
+        .filter((s): s is GdRoomSignalSnapshot => s !== null)
+        .slice(0, 3)
+    : [];
+  const ctx = await resolveMatchingContextInputs(
+    {
+      profile: b.profile ?? null,
+      activity: b.activity ?? null,
+      values: b.values ?? null,
+      selfAnalysis: b.selfAnalysis ?? null,
+      es: b.es ?? null,
+      interviewResult: b.interviewResult ?? null,
+      consultation: b.consultation ?? null,
+      gdRoomSignals: gdRoomSignalsBridge,
+    },
+    req,
+  );
+
+  // ★ readiness gate は resolver 解決後の値で判定する（server 由来でも同じ条件）。
+  const hasProfile = !!ctx.profile && Object.keys(ctx.profile).length > 0;
+  const hasActivity = !!ctx.activity && Object.keys(ctx.activity).length > 0;
+  const hasSelfAnalysis = !!ctx.selfAnalysis;
   if (!hasProfile && !hasActivity && !hasSelfAnalysis) {
     return Response.json(
       { error: '基本情報・活動整理・自己分析のいずれかを入力してください。' },
@@ -286,9 +310,9 @@ export async function POST(req: Request) {
 
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    values: b.values ?? null,
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
   });
   // P3-B: base system prompt を Context Orchestrator（purpose=matching）経由で取得する。
@@ -296,41 +320,37 @@ export async function POST(req: Request) {
   const orchestrated = buildCareerContextForPurpose('matching', context);
 
   // ── 決定的な重み・避けたい条件・measured シグナル（AI を通さない） ──
-  const priorities = Array.isArray(b.values?.selections?.priorities)
-    ? (b.values!.selections!.priorities as string[])
+  const resolvedValues = ctx.values as typeof b.values;
+  const priorities = Array.isArray(resolvedValues?.selections?.priorities)
+    ? (resolvedValues!.selections!.priorities as string[])
     : [];
-  const avoidances = Array.isArray(b.values?.selections?.avoidances)
-    ? (b.values!.selections!.avoidances as string[])
+  const avoidances = Array.isArray(resolvedValues?.selections?.avoidances)
+    ? (resolvedValues!.selections!.avoidances as string[])
     : [];
   const matchWeights = deriveMatchWeights(priorities);
   // measured readiness は ACL（lib/careerMatching）に委譲。route は既存データを渡すだけ。
   const measuredReadiness = buildMeasuredReadiness({
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    selfAnalysis: b.selfAnalysis ?? null,
+    profile: ctx.profile,
+    activity: ctx.activity,
+    selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
     // P7-B: measured readiness は ES 本文を消費しない（gakuchika readiness は activity から算出）。
     //   matching は ES を strict summary で受け取るため full result を engine に渡さない（挙動不変）。
     es: null,
-    interview: b.interviewResult ?? null,
+    interview: ctx.interviewResult as typeof b.interviewResult,
     spi: null,
     presentation: null,
   });
 
-  const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
-  const esBlock = renderMatchingEsSummary(b.es);
-  const interviewBlock = renderInterview(b.interviewResult);
-  const consultationBlock = renderConsultation(b.consultation);
+  const selfAnalysisBlock = renderSelfAnalysis(ctx.selfAnalysis as typeof b.selfAnalysis);
+  const esBlock = renderMatchingEsSummary(ctx.es as typeof b.es);
+  const interviewBlock = renderInterview(ctx.interviewResult as typeof b.interviewResult);
+  const consultationBlock = renderConsultation(ctx.consultation as typeof b.consultation);
   // GD は補助文脈（主情報は活動・自己分析・就活軸）。formatGdMatchingForPrompt が見出し・断定回避を含む。
   const gdBlock = renderGd(b.gdSnapshot);
   // STEP-GD-17: マルチGD の 6 軸評価を補助シグナルとして追加（直近数件・weight 低め・断定回避）。
   // 総合スコア・順位・重みは決定的エンジン（runCareerMatch）が担い、GD はエンジンに入れない
   //（AI の signal 根拠を少し補助するだけ）。→ 主情報 80〜90% / GD 10〜20% 相当の低い影響に留まる。
-  const gdRoomSignals = Array.isArray(b.gdRoomSignals)
-    ? b.gdRoomSignals
-        .map((s) => normalizeGdRoomSignal(s))
-        .filter((s): s is GdRoomSignalSnapshot => s !== null)
-        .slice(0, 3)
-    : [];
+  const gdRoomSignals = ctx.gdRoomSignals as GdRoomSignalSnapshot[];
   const gdRoomBlock = formatGdRoomSignalsForMatching(gdRoomSignals);
 
   const systemPrompt = [

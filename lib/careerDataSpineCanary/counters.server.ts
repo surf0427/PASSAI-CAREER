@@ -21,6 +21,7 @@ import {
   CANARY_MEMORY_OUTCOMES,
   CANARY_PURPOSE_COVERAGES,
   CANARY_SOURCE_ORIGINS,
+  CANARY_STRUCTURAL_BRIDGE_SOURCES,
   CANARY_SYNC_OUTCOMES,
 } from './observation';
 import { CAREER_SOURCE_KINDS } from '@/lib/careerSourceData/types';
@@ -57,9 +58,11 @@ function emptyState(now: number): CanaryCounterState {
     context: zero(CANARY_CONTEXT_OUTCOMES),
     purpose: {},
     memorySectionTotal: 0,
-    sourceOrigin: zero(
-      CAREER_SOURCE_KINDS.flatMap((k) => CANARY_SOURCE_ORIGINS.map((o) => `${k}:${o}`)),
-    ),
+    sourceOrigin: zero([
+      ...CAREER_SOURCE_KINDS.flatMap((k) => CANARY_SOURCE_ORIGINS.map((o) => `${k}:${o}`)),
+      // structural bridge（server-readable な representation が存在しない source）。
+      ...CANARY_STRUCTURAL_BRIDGE_SOURCES.map((k) => `${k}:not_server_capable`),
+    ]),
     sourceVerdict: zero(
       CAREER_SOURCE_KINDS.flatMap((k) => SOURCE_SYNC_VERDICTS.map((v) => `${k}:${v}`)),
     ),

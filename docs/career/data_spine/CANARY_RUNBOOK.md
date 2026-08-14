@@ -52,6 +52,7 @@ npm run qa:careerCanaryObservability
 npm run qa:careerServerContextBatch1
 npm run qa:careerServerContextBatch2
 npm run qa:careerServerContextBridge
+npm run qa:careerDataSpinePersonalOptimizationClosure
 npm run qa:careerMemoryAll
 npm run qa:careerEvents
 npm run qa:careerEventSignalSeries
@@ -190,6 +191,45 @@ purpose を有効化すると、その purpose の cross-feature も **source ki
 
 ---
 
+# 3d. Stage 2d — Closure Batch（全 live purpose / `D-S9`〜`D-S14`）
+
+**新しい env は不要。** Closure Batch で **live purpose 7 件すべて**が
+既存の `CAREER_SERVER_CONTEXT_PURPOSES` / `CAREER_SERVER_CONTEXT_CANARY_USER_IDS` 配下に入った。
+
+```bash
+# 1 つずつ足して観測する（一度に全部にしない）
+CAREER_SERVER_CONTEXT_PURPOSES=interview_practice,consultation,company_research_review
+# 観測して問題なければ
+CAREER_SERVER_CONTEXT_PURPOSES=...,presentation_feedback
+CAREER_SERVER_CONTEXT_PURPOSES=...,matching
+CAREER_SERVER_CONTEXT_PURPOSES=...,self_analysis,self_analysis_deep_dive
+```
+
+## purpose 別の確認ポイント
+
+| purpose | 画面 | 特に見るもの |
+|---|---|---|
+| `presentation_feedback` | `/career/presentation` | お題生成・評価・QA の 3 経路すべて。`useCareerContext` OFF のとき context が増えていないこと |
+| `matching` | `/career/matching` | ★ **スコア（決定的エンジン）が従来と変わらないこと**。AI 出力だけでなく順位・総合点を見る |
+| `self_analysis` | `/career/self-analysis` | 要約が従来どおり。job 経路のとき重複生成が起きないこと（identity hash 不変） |
+| `self_analysis_deep_dive` | `/career/self-analysis`（深掘り） | 質問の重複回避が効いていること（pastSummaries が server 由来でも同じ 3 件） |
+
+## `gd_room` は claim 無しでも server 由来になる（仕様）
+
+`gd_room` は **server-authoritative**（`D-S10`）。Source-Sync claim を要求しないため、
+`sourceVerdict` に `gd_room:*` は出ず、`sourceOrigin` は `gd_room:server` になる。
+**これは bug ではない**（server が著者のデータに client cache との一致を求めない）。
+
+ただし canary gate は効くので、非 canary user では `gd_room:bridge` になる。
+
+## solo GD は永続的に bridge（structural / `D-S11`）
+
+`gd_solo:not_server_capable` が観測に出る。これは「同期していない」ではなく
+**server-readable な representation がそもそも無い**という意味。
+数が減ることは無いので、`bridge` 率の分子として扱わないこと。
+
+---
+
 # 4. 観測（operator inspection）
 
 集計値だけを返す read-only エンドポイントを開く。
@@ -215,7 +255,8 @@ GET /api/career/data-spine-canary
     "memory":  { "persisted": 7, "rebuilt": 3, "stale": 2, "invalid": 0, "omitted": 0 },
     "context": { "server_context_used": 8, "bridge_fallback": 4, ... },
     "coverage": { "full_server": 6, "partial_server": 2, "bridge_fallback": 4, "gated_off": 0 },
-    "sourceOrigin":  { "profile:server": 8, "matching:bridge": 3, ... },
+    "sourceOrigin":  { "profile:server": 8, "matching:bridge": 3, "gd_room:server": 5,
+                       "gd_solo:not_server_capable": 8, ... },
     "sourceVerdict": { "profile:verified": 8, "matching:mismatch": 3, ... },
     "rates":   { "syncVerified": 0.83, "syncMismatch": 0.17, "contextUsed": 0.67, ... },
     "note": "process-local approximate counters; resets on restart/redeploy; ..."
@@ -237,6 +278,8 @@ GET /api/career/data-spine-canary
 | `invalid` が出る | signal の wire 不正 / Memory row 破損 | 即 rollback して調査 |
 | `bridge_fallback` が 100% | canary gate か sync が通っていない | UUID・env・端末同期を確認 |
 | 面接 prompt が明らかに変わった | parity 崩れ | **即 rollback**。parity QA を再実行 |
+| matching のスコア / 順位が変わった | 決定的エンジンの入力が変わった（`D-S9`） | **即 rollback**。`qa:careerMatching` を再実行 |
+| `gd_room:bridge` ばかり | canary gate か RLS policy（owner select）が効いていない | `career_gd_results_hydrate_apply.sql` の適用状況を確認 |
 | AI 機能のエラー率上昇 | fail-open が効いていない可能性 | **即 rollback** |
 
 ---
@@ -293,6 +336,7 @@ rollback は必ず「**context を減らす**」方向で行う。
 | Stage 2 | \+ `interview_practice` Server Context / 同一 1 user | server context 利用・bridge fallback・parity・context size |
 | Stage 2b | \+ `consultation` / `company_research_review`（`D-S5`）/ 同一 1 user | 重複注入が無いこと・purpose 横断の fallback 分類 |
 | Stage 2c | Batch 2 の cross-feature 退役（`D-S6`）/ env 追加なし | source kind 別 coverage・partial_server の内訳・出力 parity |
+| Stage 2d | Closure Batch: 残り 4 purpose + `gd_room`（`D-S9`/`D-S10`）/ env 追加なし | matching スコア不変・presentation 3 経路・self-analysis job identity・structural bridge の分離観測 |
 | Stage 3 | 観測のみ（拡大しない） | H-4 rollout evidence の蓄積 |
 
 **Stage 3 の次（他ユーザーへの拡大）は H-4 の Human decision。本 runbook では扱わない。**
@@ -304,7 +348,7 @@ rollback は必ず「**context を減らす**」方向で行う。
 - Consent production（`CAREER_CONSENT_*`）
 - Layer 4（`CAREER_AGGREGATED_INSIGHT_*`）
 - Layer 5（`CAREER_COMPANY_KNOWLEDGE_*`）
-- Batch 1（`interview_practice` / `consultation` / `company_research_review`）以外の Server Context purpose
+- ★ purpose list の **勝手な拡大**（`.env.local` の purpose は operator が 1 つずつ足す）
 - Personal Memory の広域 rollout（allowlist は 1 UUID のみ）
 
 ---

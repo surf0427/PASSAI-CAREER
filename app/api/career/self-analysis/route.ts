@@ -50,6 +50,7 @@ import {
   normalizeResult,
   type SelfAnalysisSummaryInput,
 } from '@/lib/careerSelfAnalysis/summaryPrompt';
+import { resolveSelfAnalysisContextInputs } from './resolveContextInputs';
 import {
   anthropicSelfAnalysisProvider,
 } from '@/lib/careerSelfAnalysis/summaryProvider';
@@ -215,13 +216,27 @@ export async function POST(req: Request) {
   }
 
   const parsed = parseBody(body);
+  // Closure Batch（`D-S9`）: base + pastSummaries を kind 単位で server / bridge から選ぶ。
+  //   ★ ここで解決した値は job identity（idempotency hash）にも入る。verified ⟹ 内容一致
+  //     なので hash は変わらない（未 verify 時は従来どおり body 由来）。
+  //   ★ conversation / userInput は request 固有の入力であり Layer 1 source ではない（不変）。
+  const ctx = await resolveSelfAnalysisContextInputs(
+    'self_analysis',
+    {
+      profile: parsed.profile,
+      activity: parsed.activity,
+      values: parsed.values,
+      pastSummaries: parsed.pastSummaries,
+    },
+    req,
+  );
   const input: SelfAnalysisSummaryInput = {
-    profile: parsed.profile,
-    activity: parsed.activity,
-    values: parsed.values,
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
     userInput: parsed.userInput,
     conversation: parsed.conversation,
-    pastSummaries: parsed.pastSummaries,
+    pastSummaries: ctx.pastSummaries,
   };
 
   return handleSelfAnalysisJobPost(

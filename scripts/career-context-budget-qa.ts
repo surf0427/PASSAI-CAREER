@@ -362,20 +362,9 @@ const PURPOSE_FIXTURES: PurposeFixture[] = [
       ];
     },
   },
-  // es_generation: companyResearch は選択時のみ（1 snapshot, preview~1200）。
-  {
-    purpose: 'es_generation',
-    featureKey: 'career-es',
-    routeBlocks: (s) => {
-      const heavy = s === 'heavy';
-      return [
-        { label: 'companyResearch', text: heavy ? txt('企業研究文脈。', 1200) : '' },
-        { label: 'selfAnalysis', text: txt('自己分析まとめ。', heavy ? 500 : 250) },
-        { label: 'question', text: txt('ES設問と文字数指定。', 300) },
-        { label: 'outputFormat', text: txt('出力フォーマット指示。', 1200) },
-      ];
-    },
-  },
+  // ★ es_generation の scenario は Closure Batch で削除（purpose retire / `D-S12`）。
+  //   ES 系 live route は career context を使わない（INTENTIONALLY_CONTEXT_FREE）ため
+  //   budget 観測対象そのものが存在しない。
 ];
 
 // ─────────────────────────────────────────────────────────────────────────

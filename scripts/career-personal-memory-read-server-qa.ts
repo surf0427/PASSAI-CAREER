@@ -98,6 +98,7 @@ const SOURCE_BUNDLE: CareerSourceBundle = {
   companyResearchLogs: [],
   presentationResults: [],
   consultationThreads: [],
+  gdRoomLogs: [],
 };
 
 // server 再算出の期待値（production と同じ projection を使う）。

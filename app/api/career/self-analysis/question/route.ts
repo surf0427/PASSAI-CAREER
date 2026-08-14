@@ -23,6 +23,7 @@ import {
   buildFollowupUserPrompt,
   countAnswers,
 } from '../deepDivePrompt';
+import { resolveSelfAnalysisContextInputs } from '../resolveContextInputs';
 import { normalizeSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 
 export const maxDuration = 80;
@@ -98,10 +99,18 @@ export async function POST(req: Request) {
   // 過去の自己分析ログ（軽量サマリ）。繰り返し回避・次テーマ選定に使う。無ければ空配列。
   const pastSummaries = normalizeSelfAnalysisPastSummaries(b.pastSummaries);
 
+  // Closure Batch（`D-S9`）: base + pastSummaries を kind 単位で server / bridge から選ぶ。
+  const ctx = await resolveSelfAnalysisContextInputs(
+    'self_analysis_deep_dive',
+    { profile: b.profile ?? null, activity: b.activity ?? null, values: b.values ?? null, pastSummaries },
+    req,
+  );
+
   // プロフィールも活動も無ければ深掘りの材料が無いので弾く（単発生成と同基準）。
-  const hasProfile = !!b.profile && Object.keys(b.profile).length > 0;
-  const hasActivity = !!b.activity && Object.keys(b.activity).length > 0;
-  const hasValues = !!b.values && Object.keys(b.values).length > 0;
+  //   ★ readiness gate は resolver 解決後の値で判定する（server 由来でも同条件）。
+  const hasProfile = !!ctx.profile && Object.keys(ctx.profile).length > 0;
+  const hasActivity = !!ctx.activity && Object.keys(ctx.activity).length > 0;
+  const hasValues = !!ctx.values && Object.keys(ctx.values).length > 0;
   const isSeed = turns.length === 0 && !answer;
 
   // 開発者ログ用の安全なメタ（件数・有無のみ。入力全文や個人情報は含めない）。
@@ -112,7 +121,7 @@ export async function POST(req: Request) {
     hasValues,
     turns: turns.length,
     answers: countAnswers(turns),
-    pastSummaries: pastSummaries.length,
+    pastSummaries: ctx.pastSummaries.length,
   };
 
   if (!hasProfile && !hasActivity) {
@@ -123,10 +132,10 @@ export async function POST(req: Request) {
   // 必ず JSON エラーを返す（非JSONな 500 → スマホで "Load failed" になるのを防ぐ）。
   try {
     const system = buildDeepDiveBaseSystem({
-      profile: b.profile ?? null,
-      activity: b.activity ?? null,
-      values: b.values ?? null,
-      pastSummaries,
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      pastSummaries: ctx.pastSummaries,
     });
 
     // ── seed（1問目）: turns 空かつ answer 無し ──────────────────────

@@ -294,9 +294,13 @@ export async function POST(req: Request) {
   //   「そのユーザーにとって注目すべき観点」の調整にだけ使う（renderer が injection 境界を付ける）。
   //   flag OFF / gate deny / 未認証 では I/O ゼロで空配列。read 失敗も従来 prompt へ fail-open。
   const syncSignal = readSourceSyncSignal(req);
+  // ★ `D-S13`: 第 4 引数の `req` により、上の resolver が既に読んだ kind は再 read されない
+  //   （1 request / 1 Layer 1 snapshot）。
   const memoryOutcome = await loadPersonalMemorySectionsForPrompt(
     'company_research_review',
     syncSignal,
+    undefined,
+    req,
   );
   recordCanaryObservation({
     purpose: 'company_research_review',

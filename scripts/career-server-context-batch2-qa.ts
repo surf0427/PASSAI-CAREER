@@ -42,6 +42,7 @@ import {
 import {
   EMPTY_CAREER_SOURCE_BUNDLE,
   emptySourceStatuses,
+  requiresSourceSync,
   CAREER_SOURCE_TABLES,
   type CareerSourceBundle,
   type CareerSourceKind,
@@ -357,7 +358,7 @@ async function main() {
     const c = await resolveConsultationContextInputs(
       {
         selfAnalysisHistory: [], esHistory: [], interviewHistory: [],
-        presentationHistory: [], companyResearch: [], matching: [],
+        presentationHistory: [], companyResearch: [], matching: [], gdRoom: [],
       },
       reqWith(ALL_KINDS),
       loader as never,
@@ -459,11 +460,15 @@ async function main() {
   {
     const kinds = Object.keys(CAREER_SOURCE_TABLES);
     check(!kinds.includes('gd'), 'source kind に gd が存在しない（mirror 無し）');
-    check(!kinds.includes('gd_room'), 'source kind に gd_room が存在しない（server 書き込み）');
+    // Closure Batch（`D-S10`）: gd_room は **server-authoritative** として server 化された。
+    // Source-Sync（client claim）を要求しないことがここでの契約。
+    check(kinds.includes('gd_room'), 'gd_room は source kind として存在する（server-authoritative）');
+    check(!requiresSourceSync('gd_room'), 'gd_room は Source-Sync を要求しない（class 2）');
+    check(requiresSourceSync('matching'), 'class 1 kind は Source-Sync を要求する');
     const consultSrc = readFileSync(join(ROOT, 'app/api/career/consultation/resolveContextInputs.ts'), 'utf8');
-    check(/gdResults:\s*\[\]/.test(consultSrc) && /gdRoomLogs:\s*\[\]/.test(consultSrc), 'consultation resolver は gd を server から組まない');
+    check(/gdResults:\s*\[\]/.test(consultSrc), 'consultation resolver は solo gd を server から組まない');
     const routeSrc = readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8');
-    check(/gd:\s*gdSnapshots/.test(routeSrc) && /gdRoom:\s*gdRoomSignals/.test(routeSrc), 'route は gd/gdRoom を bridge のまま渡す');
+    check(/gd:\s*gdSnapshots/.test(routeSrc), 'route は solo gd を bridge のまま渡す（structural bridge）');
     check(/eventSignalsBlock/.test(routeSrc), 'Event Signal は現行位置のまま（Layer 3 分離）');
   }
 

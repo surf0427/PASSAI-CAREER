@@ -12,6 +12,7 @@ import type { CareerMatchingLog } from '@/types/careerMatching';
 import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerConsultationThread } from '@/types/careerConsultation';
+import type { CareerGdRoomLog } from '@/types/careerGd';
 
 // server 側で読める Layer 1 Source の種別（＝Personal Memory section の由来 Source）。
 export type CareerSourceKind =
@@ -25,7 +26,10 @@ export type CareerSourceKind =
   | 'matching'
   | 'company_research'
   | 'presentation'
-  | 'consultation';
+  | 'consultation'
+  // Closure Batch（`D-S10`）: **server-authoritative** source（authority class 2）。
+  // 他 kind と違い client canonical の mirror ではなく、**server が著者**である。
+  | 'gd_room';
 
 export const CAREER_SOURCE_KINDS = [
   'profile',
@@ -38,14 +42,53 @@ export const CAREER_SOURCE_KINDS = [
   'company_research',
   'presentation',
   'consultation',
+  'gd_room',
 ] as const satisfies readonly CareerSourceKind[];
 
-// ★ Batch 2 で **意図的に追加していない** kind と理由（server-readable にできない）:
-//   - `gd`（ソロ GD / careerGdResults）: Supabase mirror が **存在しない**。
-//     Phase1 で localStorage canonical のまま据え置かれており、server から読む手段が無い。
-//   - `gd_room`（career_gd_room_results）: mirror はあるが **server 側が書く** データで、
-//     client は表示用 cache として持つ。Source-Sync の「client canonical vs mirror」という
-//     前提が他 kind と異なるため、別 decision が必要（Batch 3 以降）。
+// ── Source authority class（`D-S10`）────────────────────────────────
+//
+// Class 1 — Device-canonical + mirrored:
+//   canonical は端末の localStorage。Supabase は mirror。したがって server が読んだ内容が
+//   要求端末の canonical と一致する保証が無く、**Source-Sync claim による負の安全ゲート**が要る。
+//
+// Class 2 — Server-authoritative:
+//   **server（route）が著者**であり、client 側の copy は表示用 cache にすぎない。
+//   この場合 client canonical という概念が無いため Source-Sync を適用する意味が無く、
+//   適用すると「client の cache が古い＝server の正しいデータを使えない」という
+//   **逆向きの誤り**になる。authority は `authenticated owner + owner-scoped RLS + server state`。
+//
+// ★ Class 2 でも canary gate（purpose opt-in AND canary user）は **同じように必要**。
+//   免除されるのは Source-Sync verification だけで、authorization は免除されない。
+export type CareerSourceAuthorityClass = 'device_canonical_mirrored' | 'server_authoritative';
+
+export const CAREER_SOURCE_AUTHORITY: Readonly<
+  Record<CareerSourceKind, CareerSourceAuthorityClass>
+> = {
+  profile: 'device_canonical_mirrored',
+  activity: 'device_canonical_mirrored',
+  values: 'device_canonical_mirrored',
+  self_analysis: 'device_canonical_mirrored',
+  es: 'device_canonical_mirrored',
+  interview: 'device_canonical_mirrored',
+  matching: 'device_canonical_mirrored',
+  company_research: 'device_canonical_mirrored',
+  presentation: 'device_canonical_mirrored',
+  consultation: 'device_canonical_mirrored',
+  // career_gd_room_results は app/api/career/gd/room/[roomId]/result/route.ts が
+  // (room_id, user_id) で upsert する **server 著作**データ。client は履歴表示用に持つだけ。
+  gd_room: 'server_authoritative',
+};
+
+/** Source-Sync（client claim）による検証が必要な kind か（Class 1 のみ true）。 */
+export function requiresSourceSync(kind: CareerSourceKind): boolean {
+  return CAREER_SOURCE_AUTHORITY[kind] === 'device_canonical_mirrored';
+}
+
+// ★ **意図的に server-readable にしていない** kind と理由（Closure Batch で再確認済み）:
+//   - `gd`（ソロ GD / localStorage key `careerGdResults`）: Supabase table も mirror module も
+//     **存在しない**（`supabase/*.sql` の career_* 全 table・`lib/supabase/career*.ts` 全 module を
+//     走査して確認）。server から読む authoritative representation が無い。
+//     → **structural bridge**（`D-S11`。architecture debt として STATE に明記）。
 
 // table 名（DDL・client mirror と一致させる）。
 export const CAREER_SOURCE_TABLES: Readonly<Record<CareerSourceKind, string>> = {
@@ -59,6 +102,7 @@ export const CAREER_SOURCE_TABLES: Readonly<Record<CareerSourceKind, string>> = 
   company_research: 'career_company_research_logs',
   presentation: 'career_presentation_results',
   consultation: 'career_consultation_threads',
+  gd_room: 'career_gd_room_results',
 };
 
 // 履歴系 Source の 1 request あたり read 上限。
@@ -83,6 +127,8 @@ export type CareerSourceBundle = {
   companyResearchLogs: CareerCompanyResearchLog[];
   presentationResults: CareerPresentationResult[];
   consultationThreads: CareerConsultationThread[];
+  // Closure Batch: server-authoritative（Class 2）。owner-scoped RLS で自分の行だけが返る。
+  gdRoomLogs: CareerGdRoomLog[];
 };
 
 export const EMPTY_CAREER_SOURCE_BUNDLE: CareerSourceBundle = {
@@ -96,6 +142,7 @@ export const EMPTY_CAREER_SOURCE_BUNDLE: CareerSourceBundle = {
   companyResearchLogs: [],
   presentationResults: [],
   consultationThreads: [],
+  gdRoomLogs: [],
 };
 
 // 1 Source の read 結果状態。
@@ -139,5 +186,6 @@ export function emptySourceStatuses(): Record<CareerSourceKind, CareerSourceRead
     company_research: 'skipped',
     presentation: 'skipped',
     consultation: 'skipped',
+    gd_room: 'skipped',
   };
 }

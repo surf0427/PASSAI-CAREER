@@ -22,7 +22,7 @@ import {
   PERSONAL_MEMORY_TOTAL_MAX_CHARS,
   PERSONAL_MEMORY_SECTION_MAX_CHARS,
 } from '@/lib/careerMemory/personalMemoryPromptContext';
-import type { CareerContextPurpose } from '@/lib/careerContext/purpose';
+import { CAREER_CONTEXT_PURPOSES, type CareerContextPurpose } from '@/lib/careerContext/purpose';
 import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 
 let failures = 0;
@@ -57,7 +57,12 @@ const interviewSection: CareerPersonalMemorySection = cast({
 const emptyBase: CareerPersonalMemorySection = cast({ sectionKey: 'base', schemaVersion: 1, payload: { profile: {}, values: {}, activity: {} } });
 
 const TARGET: CareerContextPurpose[] = ['interview_practice', 'consultation', 'company_research_review'];
-const NON_TARGET: CareerContextPurpose[] = ['matching', 'es_generation', 'self_analysis'];
+// ★ NON_TARGET は列挙せず **全 purpose から TARGET を引いた補集合**にする。
+//   purpose を追加/削除しても manifest が陳腐化せず、新 purpose へ Personal Memory が
+//   無断で流れ込めば即 FAIL する（PROTOCOL §6.1 の網羅性 check）。
+const NON_TARGET: CareerContextPurpose[] = CAREER_CONTEXT_PURPOSES.filter(
+  (p) => !TARGET.includes(p),
+);
 const ALL_SECTIONS = [baseSection(), selfSection, esSection, interviewSection];
 
 function main() {

@@ -541,3 +541,68 @@ base と cross-feature を別 read にすると、(a) purpose あたり 2 往復
 (c) 観測 counter が二重計上される。Batch 2 では 1 read に統合した。
 
 ---
+
+---
+
+# Closure Batch — source authority classes と request-local snapshot
+
+## Authority classes（`D-S10`）
+
+```text
+Class 1  device-canonical + mirrored
+   canonical = 端末 localStorage / Supabase = mirror
+   authority = client claim + server mirror + Source-Sync（負の安全ゲート）
+   例: profile, activity, values, self_analysis, es, interview,
+       matching, company_research, presentation, consultation
+
+Class 2  server-authoritative
+   author   = server（route が service-role で upsert）
+   client   = 表示用 cache（canonical ではない）
+   authority = authenticated owner + owner-scoped RLS + server state
+   ★ Source-Sync は **適用しない**（client canonical が存在しないため）
+   ★ canary gate / authorization は **免除しない**
+   例: gd_room（career_gd_room_results）
+
+Class 3  client-only / no mirror
+   server-visible authoritative representation が存在しない
+   → structural bridge（architecture debt として明示計上）
+   例: solo gd（careerGdResults）
+```
+
+判定は `CAREER_SOURCE_AUTHORITY` / `requiresSourceSync()` が型と実行時の両方で持つ。
+
+## 1 request / 1 Layer 1 snapshot（`D-S13`）
+
+```text
+route
+ ├─ Server Context resolver ──┐
+ │                            ├─→ loadRequestSourceSnapshot(kinds, req, authorize)
+ └─ Personal Memory resolver ─┘         │
+                                        ├─ WeakMap<Request, Entry>
+                                        │    · 既読 kind → 再 read しない
+                                        │    · 未読 kind → **不足分だけ** read
+                                        │    · authorize は **毎回**再評価（fail-closed）
+                                        │    · unauthorized/unauthenticated は cache しない
+                                        ▼
+                                   Layer 1 (owner-scoped RLS)
+```
+
+### Cross-source snapshot semantics（保証範囲）
+
+```text
+保証する  : read-once per kind per request
+保証しない: 複数 table を跨ぐ single transaction snapshot
+```
+
+kind ごとに別 select であるため、read の途中に他端末の write が入れば
+異なる時点のデータが混ざりうる。これを完全に消すには大規模な transaction architecture が要るが、
+**read 安全性は Source-Sync veto が別経路で担保している**:
+
+```text
+mirror != 要求端末の claim → 該当 source を veto → stale prompt 注入なし
+```
+
+Class 2 source は client canonical を持たないためこの veto の対象外だが、
+そもそも server が著者なので「要求端末より古い」という状態が概念的に存在しない。
+
+---

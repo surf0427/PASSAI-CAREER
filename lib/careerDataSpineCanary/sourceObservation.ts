@@ -30,6 +30,18 @@ export function pickSourceOrigins(
   return out;
 }
 
+/**
+ * structural bridge source（server-readable representation が存在しない）を観測に載せる。
+ * `bridge`（safety fallback）と区別するため専用の値を使う（`D-S11`）。
+ */
+export function markStructuralBridges(
+  sources: readonly string[],
+): Record<string, CanarySourceOrigin> {
+  const out: Record<string, CanarySourceOrigin> = {};
+  for (const s of sources) out[s] = 'not_server_capable';
+  return out;
+}
+
 /** 要求 kind に限定した verdict map（未評価なら空 = 何も数えない）。 */
 export function pickSourceVerdicts(
   ctx: PurposeContextLike,

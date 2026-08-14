@@ -12,7 +12,6 @@
 
 export type CareerContextPurpose =
   | 'consultation'
-  | 'es_generation'
   | 'es_review'
   | 'interview_practice'
   | 'interview_complete'
@@ -26,7 +25,6 @@ export type CareerContextPurpose =
 
 export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
   'consultation',
-  'es_generation',
   'es_review',
   'interview_practice',
   'interview_complete',
@@ -70,25 +68,19 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
   maxContextChars: 3500,
 };
 
-// Orchestrator 移行状況（P3-E 時点）:
-//   移行済み: es_generation(P3-A) / interview_practice(P3-A, start·turn·complete 共有) /
-//             matching(P3-B) / presentation_feedback(P3-C, evaluate·qa) /
-//             company_research_review(P3-C) / consultation(P3-C, base のみ) /
-//             self_analysis(P3-D, route.ts) / self_analysis_deep_dive(P3-E, question の base builder)
-//   未移行  : es_review(静的 SYSTEM_PROMPT・base 不使用) / gd_feedback(transcript 主体・base 不使用) /
-//             interview_complete(purpose 自体は未使用) / mypage_summary(route 未実装)
-//   → career の全 AI route/builder が base context を Orchestrator 経由に統一（base 不使用 route を除く）。
+// Orchestrator 移行状況（Closure Batch 時点で再監査）:
+//   live（orchestrator 経由）: interview_practice(start·turn·complete 共有) / matching /
+//             presentation_feedback(theme·evaluate·qa) / company_research_review /
+//             consultation / self_analysis(route.ts) / self_analysis_deep_dive(question)
+//   base 不使用の live route（INTENTIONALLY_CONTEXT_FREE）:
+//             es_review / es/deep / es/organize / gd 系（transcript 主体・静的 system prompt）
+//   DORMANT（registry のみ・live callsite 0）: es_review / interview_complete / gd_feedback / mypage_summary
+//
+// ★ `es_generation` は Closure Batch で **retire**（`D-S12`）。
+//   ES 再設計（AI 代筆廃止）で live route が消滅し、orchestrator branch も renderer も
+//   到達不能になっていた。enum / registry / renderer / mapping をまとめて削除した。
 // policy は宣言（観測用）。purpose 別の実削減は P3-F 以降。route 挙動は policy に依存しない。
 export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContextPolicy> = {
-  es_generation: {
-    profile: 'include',
-    activity: 'compact',
-    values: 'include',
-    recentLogs: 'exclude', // 直近ログは使わず、profile/activity/values + 自己分析(route が別途)で生成
-    companyContext: 'optional',
-    maxContextChars: 3500,
-    notes: 'ES 生成。企業研究は選択時のみ route 側で付与。',
-  },
   es_review: {
     profile: 'minimal',
     activity: 'compact',

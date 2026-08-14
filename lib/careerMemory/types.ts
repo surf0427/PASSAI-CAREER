@@ -79,7 +79,6 @@ export const CAREER_MEMORY_BLOCK_KEYS = [
 export type CareerMemoryPurpose =
   | 'self_analysis'
   | 'self_analysis_deep_dive'
-  | 'es_generation'
   | 'es_review'
   | 'interview'
   | 'presentation'
@@ -93,7 +92,6 @@ export type CareerMemoryPurpose =
 export const CAREER_MEMORY_PURPOSES = [
   'self_analysis',
   'self_analysis_deep_dive',
-  'es_generation',
   'es_review',
   'interview',
   'presentation',

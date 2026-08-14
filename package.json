@@ -66,6 +66,7 @@
     "qa:careerCanaryObservability": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-canary-observability-qa.ts",
     "qa:careerServerContextBatch1": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-server-context-batch1-qa.ts",
     "qa:careerServerContextBatch2": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-server-context-batch2-qa.ts",
+    "qa:careerDataSpinePersonalOptimizationClosure": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-data-spine-personal-optimization-closure-qa.ts",
     "qa:careerPersonalMemoryInvalidation": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-personal-memory-invalidation-qa.ts",
     "qa:careerPersonalMemoryMirrorDivergence": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-personal-memory-mirror-divergence-qa.ts",
     "qa:careerServerContextBridge": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-server-context-bridge-qa.ts",

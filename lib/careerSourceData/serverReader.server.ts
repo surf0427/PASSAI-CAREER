@@ -35,14 +35,17 @@ import {
   rowToCareerCompanyResearchLog,
   rowToCareerPresentationResult,
   rowToCareerConsultationThread,
+  rowToCareerGdRoomLog,
   CAREER_MATCHING_SELECT_COLUMNS,
   CAREER_COMPANY_RESEARCH_SELECT_COLUMNS,
   CAREER_PRESENTATION_SELECT_COLUMNS,
   CAREER_CONSULTATION_SELECT_COLUMNS,
+  CAREER_GD_ROOM_SELECT_COLUMNS,
   type CareerMatchingResultRow,
   type CareerCompanyResearchRow,
   type CareerPresentationResultRow,
   type CareerConsultationThreadRow,
+  type CareerGdRoomResultRow,
   type CareerValuesRow,
   type CareerSelfAnalysisResultRow,
   type CareerEsLogRow,
@@ -236,6 +239,7 @@ export async function loadCareerSourceData(
       companyResearchLogs: [],
       presentationResults: [],
       consultationThreads: [],
+      gdRoomLogs: [],
     };
 
     // 要求された Source のみ並列に読む（不要 Source への I/O ゼロ）。
@@ -353,6 +357,22 @@ export async function loadCareerSourceData(
         readLogSource<CareerConsultationThreadRow, ReturnType<typeof rowToCareerConsultationThread>>(
           reader, userId, CAREER_SOURCE_TABLES.consultation, CAREER_CONSULTATION_SELECT_COLUMNS, rowToCareerConsultationThread,
         ).then((r) => { bundle.consultationThreads = r.items; statuses.consultation = r.status; }),
+      );
+    }
+
+    // Closure Batch: gd_room（server-authoritative / class 2）。
+    //   ★ 読み方は他 kind と同じ owner-scoped select（`user_id = <server auth の userId>`）。
+    //     RLS の owner-select policy と二重で自分の行だけに限定される。
+    //     service role は使わない（GD room API の service-role 経路とは別系統）。
+    //   ★ mapper が null を返す行（壊れた row）は落とす。
+    if (wanted.has('gd_room')) {
+      jobs.push(
+        readLogSource<CareerGdRoomResultRow, ReturnType<typeof rowToCareerGdRoomLog>>(
+          reader, userId, CAREER_SOURCE_TABLES.gd_room, CAREER_GD_ROOM_SELECT_COLUMNS, rowToCareerGdRoomLog,
+        ).then((r) => {
+          bundle.gdRoomLogs = r.items.filter((l): l is NonNullable<typeof l> => l !== null);
+          statuses.gd_room = r.status;
+        }),
       );
     }
 

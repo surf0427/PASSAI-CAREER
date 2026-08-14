@@ -120,62 +120,124 @@
 
 ---
 
-# 5.1 purpose 別 bridge retirement status（`D-S6` / Batch 2 時点）
+# 5.1 Personal Optimization — 最終 inventory（Closure Batch / 2026-08-14）
 
-## 5.1.1 server context 対象 purpose
+## 5.1.0 `FULL_SERVER` の定義（`D-S8`）
 
-| purpose | status | server 化済み（kind 単位・verified 時） | 恒久 bridge のまま | 理由 |
-|---|---|---|---|---|
-| `interview_practice` | **NEAR_FULL_SERVER** | base(profile/activity/values) / selfAnalysis / es / matching / consultationInsights / companyResearch | — | 残 bridge なし。body は **fallback 専用**として残す |
-| `consultation` | **NEAR_FULL_SERVER** | base / selfAnalysisHistory / esHistory / interviewHistory / presentationHistory / companyResearch / matching | `gd` / `gdRoom` / `eventSignals` | mirror 無し / server 書き込み / Layer 3 分離（`D-S6`） |
-| `company_research_review` | **NEAR_FULL_SERVER** | base / selfAnalysis / matching（+ Personal Memory dedupe 済み） | — | 残 bridge なし |
+```text
+FULL_SERVER =
+  この purpose が通常の verified flow で使う personal-context source が
+  **すべて server-derived にできる**。
+  bridge は unverified / flag OFF / non-canary / unreadable のときの
+  safety fallback としてのみ残る。
+```
 
-> **FULL_SERVER と呼ばないのは意図的。** request body の bridge field は
-> **削除していない**（未 verify / gate OFF / 非 canary のときの fallback として必須）。
-> 「server が権威になった」であって「bridge が消えた」ではない。
+★ 「request body に fallback field が物理的に存在しない」ことでは **ない**。
+canary 期間中は fallback safety のため bridge payload が残り続ける。これは仕様であり debt ではない。
 
-## 5.1.2 全 purpose inventory（2026-08-14 実測）
+## 5.1.1 Purpose matrix
 
-| purpose | live callsite | server context | Personal Memory | 判定 |
-|---|---|---|---|---|
-| `consultation` | `consultation/consultationPrompt.ts` | ✅ Batch 1+2 | ❌（重複回避・`D-S5`） | LIVE |
-| `interview_practice` | `interview/interviewPrompt.ts` | ✅ Batch 1+2 | ❌ | LIVE |
-| `company_research_review` | `company-research/route.ts` | ✅ Batch 1+2 | ✅（dedupe 済み） | LIVE |
-| `presentation_feedback` | `presentation/presentationPrompt.ts` | ❌ | ❌ | LIVE（未移行） |
-| `matching` | `matching/route.ts` | ❌ | ❌ | LIVE（未移行） |
-| `self_analysis_deep_dive` | `self-analysis/deepDivePrompt.ts` | ❌ | ❌ | LIVE（未移行） |
-| `es_generation` | **なし** | — | — | ★ **ORPHAN**（`D-S7`） |
-| `es_review` | なし | — | — | DORMANT（registry のみ） |
-| `interview_complete` | なし（complete route は `interview_practice` を使用） | — | — | DORMANT（registry のみ） |
-| `gd_feedback` | なし（GD route は静的 prompt） | — | — | DORMANT（registry のみ） |
-| `self_analysis` | なし（self-analysis route は静的 prompt） | — | — | DORMANT（registry のみ） |
-| `mypage_summary` | なし | — | — | DORMANT（registry のみ） |
+| Purpose | Live? | Status | Server sources | Safety fallback bridge | Structural bridge | Notes |
+|---|---:|---|---|---|---|---|
+| `interview_practice` | ✅ | **FULL_SERVER** | profile / activity / values / self_analysis / es / matching / consultation / company_research | 全 field（未 verify 時） | — | `companyResearch.logId` は selection input（RLS で owner に限定） |
+| `company_research_review` | ✅ | **FULL_SERVER** | profile / activity / values / self_analysis / matching | 全 field | — | Personal Memory 併用（dedupe 済み・`D-S5`） |
+| `presentation_feedback` | ✅ | **FULL_SERVER** | profile / activity / values / self_analysis / es / interview / matching / consultation | 全 field | — | `config.useCareerContext` は user の同意 toggle（source ではない） |
+| `self_analysis` | ✅ | **FULL_SERVER** | profile / activity / values / self_analysis | base + pastSummaries | — | `conversation` / `userInput` は request 固有入力（source ではない） |
+| `self_analysis_deep_dive` | ✅ | **FULL_SERVER** | profile / activity / values / self_analysis | base + pastSummaries | — | 同上 |
+| `consultation` | ✅ | **HYBRID** | profile / activity / values / self_analysis / es / interview / presentation / company_research / matching / **gd_room** | 上記すべて | **solo `gd`** | Event Signal は Layer 3 として分離（`D-L3`） |
+| `matching` | ✅ | **HYBRID** | profile / activity / values / self_analysis / es / interview / consultation / **gd_room** | 上記すべて | **solo `gd`** | 決定的スコアエンジンの入力も同じ resolver 経由 |
+| `es_review` | ❌ | DORMANT_INTENTIONAL | — | — | — | registry のみ。es-review route は静的 SYSTEM_PROMPT |
+| `interview_complete` | ❌ | DORMANT_INTENTIONAL | — | — | — | complete route は `interview_practice` を使用 |
+| `gd_feedback` | ❌ | DORMANT_INTENTIONAL | — | — | — | GD route は transcript 主体・career context 不使用 |
+| `mypage_summary` | ❌ | DORMANT_INTENTIONAL | — | — | — | route 未実装（予約） |
+| ~~`es_generation`~~ | — | **RETIRED**（`D-S12`） | — | — | — | live callsite ゼロ。enum / registry / renderer / mapping を削除 |
 
-## 5.1.3 Layer 1 source kind inventory
+### INTENTIONALLY_CONTEXT_FREE な live route（purpose を持たない）
 
-| kind | table | server read | sync view | 備考 |
-|---|---|---|---|---|
-| `profile` | `career_profiles` | ✅ | 全体 jsonb | |
-| `activity` | `career_activities` | ✅ | 全体 jsonb | |
-| `values` | `career_values` | ✅ | `updatedAt` 除外 | DB trigger 上書き |
-| `self_analysis` | `career_self_analysis_results` | ✅ | id/createdAt/userInput/result | |
-| `es` | `career_es_logs` | ✅ | 昇格列 + meta のみ | body/mode/groupId 等は mirror 非往復 |
-| `interview` | `career_interview_results` | ✅ | mode/turns/result/企業研究連携 | |
-| **`matching`** | `career_matching_results` | ✅ **Batch 2** | id/createdAt/userInput/result | |
-| **`company_research`** | `career_company_research_logs` | ✅ **Batch 2** | 昇格列 + jsonb（`updatedAt` 除外） | DB trigger 上書き |
-| **`presentation`** | `career_presentation_results` | ✅ **Batch 2** | 昇格列 + result/qa | |
-| **`consultation`** | `career_consultation_threads` | ✅ **Batch 2** | id/createdAt/title/messages（`updatedAt` 除外） | DB trigger 上書き |
-| `gd`（ソロ） | **なし** | ❌ 不可 | — | ★ Supabase mirror が存在しない |
-| `gd_room` | `career_gd_room_results` | ❌ 意図的除外 | — | ★ server 側が書くデータ（canonical 前提が異なる） |
+`es/deep` / `es/organize` / `es-review` / GD 系 route / `self-analysis/job` は
+**career context を一切使わない**のが現在の product contract（静的 system prompt + その場の入力のみ）。
+purpose enum を持たないため上表には現れない。
 
-## 5.1.4 context budget（Batch 2 前後）
+## 5.1.2 Source authority matrix
 
-**変化なし（payload byte 完全一致）。**
+| Source | Authority class | Server-readable | Source-Sync needed | Structural limitation |
+|---|---|---:|---:|---|
+| `profile` | Class 1 device-canonical + mirrored | ✅ | ✅ | — |
+| `activity` | Class 1 | ✅ | ✅ | — |
+| `values` | Class 1 | ✅ | ✅ | `updated_at` は DB trigger 上書きのため sync view 除外 |
+| `self_analysis` | Class 1 | ✅ | ✅ | — |
+| `es` | Class 1 | ✅ | ✅ | body / mode / groupId / version / deepDive は mirror 非往復 |
+| `interview` | Class 1 | ✅ | ✅ | — |
+| `matching` | Class 1 | ✅ | ✅ | — |
+| `company_research` | Class 1 | ✅ | ✅ | `updated_at` は trigger 上書きのため除外 |
+| `presentation` | Class 1 | ✅ | ✅ | — |
+| `consultation` | Class 1 | ✅ | ✅ | `updated_at` は trigger 上書きのため除外 |
+| **`gd_room`** | **Class 2 server-authoritative** | ✅ | ❌（`D-S10`） | theme / format / 所要時間は table に無く既定値になる |
+| **solo `gd`** | **Class 3 client-only / no mirror** | ❌ | — | ★ **table も mirror module も存在しない**（`D-S11`） |
 
-server 経路は client と同じ pure selector を使うため、同一データに対する出力は同一。
-QA `B2-5` が interview / consultation の全 field で `JSON.stringify` 一致を固定している。
-selector 側の cap（history 3 件 / companyResearch 5 件 / matching 2 件 等）が効くため、
-log 件数を 1 → 5 → 20 と増やしても payload は上限で頭打ちになる（実測で確認）。
+### Class の意味
+
+- **Class 1**: canonical は端末の localStorage、Supabase は mirror。server が読んだ内容が要求端末の
+  canonical と一致する保証が無いため **Source-Sync claim（負の安全ゲート）が必須**。
+- **Class 2**: **server が著者**（`career_gd_room_results` は result route が service-role で upsert）。
+  client の copy は表示 cache。client canonical という概念が無いため Source-Sync を適用すると
+  「client cache が古い ⟹ 正しい server データを使えない」という **逆向きの誤り**になる。
+  authority は `authenticated owner + owner-scoped RLS + server state`。
+  ★ canary gate（purpose opt-in AND canary user）は **免除されない**。
+- **Class 3**: server-visible authoritative representation が存在しない。
+
+## 5.1.3 Bridge inventory（2 種類を厳密に分ける）
+
+### (A) Safety fallback bridge — **architecture debt ではない**
+
+server path は完成しており、以下のときだけ使われる:
+`Source-Sync mismatch` / `flag OFF` / `non-canary` / `unreadable` / `server 空 + bridge 有`。
+
+対象: 全 migrated purpose の全 personal field（上表 "Safety fallback bridge" 列）。
+
+> canary 期間中は **意図的に残す**。これを削ると未 verify 時に context が消える。
+
+### (B) Structural bridge dependency — **architecture debt**
+
+server-readable source が存在せず、**normal verified flow でも** client bridge が必要:
+
+| Source | 使用 purpose | 影響 | 解消に必要なもの |
+|---|---|---|---|
+| solo `gd`（`careerGdResults`） | `consultation`（gd block）/ `matching`（gdSnapshot） | 補助文脈のみ（主情報は活動・自己分析・就活軸。matching では決定的エンジンに入れず AI 補助 10〜20% 相当） | 新 table + RLS + client mirror writer + Source-Sync kind（`D-S11` で **見送り決定**） |
+
+観測では `gd_solo:not_server_capable` として **safety fallback とは別に**数える（`D-S11`）。
+
+## 5.1.4 Layer 1 read efficiency / snapshot semantics
+
+- **1 request / 1 Layer 1 snapshot**（`D-S13`）。`Request` を key にした WeakMap で
+  Server Context resolver と Personal Memory resolver が **同じ kind を二度読まない**。
+  （Closure Batch 前は `company_research_review` が 1 request で 2 回読んでいた。実測して修正済み。）
+- 観測は purpose あたり 1 件（`company_research_review` は Personal Memory の 1 件へ合流）。
+
+### 保証していること / していないこと（過大主張しない）
+
+```text
+保証する  : read-once per kind per request（同一 request 内で同じ kind を二度読まない）
+保証しない: 複数 table を跨いだ single transaction snapshot
+```
+
+kind ごとに別 select であり、その間に他端末の write が入れば異なる時点のデータが混ざりうる。
+ただし read 安全性は `D-S1` の Source-Sync veto が担保する
+（mirror != 要求端末 claim ⟹ その source を veto ⟹ stale prompt 注入なし）。
+
+## 5.1.5 Personal Optimization completion（誇張しない評価）
+
+| 観点 | 評価 | 根拠 |
+|---|---|---|
+| **structural implementation** | **~98%** | Layer 1 reader / Source-Sync / authority class / per-source merge / shared selector / canary gate / observability / request snapshot がすべて実装・QA 済み。残りは W2/W5 の write integrity のみ |
+| **live-purpose migration** | **100%（7/7）** | live purpose 7 件すべてが server context 経路に接続済み（5 FULL_SERVER + 2 HYBRID）。LEGACY はゼロ |
+| **safety fallback dependence** | **意図的に 100%** | 全 purpose が未 verify 時に bridge へ倒れる。**これは debt ではなく設計**（canary 期間の必須安全装置） |
+| **structural bridge debt** | **1 source（solo GD）のみ** | 全 personal source 12 種のうち 1 種。補助文脈用途に限定。`D-S11` で意図的に据え置き |
+| **browser validation** | **0%** | ★ **NOT PERFORMED — deferred by Human instruction** |
+
+> 完成度を「bridge field が物理的に残っているから未完」とは数えない（`D-S8`）。
+> 逆に「意図的な safety fallback がある」ことを理由に過小評価もしない。
+> **未解決の architecture work は solo GD mirror（意図的据え置き）と W2/W5 write integrity の 2 件のみ。**
 
 ---
 
@@ -193,9 +255,10 @@ parity harness / adversarial QA まで。実ユーザー click-through と実 AI
 
 0. **~~D-R2~~ は closed**（`D-S1`）。残るのは下記のみ。
 
-1. **~~NEXT-6 の残り~~ は Batch 2 で解消**（`D-S6`）。残る恒久 bridge は `gd` / `gd_room` /
-   `eventSignals` のみで、いずれも **意図的**（mirror 無し / server 書き込み / Layer 3 分離）。
-   なお request body の bridge field 自体は fallback 用に残す（削除しない）。
+1. **~~NEXT-6 の残り~~ は Batch 2 + Closure Batch で解消**。`gd_room` は Class 2 として server 化
+   （`D-S10`）。残る structural bridge は **solo `gd` の 1 件のみ**（`D-S11` で意図的据え置き）。
+   `eventSignals` は Layer 3 であり Personal Optimization の source ではない（`D-L3`）。
+   request body の bridge field 自体は safety fallback 用に残す（削除しない・`D-S8`）。
 2. **NEXT-5 の wiring 先が存在しない**: 現在 Personal Memory の由来 Source（profile / activity /
    values / self_analysis / es / interview）を reset・delete する UI が repository に無い。
    primitive（`invalidatePersonalMemoryForSourceReset`）は用意済みで、将来 reset 機能を足すときに
@@ -206,10 +269,10 @@ parity harness / adversarial QA まで。実ユーザー click-through と実 AI
    ★ member 向け read / write に **service-role credential は不要**。真の blocker は
    H-6（placement / identity）・H-7（法務文言と policy manifest 行）・DDL の production 適用。
 4. **Layer 4 / Layer 5 は production consumer ゼロのまま**（意図的）。
-5. **`es_generation` purpose は ORPHAN（Batch 2 で確定・`D-S7`）**。live callsite ゼロ。
-   削除は行わず、retirement か `es_review` への再マッピングかを **Human decision** として残す。
-   同様に `lib/careerServerContext/baseContext.server.ts` は Batch 2 以降
-   **production から呼ばれない QA 対象 module**（DORMANT_INTENTIONAL / `D-S7`）。
+5. **~~`es_generation`~~ は Closure Batch で retire 完了**（`D-S12`）。enum / registry / orchestrator
+   branch / renderer / purposeMapping / QA fixture をすべて削除し、実 call graph と一致させた。
+   `lib/careerServerContext/baseContext.server.ts` は依然 **DORMANT_INTENTIONAL**
+   （production から呼ばれない QA 対象 module。Batch 3 で suite 移行後に削除予定）。
 6. **別端末 stale write による mirror 巻き戻り（`D-S3` W2/W5）は未防止**。
    read 安全性は `D-S1` veto が担保するが、mirror integrity は保証していない。
    完全防止には未適用 draft（`supabase/prototype/career_source_write_guard_draft.sql`）の適用と
