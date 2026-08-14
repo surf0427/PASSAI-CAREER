@@ -72,14 +72,29 @@ export function useSelfAnalysisGeneration({
 
   const controllerRef = useRef<SelfAnalysisGenerationController | null>(null);
   const userIdRef = useRef(userId);
-  userIdRef.current = userId;
   const getBodyRef = useRef(getRequestBody);
-  getBodyRef.current = getRequestBody;
   const getTurnRef = useRef(getTurnCount);
-  getTurnRef.current = getTurnCount;
+  const routerRef = useRef(router);
 
-  if (!controllerRef.current && typeof window !== 'undefined') {
-    controllerRef.current = new SelfAnalysisGenerationController({
+  // 「常に最新の props を読む」ための ref 同期。**render 中には書かない**
+  // （react-hooks/refs: render 中の ref 書込みは再描画整合性を壊しうる）。
+  // controller の callback（timer / fetch 完了 / storage event / event handler）は
+  // すべて commit 後に走るため、commit ごとに同期すれば従来と同じ最新値を読む。
+  useEffect(() => {
+    userIdRef.current = userId;
+    getBodyRef.current = getRequestBody;
+    getTurnRef.current = getTurnCount;
+    routerRef.current = router;
+  });
+
+  // mount: controller 生成 → pending から resume → multi-tab listener。unmount: dispose。
+  //   ★ controller の生成を render 中ではなく effect 内で行う。render 中に ref を読み書きせず、
+  //     Date.now() 等の不純呼び出しも render phase に置かない（react-hooks/purity）。
+  //     effect は client でのみ走るため、従来の `typeof window !== 'undefined'` 判定は不要。
+  //   ★ cleanup で dispose し ref を空に戻すので、再 mount では必ず新しい controller を作る
+  //     （dispose 済み controller が再利用されて polling が無言で止まることを防ぐ）。
+  useEffect(() => {
+    const c = new SelfAnalysisGenerationController({
       getOwnerScope: () => userIdRef.current,
       buildRequestBody: () => getBodyRef.current(),
       postGenerate: (body) => httpPost('/api/career/self-analysis', body),
@@ -91,7 +106,7 @@ export function useSelfAnalysisGeneration({
           userId: userIdRef.current,
           turnCount: getTurnRef.current(),
         }),
-      navigate: () => router.push('/career/self-analysis/result'),
+      navigate: () => routerRef.current.push('/career/self-analysis/result'),
       storage: window.localStorage,
       now: () => Date.now(),
       schedule: (ms, cb) => window.setTimeout(cb, ms),
@@ -101,13 +116,9 @@ export function useSelfAnalysisGeneration({
       outputSchemaRevision: SELF_ANALYSIS_OUTPUT_SCHEMA_REVISION,
       validateResult: (r) => !!r && typeof r === 'object',
     });
-  }
-
-  // mount: pending から resume + multi-tab listener。unmount: dispose。
-  useEffect(() => {
-    const c = controllerRef.current;
-    if (!c) return;
+    controllerRef.current = c;
     c.resumeFromMount();
+
     const onStorage = (e: StorageEvent) => {
       const owner = userIdRef.current;
       if (!owner) return;
@@ -117,8 +128,8 @@ export function useSelfAnalysisGeneration({
     return () => {
       window.removeEventListener('storage', onStorage);
       c.dispose();
+      if (controllerRef.current === c) controllerRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // logout（member → null）: polling 停止 + pending 削除。

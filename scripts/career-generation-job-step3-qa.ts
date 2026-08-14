@@ -633,6 +633,42 @@ console.log('[F] server recoveryAction mapper + source contracts');
   const hook = readFileSync(join(process.cwd(), 'app', 'career', 'self-analysis', 'useSelfAnalysisGeneration.ts'), 'utf8');
   check('hook: mount resume + storage listener + dispose', /resumeFromMount\(\)/.test(hook) && /addEventListener\('storage'/.test(hook) && /\.dispose\(\)/.test(hook));
   check('hook: logout で onLogout', /onLogout\(\)/.test(hook));
+
+  // ── React Compiler 準拠（react-hooks/refs・react-hooks/purity）─────────────
+  //   controller の生成と ref 同期を render phase から effect へ出した状態を固定する。
+  //   ここが render phase へ戻ると lint が再び赤くなり、再描画整合性も壊れる。
+  {
+    // hook 本体トップレベル（インデント 2）での ref 書込みが無いこと。
+    //   effect 内の同期はインデント 4 以上になるため誤検出しない。
+    const renderPhaseRefWrite = /^ {2}[A-Za-z_$][\w$]*Ref\.current\s*=/m.test(hook);
+    check('hook: render 中に ref を書かない（react-hooks/refs）', !renderPhaseRefWrite);
+
+    // controller 生成が effect の内側にあること（インデント 4 以上）。
+    check(
+      'hook: controller は effect 内で生成する（render 中に生成しない）',
+      / {4,}(const \w+ = )?new SelfAnalysisGenerationController\(/.test(hook),
+    );
+    // 旧 render-phase 生成パターンが復活していないこと。
+    check(
+      'hook: 旧 render-phase 生成パターンが無い',
+      !/if \(!controllerRef\.current && typeof window/.test(hook),
+    );
+    // ref 同期用の effect（依存配列なし = 毎 commit）が存在すること。
+    check(
+      'hook: props→ref 同期を effect で行う',
+      /useEffect\(\(\) => \{[\s\S]{0,400}?userIdRef\.current = userId;/.test(hook),
+    );
+    // unmount で dispose し ref を空へ戻す（dispose 済み controller の再利用防止）。
+    check(
+      'hook: cleanup で dispose 後に controller ref を null へ戻す',
+      /\.dispose\(\);[\s\S]{0,200}?controllerRef\.current = null;/.test(hook),
+    );
+    // 生成直後に resume する順序（controller 未生成のまま resume しない）。
+    check(
+      'hook: controller 生成 → resumeFromMount の順',
+      hook.indexOf('new SelfAnalysisGenerationController(') < hook.indexOf('c.resumeFromMount()'),
+    );
+  }
   check('24 client で lease 複製定数を持たない', !/lease/i.test(readFileSync(join(process.cwd(), 'lib', 'careerSelfAnalysis', 'clientJob', 'controller.ts'), 'utf8').replace(/\/\/.*$/gm, '')));
 }
 
