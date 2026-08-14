@@ -19,7 +19,11 @@ import type {
   CareerGdRoomRoleEstimate,
 } from '@/types/careerGd';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import {
+  AI_BUDGET_PRESET_80S_WALL,
+  createAiCallBudget,
+  createTimeoutSignal,
+} from '@/lib/aiTimeout';
 import { CAREER_GD_MODEL } from '../gdPrompt';
 import { CAREER_GD_EVAL_AXIS_LABELS } from '@/app/career/gd/gdRoles';
 
@@ -321,7 +325,15 @@ export async function generateRoomFeedback(input: {
   const user = buildRoomFeedbackUser(input);
   // overall（議論全体）ぶんの出力余地を確保するため上限を少し引き上げる（STEP-GD-27）。
   const { truncated } = buildTranscript([...input.humans, ...input.ais], input.transcript);
+  // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
+  // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
+  const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const callTimeoutMs = aiBudget.nextCallTimeoutMs();
+    // 残予算が retry に足りない → retry せず打ち切る（wall 超過による 504 を防ぐ）。
+    if (callTimeoutMs === null) {
+      return null;
+    }
     const message = await anthropic.messages.create(
       {
         model: CAREER_GD_MODEL,
@@ -330,7 +342,7 @@ export async function generateRoomFeedback(input: {
         system,
         messages: [{ role: 'user', content: user }],
       },
-      { signal: createTimeoutSignal(60_000) },
+      { signal: createTimeoutSignal(callTimeoutMs) },
     );
     if (message.stop_reason === 'max_tokens') {
       if (attempt === 2) return null;

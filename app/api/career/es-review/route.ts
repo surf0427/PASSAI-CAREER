@@ -23,7 +23,11 @@ import {
   formatCompanyResearchContextForPrompt,
 } from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import {
+  AI_BUDGET_PRESET_80S_WALL,
+  createAiCallBudget,
+  createTimeoutSignal,
+} from '@/lib/aiTimeout';
 
 // 生成系と同系の Sonnet を使用（課金/usage には接続しない）。
 const MODEL = 'claude-sonnet-4-6';
@@ -288,7 +292,21 @@ export async function POST(req: Request) {
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（生成系と同方針）。
     let review: CareerEsReview | null = null;
+    // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
+    // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
+    const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = aiBudget.nextCallTimeoutMs();
+      // 残予算が retry に足りない → retry せず打ち切る（wall 超過による 504 を防ぐ）。
+      if (callTimeoutMs === null) {
+        return Response.json(
+          {
+            error: 'AI_ES_REVIEW_PARSE_FAILED',
+            detail: 'AI応答をJSONとして解釈できませんでした。',
+          },
+          { status: 502 },
+        );
+      }
       const message = await anthropic.messages.create(
         {
           model: MODEL,
@@ -297,7 +315,7 @@ export async function POST(req: Request) {
           system: SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userMessage }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';

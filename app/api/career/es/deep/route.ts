@@ -8,7 +8,7 @@
 //   - AI は本文を書かない（ai_policy）。質問生成のみ。
 
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+import { createAiCallBudget, createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 import {
   CAREER_ES_DEEP_MODEL,
   classifyEsQuestionType,
@@ -26,6 +26,11 @@ export const maxDuration = 80;
 const MAX_ANSWER_CHARS = 8000;
 // 深掘り質問は軽く、通常 15 秒以内に返る。30 秒で絞り、スマホでも必ず JSON エラーを返す。
 const QUESTION_AI_TIMEOUT_MS = 30_000;
+// 上の「必ず JSON エラーを返す」は 1 request **合計**についての約束。parse retry が満額 signal を
+// 再発行すると合計 60s になり、その約束が成立しなくなるため合計側にも上限を置く。
+const QUESTION_AI_TOTAL_BUDGET_MS = 45_000;
+// max_tokens 500 の再生成に最低限必要な残予算（下回れば retry せず parse エラーを返す）。
+const QUESTION_AI_MIN_RETRY_BUDGET_MS = 12_000;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -133,7 +138,17 @@ export async function POST(req: Request) {
 
     const priorTurns: EsTurn[] = [...turns, { role: 'answer', content: answer }];
 
+    const budget = createAiCallBudget({
+      totalBudgetMs: QUESTION_AI_TOTAL_BUDGET_MS,
+      perCallTimeoutMs: QUESTION_AI_TIMEOUT_MS,
+      minRetryBudgetMs: QUESTION_AI_MIN_RETRY_BUDGET_MS,
+    });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = budget.nextCallTimeoutMs();
+      // 残予算不足 → retry せず打ち切る（合計上限を超える前に JSON エラーを返す）。
+      if (callTimeoutMs === null) {
+        return jsonError('AI_ES_DEEP_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
+      }
       const message = await anthropic.messages.create(
         {
           model: CAREER_ES_DEEP_MODEL,
@@ -142,7 +157,7 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: buildEsFollowupUserPrompt(questionType, priorTurns) }],
         },
-        { signal: createTimeoutSignal(QUESTION_AI_TIMEOUT_MS) },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
