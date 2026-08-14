@@ -66,6 +66,7 @@ import {
 import {
   handleSelfAnalysisJobPost,
   type AuthResolution,
+  type JobClaimLogEvent,
 } from '@/lib/careerSelfAnalysis/summaryJobService';
 
 // Node runtime を明示（Anthropic SDK / node:crypto / service-role）。
@@ -94,6 +95,18 @@ function logFailure(stage: string, meta: Record<string, unknown>, error?: unknow
     stage,
     ...meta,
     ...(msg ? { error: msg.slice(0, 200) } : {}),
+  });
+}
+
+// claim の安全な観測ログ（固定コード・数値・jobId のみ。userId / identity / 本文は出さない）。
+// Gate B の B-01/B-02/B-03（legacy では job event 無し / canary では job event あり）の evidence 源。
+function logClaim(event: JobClaimLogEvent): void {
+  console.info('[career/self-analysis/job]', {
+    stage: event.stage,
+    outcome: event.outcome,
+    attemptCount: event.attemptCount,
+    status: event.status,
+    jobId: event.jobId,
   });
 }
 
@@ -311,6 +324,7 @@ export async function POST(req: Request) {
       // default 禁止。非 production かつ明示 dev flag のときだけ undefined-table legacy fallback。
       allowDevUndefinedTableFallback: () =>
         isLocalOrTestEnv() && process.env.CAREER_SELF_ANALYSIS_JOB_DEV_FALLBACK === 'true',
+      logClaim,
     },
     input,
   );

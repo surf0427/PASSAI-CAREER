@@ -137,6 +137,15 @@ columns), **client-visible state**, and **log lines** (must be redacted).
 `stage`, `applied` (bool), fixed `errorCode` (allowlist), `providerDurationMs`,
 `totalDurationMs`, and optionally jobId. Anything else = STOP.
 
+`stage` の値は `claim`（POST 時の atomic claim 結果）/ `complete` / `fail` の 3 種。
+`stage: 'claim'` の event は追加で以下のみを含む（いずれも固定 enum / 数値）:
+`outcome`（`CLAIMED_NEW` / `CLAIMED_RETRY` / `ALREADY_RUNNING` / `ALREADY_COMPLETED` /
+`FAILED_NON_RETRYABLE` / `RETRY_LIMIT_REACHED`）、`attemptCount`（数値）、
+`status`（`queued` / `running` / `completed` / `failed`）。
+B-01 / B-02 の「no `job` event」は **legacy 経路では claim 自体が発生しない**ことで満たされる
+（claim event が出たら legacy ではない ⇒ NO-GO）。
+静的 redaction 検査: `npm run qa:careerJobPathDataSpine`（[7]）。
+
 ---
 
 ## 7. Stop conditions (immediate NO-GO)

@@ -13,8 +13,10 @@ import {
 } from '@/lib/careerGenerationJob/constants';
 import { GenerationJobStorageError } from '@/lib/careerGenerationJob/errors';
 import type {
+  GenerationJobClaimOutcome,
   GenerationJobClaimResult,
   GenerationJobIdentity,
+  GenerationJobStatus,
   OwnedGenerationJob,
 } from '@/lib/careerGenerationJob/types';
 import type { SelfAnalysisSummaryInput } from './summaryPrompt';
@@ -31,6 +33,22 @@ export type AdminHandle = unknown;
 export type AdminResolution =
   | { kind: 'ok'; admin: AdminHandle }
   | { kind: 'unavailable' };
+
+/**
+ * claim 時点の観測イベント（Gate B の B-01/B-02/B-03 evidence 用）。
+ *
+ * ★ redaction 契約（Gate B B-15 allowlist）: 固定 event 名・固定 code・数値・jobId のみ。
+ *   userId / idempotencyKey / input / prompt / provider 応答は **絶対に含めない**。
+ */
+export interface JobClaimLogEvent {
+  stage: 'claim';
+  /** 6 値の固定 enum（自由文字列ではない）。 */
+  outcome: GenerationJobClaimOutcome;
+  /** attempt 回数（MAX_ATTEMPTS 接近の観測用）。 */
+  attemptCount: number;
+  status: GenerationJobStatus;
+  jobId: string;
+}
 
 export interface JobPostDeps {
   /** pilot が deployment 全体で ON か（OFF なら auth に触れず legacy）。 */
@@ -65,6 +83,11 @@ export interface JobPostDeps {
   legacy: () => Promise<Response>;
   /** 非 production かつ明示 dev fallback flag のときのみ true（default false）。 */
   allowDevUndefinedTableFallback: () => boolean;
+  /**
+   * claim 結果の観測 hook（任意）。未指定なら何も出力しない（既存 caller / QA は無改修）。
+   * 実装側は redaction 契約を守ること（JobClaimLogEvent の doc 参照）。
+   */
+  logClaim?: (event: JobClaimLogEvent) => void;
 }
 
 // ── response builders（統一 contract）────────────────────────────────
@@ -150,6 +173,16 @@ export async function handleSelfAnalysisJobPost(
     }
     return respondInfra('GENERATION_JOB_STORAGE_UNAVAILABLE', 503, true);
   }
+
+  // claim 結果を観測へ（duplicate 抑止 / reclaim / MAX_ATTEMPTS 接近は
+  // ここが唯一の可視点。固定 code + 数値 + jobId のみ）。
+  deps.logClaim?.({
+    stage: 'claim',
+    outcome: claim.outcome,
+    attemptCount: claim.attemptCount,
+    status: claim.status,
+    jobId: claim.jobId,
+  });
 
   // (3.5) outcome 別。
   switch (claim.outcome) {
