@@ -54,6 +54,7 @@ import {
 } from './rowMappers';
 import {
   CAREER_SOURCE_LOG_MAX_ROWS,
+  CAREER_SOURCE_READ_SOFT_TIMEOUT_MS,
   CAREER_SOURCE_TABLES,
   EMPTY_CAREER_SOURCE_BUNDLE,
   emptySourceStatuses,
@@ -78,10 +79,36 @@ export type CareerSourceReader = {
   ) => Promise<SourceSelectResult>;
 };
 
+/**
+ * soft timeout 用のタイマー（QA で fake を注入し、実 sleep を一切しないため DI する）。
+ * read が先に終わったら必ず cancel を呼ぶ（timer を event loop に残さない）。
+ */
+export type CareerSourceSoftTimer = {
+  promise: Promise<void>;
+  cancel: () => void;
+};
+
 export type CareerSourceReaderDeps = {
   createReader: () => Promise<CareerSourceReader | null>;
   now: () => number;
+  /** 既定は setTimeout（unref 付き）。QA では決定論 fake を注入する。 */
+  createSoftTimer?: (ms: number) => CareerSourceSoftTimer;
 };
+
+/** 既定の soft timer。unref で server lifecycle を引き止めない。 */
+function defaultSoftTimer(ms: number): CareerSourceSoftTimer {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<void>((resolve) => {
+    handle = setTimeout(resolve, ms);
+    (handle as unknown as { unref?: () => void }).unref?.();
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (handle !== undefined) clearTimeout(handle);
+    },
+  };
+}
 
 /**
  * 呼び出し側の追加 gate（canary allowlist 等）。
@@ -183,7 +210,7 @@ async function readSingleSource<TRow, TDomain>(
  * - 個々の Source の失敗は他 Source を巻き込まない（status で個別に表す）。
  * - 返す bundle は **domain 原本**（PII を含みうる）。prompt へ直接載せず、必ず Layer 2 projection を通す。
  */
-export async function loadCareerSourceData(
+async function readCareerSourceBundle(
   kinds: readonly CareerSourceKind[],
   deps: CareerSourceReaderDeps = realDeps,
   authorize?: CareerSourceAuthorize,
@@ -395,4 +422,69 @@ export async function loadCareerSourceData(
       durationMs: null,
     });
   }
+}
+
+/**
+ * 要求された Layer 1 Source を **soft timeout 付き**で読む（公開 API）。
+ *
+ * 背景（STEP-API-TIMEOUT-03）:
+ *   `CAREER_SOURCE_READ_SOFT_TIMEOUT_MS` は「1 request の Source read 全体のソフト上限」として
+ *   最初から宣言されていたが、どこからも参照されない dead constant だった。実際の read は
+ *   auth（`getUserId`）＋最大 11 table の select を **無制限**に await していたため、
+ *   AI route の時間予算（lib/aiTimeout.ts の createAiCallBudget）が始まる**前**に、
+ *   囲む境界（Vercel maxDuration / client AbortController）を食い潰しうる構造だった。
+ *
+ * 本 wrapper は read 全体（reader 生成・auth・全 select）を 1 つの soft budget で囲む。
+ *   - 上限は **bundle 全体に対して 1 回**適用する（1500ms × N query にはならない）。
+ *   - 期限内に終われば従来の戻り値をそのまま返す（挙動不変）。
+ *   - 期限超過は既存の失敗経路へ写像する: `outcome:'error'` + 要求 kind を全て `'error'`。
+ *     → `decideBaseContextSource` が `source_unavailable` を返し、既存の bridge fallback が走る。
+ *       （＝availability は fail-open、trust は fail-closed。どちらの意味論も変えない。）
+ *   - 打ち切り後に遅れて解決/棄却する read は結果へ一切反映されない
+ *     （返す statuses は wrapper がその場で構築した新規オブジェクト。共有可変状態を持たない）。
+ *
+ * ★ 既知の限界: Supabase client の I/O は AbortSignal を受けないため、`Promise.race` は
+ *   **待つのをやめるだけ**で通信自体は cancel されない。read は select のみで永続副作用を
+ *   持たないため、遅延完了しても DB/state へ影響しない。late rejection は下の catch で
+ *   吸収し、unhandled rejection にしない。
+ */
+export async function loadCareerSourceData(
+  kinds: readonly CareerSourceKind[],
+  deps: CareerSourceReaderDeps = realDeps,
+  authorize?: CareerSourceAuthorize,
+): Promise<CareerSourceReadOutcome> {
+  const wanted = new Set<CareerSourceKind>(kinds);
+  // I/O ゼロの経路は timer も張らない（挙動・コストともに従来どおり）。
+  if (wanted.size === 0) return readCareerSourceBundle(kinds, deps, authorize);
+
+  const startedAt = deps.now();
+  const timer = (deps.createSoftTimer ?? defaultSoftTimer)(CAREER_SOURCE_READ_SOFT_TIMEOUT_MS);
+
+  // readCareerSourceBundle は never-throw だが、将来の変更や late rejection でも
+  // unhandled rejection にならないよう保険の catch を必ず挟む。
+  const read = readCareerSourceBundle(kinds, deps, authorize).catch(() =>
+    outcome(EMPTY_CAREER_SOURCE_BUNDLE, {
+      outcome: 'error' as const,
+      statuses: emptySourceStatuses(),
+      durationMs: null,
+    }),
+  );
+
+  const raced = await Promise.race([
+    read.then((result) => ({ timedOut: false as const, result })),
+    timer.promise.then(() => ({ timedOut: true as const })),
+  ]);
+  timer.cancel();
+
+  if (!raced.timedOut) return raced.result;
+
+  // 打ち切り。要求した kind は「権威にできない」= error として返す（部分データは採用しない）。
+  const statuses = emptySourceStatuses();
+  for (const kind of wanted) statuses[kind] = 'error';
+  return outcome(EMPTY_CAREER_SOURCE_BUNDLE, {
+    outcome: 'error',
+    statuses,
+    durationMs: deps.now() - startedAt,
+    softTimeout: true,
+  });
 }

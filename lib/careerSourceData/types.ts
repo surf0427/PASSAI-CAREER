@@ -162,6 +162,10 @@ export type CareerSourceReadMeta = {
   statuses: Readonly<Record<CareerSourceKind, CareerSourceReadStatus>>;
   // 全体の所要時間（観測用。DI 可能な now から算出）。
   durationMs: number | null;
+  // soft timeout（CAREER_SOURCE_READ_SOFT_TIMEOUT_MS）で打ち切ったか。
+  //   ★ 観測専用。判断は outcome/statuses のみで行う（timeout は outcome:'error' に写像する）。
+  //   optional にして既存 consumer / QA の形を壊さない。
+  softTimeout?: boolean;
 };
 
 export type CareerSourceReadOutcome = {
