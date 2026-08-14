@@ -578,6 +578,147 @@ Source-Sync は **source kind 単位**。`profile` mismatch / `self_analysis` ve
 
 ---
 
+## D-S6 — Server Context Expansion Batch 2（cross-feature bridge の per-source 退役）
+
+**Decision ID:** D-S6
+**Date:** 2026-08-14（Batch 2）
+**Status:** LOCKED（実装済み・**未 activation 拡大**。canary 1 user / purpose 単位 opt-in のまま）
+
+### Decision
+
+`interview_practice` / `consultation` / `company_research_review` の **cross-feature bridge** を、
+`D-S4` の canary gate 配下で **source kind 単位**に server-driven 化した。
+
+採用した 3 原則（Human 指示どおり）:
+
+```text
+verified   → server
+unverified → 対応する bridge（＝その端末の canonical）
+duplicate  → 起こさない
+```
+
+### ★ 中核: pure selector の再利用（再実装しない）
+
+`lib/careerMemory/selector.ts` の pure selector は「生 domain log → request payload」を既に
+完全に定義している（latest 選択 / history 件数上限 / 圧縮 / dedup / fallback）。
+Batch 2 はこれを **再実装せず**、同じ selector に localStorage の代わりに
+**検証済み Layer 1 の生 log** を流し込む。
+
+自動的に成立する性質:
+
+| 性質 | 理由 |
+|---|---|
+| history / cap / 圧縮の意味論が完全保存 | 同一コードだから |
+| context budget が変わらない | 同一コードだから（実測: payload byte 完全一致） |
+| **重複注入が構造的に起きない** | payload は 1 つしか組み立てられないから |
+| verified 時は出力が bridge と同一 | 同じ selector × 同じデータ（verified ⟹ mirror == canonical） |
+
+最後の性質が本 Batch の安全性の根拠である。**server 化は「出力」を変えず「どこから来たか」だけを変える。**
+QA `B2-5` が interview / consultation の全 field で直接固定している。
+
+### 追加した Layer 1 source kind
+
+`matching` / `company_research` / `presentation` / `consultation`（合計 10 kind）。
+
+### ★ 意図的に server 化しないもの
+
+| 対象 | 理由 |
+|---|---|
+| `gd`（ソロ GD / `careerGdResults`） | **Supabase mirror が存在しない**。server から読む手段が無い。永続 bridge |
+| `gd_room`（`career_gd_room_results`） | mirror はあるが **server 側が書く**データで canonical 前提が異なる。永続 bridge |
+| `eventSignals` | Layer 3 由来。route が現行位置で resolve（`D-L3` の層分離を崩さない） |
+| 旧 client 互換の単数 field | renderer が「history 優先 / 無ければ単数」を選ぶため、server history 採用時は描画されない |
+
+### companyResearch の `logId` の扱い
+
+どの企業研究を面接に紐づけるかは **UI 上のユーザー選択**であり server から導出できない。
+よって body の `companyResearch.logId` を **selection input** としてのみ使い、
+**内容は server 側の owner-scoped read から取り直す**。
+
+`logId` は identity / content の権威を持たない: RLS により **その user 自身の行しか解決できない**。
+（selector の `gdResultId` と同じ扱い）
+
+### fail-open の追加規則: context を減らさない
+
+verified な kind でも、server 側が空で bridge に中身がある場合は **bridge を使う**。
+verified ⟹ 内容一致なので通常この分岐は発生しないが、発生した場合に
+「server 化したら context が消えた」を構造的に防ぐ。
+
+### 観測の拡張
+
+purpose 単位の `context` outcome に加えて、**source kind 別**の観測を追加した:
+
+- `sourceOrigin`: `<kind>:server|bridge`
+- `sourceVerdict`: `<kind>:verified|mismatch|unclaimed|unreadable`
+- `coverage`: `full_server | partial_server | bridge_fallback | gated_off`
+
+key 空間は **固定 enum の直積のみ**。未知 key（UUID / email 風文字列）は counter へ入らない
+（QA `O6` が固定）。identifiers / 本文は従来どおり一切保持しない。
+
+### 二重計上の回避
+
+`company_research_review` は Personal Memory の観測を 1 request 1 件記録しているため、
+resolver 側では counter を打たず **route の既存 1 件へ合流**させる。
+
+### QA / evidence
+
+- `scripts/career-server-context-batch2-qa.ts` — B2-1〜B2-12（round-trip invariance / per-source merge /
+  parity / partial verification / gate / 静的境界）
+- `scripts/career-canary-observability-qa.ts` — O6（source 別観測 + 未知 key 排除）
+- 既存 parity / bridge / batch1 suite は retarget したうえで全 green
+
+### 既知の未実施（隠さない）
+
+> **Actual signed-in browser E2E remains outstanding.**
+> Human 指示により実ブラウザ session での E2E は延期。検証は fixture / route-level logic /
+> parity harness / adversarial QA の範囲。
+
+---
+
+## D-S7 — `es_generation` purpose の orphan 判定と `baseContext.server.ts` の扱い
+
+**Decision ID:** D-S7
+**Date:** 2026-08-14（Batch 2）
+**Status:** LOCKED（判定のみ。コード削除は行わない）
+
+### `es_generation` = **ORPHAN**（LIVE でも DORMANT_INTENTIONAL でもない）
+
+実測（2026-08-14）:
+
+- `buildCareerContextForPurpose('es_generation')` を呼ぶ **live route が存在しない**。
+- 現行の ES 系 route は `es/deep` / `es/organize` / `es-review` の 3 本で、いずれも
+  この purpose を参照しない（ES 再設計＝AI 代筆廃止の結果）。
+- 参照しているのは registry / policy / renderer / QA fixture のみ。
+
+**決定: Batch 2 では削除しない。**
+
+理由:
+1. purpose enum は `CAREER_CONTEXT_PURPOSES` の一部で、Layer 5 policy・Personal Memory の
+   purpose allowlist・複数 QA fixture が値として参照している。削除は横断変更になり、
+   本 Batch のスコープ（bridge 退役）と無関係なリスクを持ち込む。
+2. ES 機能の再設計方針（将来 AI 支援を戻すか）は **Human decision** であり、
+   purpose の retirement はその決定に従属する。
+
+**次アクション（Human decision 待ち）:** retirement（enum から削除）か再マッピング
+（`es_review` へ統合）かを決める。それまでは orphan と明示記録する。
+
+### `lib/careerServerContext/baseContext.server.ts` = **DORMANT_INTENTIONAL**
+
+Batch 2 で `loadPurposeServerContext` が base + cross-feature を 1 read で解決するようになり、
+base 専用の `loadServerBaseContext` を呼ぶ **route は無くなった**。
+
+- 削除した: `app/api/career/interview/resolveBaseInputs.ts` /
+  `lib/careerServerContext/resolveBaseInputs.server.ts`（薄い wrapper・完全に置換済み）
+- 残した: `baseContext.server.ts`。base gate の判定意味論（`decideBaseContextSource`）は
+  `purposeContext.server.ts` が **同じ純関数**を使っており、その回帰 suite
+  （`career-canary-activation-qa` / `career-data-spine-hardening-qa` / `career-server-context-bridge-qa`）が
+  この module 経由で gate を検証している。
+
+**次アクション:** Batch 3 で当該 suite を `purposeContext.server.ts` 直叩きへ移し、
+その後に削除する。それまでは「production から呼ばれない QA 対象 module」と明示記録する。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

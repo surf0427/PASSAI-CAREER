@@ -45,7 +45,7 @@ import {
 import { buildConsultationSystemPrompt } from './consultationPrompt';
 // Batch 1: base context（profile/activity/values）を canary + Source-Sync verified のときだけ
 //   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
-import { resolveServerBaseInputs } from '@/lib/careerServerContext/resolveBaseInputs.server';
+import { resolveConsultationContextInputs } from './resolveContextInputs';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 // P10-D: L2 Event Signal を「最近の準備状況を踏まえた次アクション提案の補助」としてのみ描画する。
@@ -258,26 +258,41 @@ export async function POST(req: Request) {
   //   pure builder で組む。activity は相談用に圧縮（各配列3件・各文字列160字）してから渡す。
   // Batch 1: canary + purpose ON + Source-Sync verified のときだけ server Layer 1 由来の base を使う。
   //   ★ activity は server 由来でも **同じ圧縮** を通す（context size を従来と同条件に保つ）。
-  const base = await resolveServerBaseInputs('consultation', b, req);
-  const systemPrompt = buildConsultationSystemPrompt({
-    profile: base.profile,
-    activity: compressCareerActivityForConsultation(
-      base.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
-    ) as CareerActivityInput | null,
-    values: base.values,
-    crossFeature: {
-      selfAnalysis: b.selfAnalysis ?? null,
-      es: b.es ?? null,
-      interviewResult: b.interviewResult ?? null,
-      presentationResult: b.presentationResult ?? null,
+  // Batch 2（`D-S6`）: base に加えて cross-feature も kind 単位で server / bridge を選ぶ。
+  //   gd / gdRoom / eventSignals は対象外（mirror 非対象 / Layer 3）。
+  const ctx = await resolveConsultationContextInputs(
+    {
+      profile: b.profile ?? null,
+      activity: b.activity ?? null,
+      values: b.values ?? null,
       selfAnalysisHistory,
       esHistory,
       interviewHistory,
       presentationHistory,
       companyResearch,
+      matching: matchingSnapshots,
+    },
+    req,
+  );
+  const systemPrompt = buildConsultationSystemPrompt({
+    profile: ctx.profile,
+    activity: compressCareerActivityForConsultation(
+      ctx.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
+    ) as CareerActivityInput | null,
+    values: ctx.values,
+    crossFeature: {
+      selfAnalysis: b.selfAnalysis ?? null,
+      es: b.es ?? null,
+      interviewResult: b.interviewResult ?? null,
+      presentationResult: b.presentationResult ?? null,
+      selfAnalysisHistory: ctx.selfAnalysisHistory as typeof selfAnalysisHistory,
+      esHistory: ctx.esHistory as typeof esHistory,
+      interviewHistory: ctx.interviewHistory as typeof interviewHistory,
+      presentationHistory: ctx.presentationHistory as typeof presentationHistory,
+      companyResearch: ctx.companyResearch as typeof companyResearch,
       gd: gdSnapshots,
       gdRoom: gdRoomSignals,
-      matching: matchingSnapshots,
+      matching: ctx.matching as typeof matchingSnapshots,
     },
     eventSignalsBlock,
   });

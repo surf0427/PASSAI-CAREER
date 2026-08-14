@@ -135,6 +135,11 @@ export function parseSourceSyncSignal(raw: unknown): CareerSourceSyncSignal {
  */
 export type SourceSyncVerdict = 'verified' | 'mismatch' | 'unclaimed' | 'unreadable';
 
+/** verdict の全列挙（観測 counter の key 空間を有界にするために使う）。 */
+export const SOURCE_SYNC_VERDICTS: readonly SourceSyncVerdict[] = [
+  'verified', 'mismatch', 'unclaimed', 'unreadable',
+];
+
 export type SourceSyncVerification = Readonly<Record<CareerSourceKind, SourceSyncVerdict>>;
 
 /** verified 以外はすべて「使わない」。判定を 1 箇所に閉じる。 */

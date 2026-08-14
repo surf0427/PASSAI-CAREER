@@ -169,7 +169,12 @@ async function main() {
     check(JSON.stringify(r.bundle.interviewResults) === JSON.stringify([rowToCareerInterviewResult(INTERVIEW_ROW)]), 'interview 一致');
     check(JSON.stringify(r.bundle.profile) === JSON.stringify(PROFILE_ROW.data), 'profile は data jsonb をそのまま');
     check(JSON.stringify(r.bundle.activity) === JSON.stringify(ACTIVITY_ROW.data), 'activity は data jsonb をそのまま');
-    check((Object.keys(r.meta.statuses) as CareerSourceKind[]).every((k) => r.meta.statuses[k] === 'ok'), '全 status = ok');
+    // Batch 2 以降 statuses は **全 kind** を含む。要求した kind だけが 'ok' になり、
+    // 要求していない kind は 'ok' にならない（読んでいないものを権威扱いしない）ことを両方固定する。
+    check(ALL_KINDS.every((k) => r.meta.statuses[k] === 'ok'), '要求 kind は全て status = ok');
+    const notRequested = (Object.keys(r.meta.statuses) as CareerSourceKind[]).filter((k) => !ALL_KINDS.includes(k));
+    check(notRequested.length > 0, '未要求 kind が存在する（Batch 2 で追加された kind）');
+    check(notRequested.every((k) => r.meta.statuses[k] !== 'ok'), '未要求 kind は ok にならない');
   }
 
   console.log('[6] 履歴系が上限に達したら truncated');

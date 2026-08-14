@@ -2,6 +2,7 @@
 
 **対象:** Human 本人 1 ユーザーだけで Personal Memory と Server Context
 （`interview_practice` / `consultation` / `company_research_review`）を安全に試験運用する手順。
+Batch 2（`D-S6`）以降は base だけでなく **cross-feature context も同じ gate 配下**で server 化される。
 
 > ★ **Actual signed-in browser E2E remains outstanding.** 実ブラウザ session での
 > click-through と実 AI call は未実施（Human 指示により延期）。
@@ -48,6 +49,9 @@ npm run qa:careerMirrorWriteOrdering
 npm run qa:careerDataSpineHardening
 npm run qa:careerCanaryActivation
 npm run qa:careerCanaryObservability
+npm run qa:careerServerContextBatch1
+npm run qa:careerServerContextBatch2
+npm run qa:careerServerContextBridge
 npm run qa:careerMemoryAll
 npm run qa:careerEvents
 npm run qa:careerEventSignalSeries
@@ -154,6 +158,38 @@ CAREER_SERVER_CONTEXT_PURPOSES=interview_practice,consultation,company_research_
 
 ---
 
+# 3c. Stage 2c — Batch 2（cross-feature bridge 退役 / `D-S6`）
+
+**新しい env は不要。** Batch 2 は既存の `CAREER_SERVER_CONTEXT_PURPOSES` /
+`CAREER_SERVER_CONTEXT_CANARY_USER_IDS` の配下で動く。
+purpose を有効化すると、その purpose の cross-feature も **source kind 単位**で server 化される。
+
+## 確認すること
+
+| 観測 | 期待 |
+|---|---|
+| `coverage` | `full_server` / `partial_server` / `bridge_fallback` / `gated_off` の内訳が妥当 |
+| `sourceVerdict` | ★ **どの source が同期していないか**が kind 別に分かる（例 `matching:mismatch`） |
+| `sourceOrigin` | verified な kind だけ `:server` が増える |
+| 面接 / 相談 / 添削の出力 | 従来と変わらない（parity QA が byte 一致を固定済み） |
+| prompt | ★ 同じ情報が 2 回出ていない（server と bridge の二重注入なし） |
+
+## `partial_server` が出たときの読み方
+
+**異常ではない。** 「一部 source だけ mirror が追いついていない」状態を正しく表している。
+`sourceVerdict` でどの kind が `mismatch` / `unclaimed` かを見る:
+
+- `mismatch` → その機能を一度開いて保存すると mirror が追いつく
+- `unclaimed` → client がその kind の claim を送っていない（古い client / 未読込）
+- `unreadable` → Layer 1 read 側の問題（`5. Warning signs` を参照）
+
+## Batch 2 で **server 化されないもの**（仕様）
+
+`gd`（ソロ GD）/ `gdRoom` / `eventSignals` は恒久的に request body 由来のまま。
+それぞれ mirror が無い / server が書く / Layer 3 分離のため（`D-S6`）。
+
+---
+
 # 4. 観測（operator inspection）
 
 集計値だけを返す read-only エンドポイントを開く。
@@ -178,6 +214,9 @@ GET /api/career/data-spine-canary
     "sync":    { "verified": 10, "mismatch": 2, "unreadable": 0, "unclaimed": 0, "invalid": 0 },
     "memory":  { "persisted": 7, "rebuilt": 3, "stale": 2, "invalid": 0, "omitted": 0 },
     "context": { "server_context_used": 8, "bridge_fallback": 4, ... },
+    "coverage": { "full_server": 6, "partial_server": 2, "bridge_fallback": 4, "gated_off": 0 },
+    "sourceOrigin":  { "profile:server": 8, "matching:bridge": 3, ... },
+    "sourceVerdict": { "profile:verified": 8, "matching:mismatch": 3, ... },
     "rates":   { "syncVerified": 0.83, "syncMismatch": 0.17, "contextUsed": 0.67, ... },
     "note": "process-local approximate counters; resets on restart/redeploy; ..."
   }
@@ -253,6 +292,7 @@ rollback は必ず「**context を減らす**」方向で行う。
 | Stage 1 | Personal Memory / 1 user | read gate・Source-Sync・persisted/rebuilt/omitted の確認 |
 | Stage 2 | \+ `interview_practice` Server Context / 同一 1 user | server context 利用・bridge fallback・parity・context size |
 | Stage 2b | \+ `consultation` / `company_research_review`（`D-S5`）/ 同一 1 user | 重複注入が無いこと・purpose 横断の fallback 分類 |
+| Stage 2c | Batch 2 の cross-feature 退役（`D-S6`）/ env 追加なし | source kind 別 coverage・partial_server の内訳・出力 parity |
 | Stage 3 | 観測のみ（拡大しない） | H-4 rollout evidence の蓄積 |
 
 **Stage 3 の次（他ユーザーへの拡大）は H-4 の Human decision。本 runbook では扱わない。**

@@ -32,7 +32,7 @@ import {
   countAnswers,
 } from '../interviewPrompt';
 // NEXT-6: base context（profile/activity/values）の由来解決。flag OFF なら request body のまま（byte 互換）。
-import { resolveInterviewBaseInputs } from '../resolveBaseInputs';
+import { resolveInterviewContextInputs } from '../resolveContextInputs';
 
 export const maxDuration = 80;
 
@@ -108,19 +108,23 @@ export async function POST(req: Request) {
   ];
 
   // NEXT-6: flag OFF（既定）では request body をそのまま使う＝従来と byte 互換。
-  const base = await resolveInterviewBaseInputs(b, req);
+  // Batch 2（`D-S6`）: base + cross-feature を kind 単位で解決する。
+  const ctx = await resolveInterviewContextInputs(
+    { ...b, companyResearch: normalizeInterviewCompanyResearchContext(b.companyResearch) },
+    req,
+  );
   const interviewType = resolveInterviewType(b.interviewType);
   // target は followup（次質問の operative 指示）と system の両方で使うため一度だけ正規化する。
   const target = normalizeInterviewTarget(b.target);
   const system = buildInterviewBaseSystem({
-    profile: base.profile,
-    activity: base.activity,
-    values: base.values,
-    selfAnalysis: b.selfAnalysis ?? null,
-    es: b.es ?? null,
-    matching: b.matching ?? null,
-    consultationInsights: b.consultationInsights ?? null,
-    companyResearch: normalizeInterviewCompanyResearchContext(b.companyResearch),
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
+    selfAnalysis: ctx.selfAnalysis,
+    es: ctx.es,
+    matching: ctx.matching,
+    consultationInsights: ctx.consultationInsights,
+    companyResearch: ctx.companyResearch,
     target,
     interviewType,
     userInput: typeof b.userInput === 'string' ? b.userInput : '',

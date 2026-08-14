@@ -28,3 +28,24 @@ export const BASE_CONTEXT_SYNC_KINDS: readonly CareerSourceKind[] = [
   'activity',
   'values',
 ];
+
+/**
+ * Batch 2: cross-feature context まで server 化する purpose が claim すべき kind。
+ * base + 各 purpose が使う横断 source の和集合。
+ *
+ * ★ `gd` は Supabase mirror が存在しないため含めない（server から読めない）。
+ * ★ `gd_room` は server 側が書くデータで canonical 前提が異なるため含めない。
+ *   どちらも request-body bridge のまま（`D-S6`）。
+ */
+export const CROSS_FEATURE_SYNC_KINDS: readonly CareerSourceKind[] = [
+  'profile',
+  'activity',
+  'values',
+  'self_analysis',
+  'es',
+  'interview',
+  'matching',
+  'company_research',
+  'presentation',
+  'consultation',
+];

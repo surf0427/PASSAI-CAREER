@@ -8,6 +8,10 @@ import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import type { CareerEsLog } from '@/types/careerEs';
 import type { CareerInterviewResult } from '@/types/careerInterview';
+import type { CareerMatchingLog } from '@/types/careerMatching';
+import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
+import type { CareerPresentationResult } from '@/types/careerPresentation';
+import type { CareerConsultationThread } from '@/types/careerConsultation';
 
 // server 側で読める Layer 1 Source の種別（＝Personal Memory section の由来 Source）。
 export type CareerSourceKind =
@@ -16,7 +20,12 @@ export type CareerSourceKind =
   | 'values'
   | 'self_analysis'
   | 'es'
-  | 'interview';
+  | 'interview'
+  // Batch 2: cross-feature bridge 退役のために追加した kind。
+  | 'matching'
+  | 'company_research'
+  | 'presentation'
+  | 'consultation';
 
 export const CAREER_SOURCE_KINDS = [
   'profile',
@@ -25,7 +34,18 @@ export const CAREER_SOURCE_KINDS = [
   'self_analysis',
   'es',
   'interview',
+  'matching',
+  'company_research',
+  'presentation',
+  'consultation',
 ] as const satisfies readonly CareerSourceKind[];
+
+// ★ Batch 2 で **意図的に追加していない** kind と理由（server-readable にできない）:
+//   - `gd`（ソロ GD / careerGdResults）: Supabase mirror が **存在しない**。
+//     Phase1 で localStorage canonical のまま据え置かれており、server から読む手段が無い。
+//   - `gd_room`（career_gd_room_results）: mirror はあるが **server 側が書く** データで、
+//     client は表示用 cache として持つ。Source-Sync の「client canonical vs mirror」という
+//     前提が他 kind と異なるため、別 decision が必要（Batch 3 以降）。
 
 // table 名（DDL・client mirror と一致させる）。
 export const CAREER_SOURCE_TABLES: Readonly<Record<CareerSourceKind, string>> = {
@@ -35,6 +55,10 @@ export const CAREER_SOURCE_TABLES: Readonly<Record<CareerSourceKind, string>> = 
   self_analysis: 'career_self_analysis_results',
   es: 'career_es_logs',
   interview: 'career_interview_results',
+  matching: 'career_matching_results',
+  company_research: 'career_company_research_logs',
+  presentation: 'career_presentation_results',
+  consultation: 'career_consultation_threads',
 };
 
 // 履歴系 Source の 1 request あたり read 上限。
@@ -54,6 +78,11 @@ export type CareerSourceBundle = {
   selfAnalysisLogs: CareerSelfAnalysisLog[];
   esLogs: CareerEsLog[];
   interviewResults: CareerInterviewResult[];
+  // Batch 2。
+  matchingLogs: CareerMatchingLog[];
+  companyResearchLogs: CareerCompanyResearchLog[];
+  presentationResults: CareerPresentationResult[];
+  consultationThreads: CareerConsultationThread[];
 };
 
 export const EMPTY_CAREER_SOURCE_BUNDLE: CareerSourceBundle = {
@@ -63,6 +92,10 @@ export const EMPTY_CAREER_SOURCE_BUNDLE: CareerSourceBundle = {
   selfAnalysisLogs: [],
   esLogs: [],
   interviewResults: [],
+  matchingLogs: [],
+  companyResearchLogs: [],
+  presentationResults: [],
+  consultationThreads: [],
 };
 
 // 1 Source の read 結果状態。
@@ -102,5 +135,9 @@ export function emptySourceStatuses(): Record<CareerSourceKind, CareerSourceRead
     self_analysis: 'skipped',
     es: 'skipped',
     interview: 'skipped',
+    matching: 'skipped',
+    company_research: 'skipped',
+    presentation: 'skipped',
+    consultation: 'skipped',
   };
 }

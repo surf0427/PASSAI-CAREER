@@ -94,6 +94,10 @@ const SOURCE_BUNDLE: CareerSourceBundle = {
   ],
   esLogs: [],
   interviewResults: [],
+  matchingLogs: [],
+  companyResearchLogs: [],
+  presentationResults: [],
+  consultationThreads: [],
 };
 
 // server 再算出の期待値（production と同じ projection を使う）。

@@ -37,10 +37,11 @@ import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persiste
 // D-R2: client canonical revision（header 由来・veto 専用）。未提示なら Memory は使われない。
 import { readSourceSyncSignal } from '@/lib/careerSourceSync/request.server';
 // Batch 1: base context の server 化 + Personal Memory と bridge の重複注入防止。
-import { resolveServerBaseInputs } from '@/lib/careerServerContext/resolveBaseInputs.server';
+import { resolveCompanyResearchContextInputs } from './resolveContextInputs';
 import { dedupePersonalMemorySections } from '@/lib/careerMemory/personalMemoryDedupe';
 // Canary observability（enum + 件数のみ）。
 import {
+  normalizeContextOutcome,
   normalizeMemoryOutcome,
   normalizeSyncOutcome,
 } from '@/lib/careerDataSpineCanary/observation';
@@ -278,14 +279,15 @@ export async function POST(req: Request) {
   const interest = interestLabel(b.interestLevel);
   const sources = str(b.sources);
 
-  // Batch 1: canary + Source-Sync verified のときだけ server Layer 1 由来の base を使う。
-  const base = await resolveServerBaseInputs('company_research_review', b, req);
+  // Batch 2（`D-S6`）: base に加えて selfAnalysis / matching も kind 単位で server / bridge を選ぶ。
+  //   これで本 route の request-body bridge は **すべて** server 化候補になった。
+  const ctx = await resolveCompanyResearchContextInputs(b, req);
   // 就活版共通基盤でプロフィール+活動+就活軸の土台を組む。
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
-    profile: base.profile,
-    activity: base.activity,
-    values: base.values,
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
     userInput: '',
   });
   // P17-M1: Personal Memory を server read（base / self_analysis のみ）。企業の客観情報は歪めず、
@@ -300,12 +302,16 @@ export async function POST(req: Request) {
     purpose: 'company_research_review',
     sync: normalizeSyncOutcome(memoryOutcome.meta, Object.keys(syncSignal.revisions).length > 0),
     memory: normalizeMemoryOutcome(memoryOutcome.meta),
-    context: null,
+    context: normalizeContextOutcome(ctx.source),
     memorySectionCount: memoryOutcome.meta.sectionCount,
+    // Batch 2: source kind 別の観測を **同じ 1 件**へ合流させる（二重計上しない）。
+    sourceOrigins: ctx.observation.sourceOrigins,
+    sourceVerdicts: ctx.observation.sourceVerdicts,
+    coverage: ctx.observation.coverage,
   });
   // ↑ memory 観測は read 時点の値。重複除去後の実注入数は下の dedupe で決まる。
-  const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
-  const matchingBlock = renderMatching(b.matching);
+  const selfAnalysisBlock = renderSelfAnalysis(ctx.selfAnalysis);
+  const matchingBlock = renderMatching(ctx.matching);
 
   // ★ Batch 1（D-S5）: bridge と重複する Personal Memory section を落とす。
   //   base       : base system prompt が profile/activity/values を必ず描画するため常に重複。

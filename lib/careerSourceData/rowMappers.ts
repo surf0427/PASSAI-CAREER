@@ -40,7 +40,14 @@ import type {
   CareerInterviewTurn,
   CareerInterviewType,
 } from '@/types/careerInterview';
-import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
+import type {
+  CompanyResearchSnapshot,
+  CareerCompanyResearchLog,
+} from '@/types/careerCompanyResearch';
+import type { CareerMatchingLog } from '@/types/careerMatching';
+import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import type { CareerPresentationResult } from '@/types/careerPresentation';
+import type { CareerConsultationThread } from '@/types/careerConsultation';
 
 // ── 共通 helper ────────────────────────────────────────────────────
 function strArray(value: unknown): string[] {
@@ -236,4 +243,136 @@ export function rowToCareerInterviewResult(
   const snap = companyResearchSnapshotOf(row.company_research_snapshot);
   if (snap) result.companyResearchSnapshot = snap;
   return result;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Batch 2 — cross-feature source kinds（matching / company_research / presentation / consultation）
+// ══════════════════════════════════════════════════════════════════
+
+// ── career_matching_results ────────────────────────────────────────
+export type CareerMatchingResultRow = {
+  client_id: string;
+  user_input: unknown;
+  result: unknown;
+  created_at: string;
+};
+
+export const CAREER_MATCHING_SELECT_COLUMNS =
+  'client_id, user_input, result, created_at' as const;
+
+export function rowToCareerMatchingLog(row: CareerMatchingResultRow): CareerMatchingLog {
+  return {
+    id: row.client_id,
+    createdAt: row.created_at,
+    userInput: typeof row.user_input === 'string' ? row.user_input : '',
+    result: (row.result ?? {}) as CareerMatchEngineResult,
+  };
+}
+
+// ── career_company_research_logs ───────────────────────────────────
+export type CareerCompanyResearchRow = {
+  client_id: string;
+  company_name: string | null;
+  industry: string | null;
+  interest_level: unknown;
+  input: unknown;
+  review: unknown;
+  fit_analysis: unknown;
+  interview_context_summary: unknown;
+  revision_history: unknown;
+  favorite: boolean;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export const CAREER_COMPANY_RESEARCH_SELECT_COLUMNS =
+  'client_id, company_name, industry, interest_level, input, review, fit_analysis, interview_context_summary, revision_history, favorite, created_at, updated_at' as const;
+
+function companyInterestLevel(v: unknown): CareerCompanyResearchLog['interestLevel'] {
+  return v === 'high' || v === 'mid' || v === 'low' || v === 'watch'
+    ? (v as CareerCompanyResearchLog['interestLevel'])
+    : null;
+}
+
+export function rowToCareerCompanyResearchLog(
+  row: CareerCompanyResearchRow,
+): CareerCompanyResearchLog {
+  return {
+    id: row.client_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+    companyName: row.company_name ?? '',
+    industry: row.industry ?? '',
+    interestLevel: companyInterestLevel(row.interest_level),
+    input: (row.input ?? {}) as CareerCompanyResearchLog['input'],
+    review: (row.review ?? {}) as CareerCompanyResearchLog['review'],
+    fitAnalysis: (row.fit_analysis ?? {}) as CareerCompanyResearchLog['fitAnalysis'],
+    interviewContextSummary:
+      typeof row.interview_context_summary === 'string' ? row.interview_context_summary : '',
+    revisionHistory: Array.isArray(row.revision_history)
+      ? (row.revision_history as CareerCompanyResearchLog['revisionHistory'])
+      : [],
+    favorite: row.favorite,
+  };
+}
+
+// ── career_presentation_results ────────────────────────────────────
+export type CareerPresentationResultRow = {
+  client_id: string;
+  presentation_type: string;
+  mode: string;
+  theme: string;
+  time_limit_sec: number | null;
+  duration_sec: number | null;
+  transcript: string | null;
+  result: unknown;
+  qa: unknown;
+  created_at: string;
+};
+
+export const CAREER_PRESENTATION_SELECT_COLUMNS =
+  'client_id, presentation_type, mode, theme, time_limit_sec, duration_sec, transcript, result, qa, created_at' as const;
+
+export function rowToCareerPresentationResult(
+  row: CareerPresentationResultRow,
+): CareerPresentationResult {
+  const out = {
+    id: row.client_id,
+    createdAt: row.created_at,
+    presentationType: row.presentation_type,
+    mode: row.mode,
+    theme: row.theme,
+    timeLimitSec: row.time_limit_sec ?? 0,
+    durationSec: row.duration_sec ?? 0,
+    transcript: row.transcript ?? '',
+    result: (row.result ?? {}) as CareerPresentationResult['result'],
+  } as CareerPresentationResult;
+  if (Array.isArray(row.qa)) out.qa = row.qa as CareerPresentationResult['qa'];
+  return out;
+}
+
+// ── career_consultation_threads ────────────────────────────────────
+export type CareerConsultationThreadRow = {
+  client_id: string;
+  title: string | null;
+  messages: unknown;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export const CAREER_CONSULTATION_SELECT_COLUMNS =
+  'client_id, title, messages, created_at, updated_at' as const;
+
+export function rowToCareerConsultationThread(
+  row: CareerConsultationThreadRow,
+): CareerConsultationThread {
+  return {
+    id: row.client_id,
+    title: row.title ?? '',
+    messages: Array.isArray(row.messages)
+      ? (row.messages as CareerConsultationThread['messages'])
+      : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  } as CareerConsultationThread;
 }

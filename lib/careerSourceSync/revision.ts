@@ -141,6 +141,66 @@ function syncViewForKind(kind: CareerSourceKind, bundle: CareerSourceBundle): un
         };
       });
 
+    // ── Batch 2 ────────────────────────────────────────────────────
+    // career_matching_results: client_id / user_input / result / created_at が往復する。
+    case 'matching':
+      return (bundle.matchingLogs ?? []).map((l) => ({
+        ...logCore(l),
+        userInput: (l as { userInput?: unknown }).userInput ?? '',
+      }));
+
+    // career_company_research_logs: 昇格列 + jsonb がすべて往復する。
+    //   ★ updatedAt は **除外**。DB trigger `set_updated_at` が now() で上書きするため
+    //     client 値と一致しない（values.updatedAt と同じ理由）。
+    case 'company_research':
+      return (bundle.companyResearchLogs ?? []).map((l) => {
+        const e = l as unknown as Record<string, unknown>;
+        return {
+          id: e.id ?? null,
+          createdAt: e.createdAt ?? null,
+          companyName: e.companyName ?? '',
+          industry: e.industry ?? '',
+          interestLevel: e.interestLevel ?? null,
+          input: e.input ?? null,
+          review: e.review ?? null,
+          fitAnalysis: e.fitAnalysis ?? null,
+          interviewContextSummary: e.interviewContextSummary ?? '',
+          revisionHistory: e.revisionHistory ?? [],
+          favorite: !!e.favorite,
+        };
+      });
+
+    // career_presentation_results: 昇格列 + result/qa jsonb が往復する。
+    case 'presentation':
+      return (bundle.presentationResults ?? []).map((l) => {
+        const e = l as unknown as Record<string, unknown>;
+        return {
+          id: e.id ?? null,
+          createdAt: e.createdAt ?? null,
+          presentationType: e.presentationType ?? null,
+          mode: e.mode ?? null,
+          theme: e.theme ?? '',
+          timeLimitSec: e.timeLimitSec ?? 0,
+          durationSec: e.durationSec ?? 0,
+          transcript: e.transcript ?? '',
+          result: e.result ?? null,
+          qa: e.qa ?? null,
+        };
+      });
+
+    // career_consultation_threads: client_id / title / messages / created_at が往復する。
+    //   ★ updatedAt は **除外**（DB trigger 上書き）。
+    case 'consultation':
+      return (bundle.consultationThreads ?? []).map((l) => {
+        const e = l as unknown as Record<string, unknown>;
+        return {
+          id: e.id ?? null,
+          createdAt: e.createdAt ?? null,
+          title: e.title ?? '',
+          messages: e.messages ?? [],
+        };
+      });
+
     default:
       return null;
   }

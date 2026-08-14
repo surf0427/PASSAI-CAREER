@@ -115,21 +115,67 @@
 | **NEXT-5 source reset → memory invalidation** | **Complete（primitive + server safety net）** |
 | **NEXT-6 bridge 退役（interview_practice / base context）** | **Complete（default OFF）** |
 | **NEXT-7 consent capture surface** | **Complete（三重 gate で閉止・production repo 未接続）** |
+| **Batch 1 server context（consultation / company_research_review base）** | **Complete（default OFF）** |
+| **Batch 2 cross-feature bridge 退役（`D-S6`）** | **Complete（default OFF）** |
 
 ---
 
-# 5.1 purpose 別 bridge retirement status（`D-S5`）
+# 5.1 purpose 別 bridge retirement status（`D-S6` / Batch 2 時点）
 
-| purpose | status | server 化済み | bridge に残る |
-|---|---|---|---|
-| `interview_practice` | HYBRID | base（profile/activity/values） | selfAnalysis / es / matching / consultationInsights / companyResearch |
-| `consultation` | HYBRID | base | crossFeature 全部 + Event Signal（意図的に分離） |
-| `company_research_review` | HYBRID | base + Personal Memory（dedupe 済み） | selfAnalysis block / matching block |
-| その他 purpose | LEGACY | — | すべて |
+## 5.1.1 server context 対象 purpose
 
-**FULL_SERVER はまだ無し。** 安全な HYBRID を優先している。
+| purpose | status | server 化済み（kind 単位・verified 時） | 恒久 bridge のまま | 理由 |
+|---|---|---|---|---|
+| `interview_practice` | **NEAR_FULL_SERVER** | base(profile/activity/values) / selfAnalysis / es / matching / consultationInsights / companyResearch | — | 残 bridge なし。body は **fallback 専用**として残す |
+| `consultation` | **NEAR_FULL_SERVER** | base / selfAnalysisHistory / esHistory / interviewHistory / presentationHistory / companyResearch / matching | `gd` / `gdRoom` / `eventSignals` | mirror 無し / server 書き込み / Layer 3 分離（`D-S6`） |
+| `company_research_review` | **NEAR_FULL_SERVER** | base / selfAnalysis / matching（+ Personal Memory dedupe 済み） | — | 残 bridge なし |
 
-★ `consultation` に Personal Memory を注入していないのは重複回避のため（`D-S5` 参照）。
+> **FULL_SERVER と呼ばないのは意図的。** request body の bridge field は
+> **削除していない**（未 verify / gate OFF / 非 canary のときの fallback として必須）。
+> 「server が権威になった」であって「bridge が消えた」ではない。
+
+## 5.1.2 全 purpose inventory（2026-08-14 実測）
+
+| purpose | live callsite | server context | Personal Memory | 判定 |
+|---|---|---|---|---|
+| `consultation` | `consultation/consultationPrompt.ts` | ✅ Batch 1+2 | ❌（重複回避・`D-S5`） | LIVE |
+| `interview_practice` | `interview/interviewPrompt.ts` | ✅ Batch 1+2 | ❌ | LIVE |
+| `company_research_review` | `company-research/route.ts` | ✅ Batch 1+2 | ✅（dedupe 済み） | LIVE |
+| `presentation_feedback` | `presentation/presentationPrompt.ts` | ❌ | ❌ | LIVE（未移行） |
+| `matching` | `matching/route.ts` | ❌ | ❌ | LIVE（未移行） |
+| `self_analysis_deep_dive` | `self-analysis/deepDivePrompt.ts` | ❌ | ❌ | LIVE（未移行） |
+| `es_generation` | **なし** | — | — | ★ **ORPHAN**（`D-S7`） |
+| `es_review` | なし | — | — | DORMANT（registry のみ） |
+| `interview_complete` | なし（complete route は `interview_practice` を使用） | — | — | DORMANT（registry のみ） |
+| `gd_feedback` | なし（GD route は静的 prompt） | — | — | DORMANT（registry のみ） |
+| `self_analysis` | なし（self-analysis route は静的 prompt） | — | — | DORMANT（registry のみ） |
+| `mypage_summary` | なし | — | — | DORMANT（registry のみ） |
+
+## 5.1.3 Layer 1 source kind inventory
+
+| kind | table | server read | sync view | 備考 |
+|---|---|---|---|---|
+| `profile` | `career_profiles` | ✅ | 全体 jsonb | |
+| `activity` | `career_activities` | ✅ | 全体 jsonb | |
+| `values` | `career_values` | ✅ | `updatedAt` 除外 | DB trigger 上書き |
+| `self_analysis` | `career_self_analysis_results` | ✅ | id/createdAt/userInput/result | |
+| `es` | `career_es_logs` | ✅ | 昇格列 + meta のみ | body/mode/groupId 等は mirror 非往復 |
+| `interview` | `career_interview_results` | ✅ | mode/turns/result/企業研究連携 | |
+| **`matching`** | `career_matching_results` | ✅ **Batch 2** | id/createdAt/userInput/result | |
+| **`company_research`** | `career_company_research_logs` | ✅ **Batch 2** | 昇格列 + jsonb（`updatedAt` 除外） | DB trigger 上書き |
+| **`presentation`** | `career_presentation_results` | ✅ **Batch 2** | 昇格列 + result/qa | |
+| **`consultation`** | `career_consultation_threads` | ✅ **Batch 2** | id/createdAt/title/messages（`updatedAt` 除外） | DB trigger 上書き |
+| `gd`（ソロ） | **なし** | ❌ 不可 | — | ★ Supabase mirror が存在しない |
+| `gd_room` | `career_gd_room_results` | ❌ 意図的除外 | — | ★ server 側が書くデータ（canonical 前提が異なる） |
+
+## 5.1.4 context budget（Batch 2 前後）
+
+**変化なし（payload byte 完全一致）。**
+
+server 経路は client と同じ pure selector を使うため、同一データに対する出力は同一。
+QA `B2-5` が interview / consultation の全 field で `JSON.stringify` 一致を固定している。
+selector 側の cap（history 3 件 / companyResearch 5 件 / matching 2 件 等）が効くため、
+log 件数を 1 → 5 → 20 と増やしても payload は上限で頭打ちになる（実測で確認）。
 
 ---
 
@@ -147,10 +193,9 @@ parity harness / adversarial QA まで。実ユーザー click-through と実 AI
 
 0. **~~D-R2~~ は closed**（`D-S1`）。残るのは下記のみ。
 
-1. **NEXT-6 の残り**: interview_practice の `selfAnalysis` / `es` / `matching` /
-   `consultationInsights` / `companyResearch` はまだ request body 経由。
-   これらを退役させるには Layer 1 reader に `matching` / `company_research` / `consultation` の
-   kind を追加する必要がある。
+1. **~~NEXT-6 の残り~~ は Batch 2 で解消**（`D-S6`）。残る恒久 bridge は `gd` / `gd_room` /
+   `eventSignals` のみで、いずれも **意図的**（mirror 無し / server 書き込み / Layer 3 分離）。
+   なお request body の bridge field 自体は fallback 用に残す（削除しない）。
 2. **NEXT-5 の wiring 先が存在しない**: 現在 Personal Memory の由来 Source（profile / activity /
    values / self_analysis / es / interview）を reset・delete する UI が repository に無い。
    primitive（`invalidatePersonalMemoryForSourceReset`）は用意済みで、将来 reset 機能を足すときに
@@ -161,10 +206,10 @@ parity harness / adversarial QA まで。実ユーザー click-through と実 AI
    ★ member 向け read / write に **service-role credential は不要**。真の blocker は
    H-6（placement / identity）・H-7（法務文言と policy manifest 行）・DDL の production 適用。
 4. **Layer 4 / Layer 5 は production consumer ゼロのまま**（意図的）。
-5. **`es_generation` purpose は orphan**。ES 再設計（AI 代筆廃止）以降、
-   `buildCareerContextForPurpose('es_generation')` を呼ぶ live route が **存在しない**
-   （現行 ES route は deep / organize / es-review で、いずれも静的 system prompt）。
-   Batch 2 では「移行」ではなく **purpose の retirement か再マッピング** の decision が必要。
+5. **`es_generation` purpose は ORPHAN（Batch 2 で確定・`D-S7`）**。live callsite ゼロ。
+   削除は行わず、retirement か `es_review` への再マッピングかを **Human decision** として残す。
+   同様に `lib/careerServerContext/baseContext.server.ts` は Batch 2 以降
+   **production から呼ばれない QA 対象 module**（DORMANT_INTENTIONAL / `D-S7`）。
 6. **別端末 stale write による mirror 巻き戻り（`D-S3` W2/W5）は未防止**。
    read 安全性は `D-S1` veto が担保するが、mirror integrity は保証していない。
    完全防止には未適用 draft（`supabase/prototype/career_source_write_guard_draft.sql`）の適用と

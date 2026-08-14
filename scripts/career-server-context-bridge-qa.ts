@@ -247,9 +247,14 @@ async function main() {
       'app/api/career/interview/complete/route.ts',
     ]) {
       const src = readFileSync(join(ROOT, rel), 'utf8');
-      check(/resolveInterviewBaseInputs\(/.test(src), `${rel} が共有 resolver を使う`);
-      check(/profile:\s*base\.profile/.test(src), `${rel} が base.profile を prompt へ渡す`);
+      // Batch 2: 共有 resolver は resolveInterviewContextInputs（base + cross-feature）。
+      check(/resolveInterviewContextInputs\(/.test(src), `${rel} が共有 resolver を使う`);
+      check(/profile:\s*ctx\.profile/.test(src), `${rel} が resolver 由来を prompt へ渡す`);
       check(!/profile:\s*b\.profile/.test(src), `${rel} が request body を直接渡さない`);
+      // cross-feature bridge も resolver 経由になっていること（Batch 2 の退役対象）。
+      for (const f of ['selfAnalysis', 'es', 'matching', 'consultationInsights']) {
+        check(!new RegExp(`${f}:\\s*b\\.${f}`).test(src), `${rel} が ${f} を body から直接渡さない`);
+      }
     }
   }
 

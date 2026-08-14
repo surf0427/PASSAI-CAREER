@@ -31,6 +31,18 @@ import {
   CAREER_SELF_ANALYSIS_SELECT_COLUMNS,
   CAREER_ES_SELECT_COLUMNS,
   CAREER_INTERVIEW_RESULT_SELECT_COLUMNS,
+  rowToCareerMatchingLog,
+  rowToCareerCompanyResearchLog,
+  rowToCareerPresentationResult,
+  rowToCareerConsultationThread,
+  CAREER_MATCHING_SELECT_COLUMNS,
+  CAREER_COMPANY_RESEARCH_SELECT_COLUMNS,
+  CAREER_PRESENTATION_SELECT_COLUMNS,
+  CAREER_CONSULTATION_SELECT_COLUMNS,
+  type CareerMatchingResultRow,
+  type CareerCompanyResearchRow,
+  type CareerPresentationResultRow,
+  type CareerConsultationThreadRow,
   type CareerValuesRow,
   type CareerSelfAnalysisResultRow,
   type CareerEsLogRow,
@@ -220,6 +232,10 @@ export async function loadCareerSourceData(
       selfAnalysisLogs: [],
       esLogs: [],
       interviewResults: [],
+      matchingLogs: [],
+      companyResearchLogs: [],
+      presentationResults: [],
+      consultationThreads: [],
     };
 
     // 要求された Source のみ並列に読む（不要 Source への I/O ゼロ）。
@@ -307,6 +323,36 @@ export async function loadCareerSourceData(
           bundle.interviewResults = r.items;
           statuses.interview = r.status;
         }),
+      );
+    }
+
+    // ── Batch 2: cross-feature kind（すべて履歴系・上限到達は truncated） ──
+    if (wanted.has('matching')) {
+      jobs.push(
+        readLogSource<CareerMatchingResultRow, ReturnType<typeof rowToCareerMatchingLog>>(
+          reader, userId, CAREER_SOURCE_TABLES.matching, CAREER_MATCHING_SELECT_COLUMNS, rowToCareerMatchingLog,
+        ).then((r) => { bundle.matchingLogs = r.items; statuses.matching = r.status; }),
+      );
+    }
+    if (wanted.has('company_research')) {
+      jobs.push(
+        readLogSource<CareerCompanyResearchRow, ReturnType<typeof rowToCareerCompanyResearchLog>>(
+          reader, userId, CAREER_SOURCE_TABLES.company_research, CAREER_COMPANY_RESEARCH_SELECT_COLUMNS, rowToCareerCompanyResearchLog,
+        ).then((r) => { bundle.companyResearchLogs = r.items; statuses.company_research = r.status; }),
+      );
+    }
+    if (wanted.has('presentation')) {
+      jobs.push(
+        readLogSource<CareerPresentationResultRow, ReturnType<typeof rowToCareerPresentationResult>>(
+          reader, userId, CAREER_SOURCE_TABLES.presentation, CAREER_PRESENTATION_SELECT_COLUMNS, rowToCareerPresentationResult,
+        ).then((r) => { bundle.presentationResults = r.items; statuses.presentation = r.status; }),
+      );
+    }
+    if (wanted.has('consultation')) {
+      jobs.push(
+        readLogSource<CareerConsultationThreadRow, ReturnType<typeof rowToCareerConsultationThread>>(
+          reader, userId, CAREER_SOURCE_TABLES.consultation, CAREER_CONSULTATION_SELECT_COLUMNS, rowToCareerConsultationThread,
+        ).then((r) => { bundle.consultationThreads = r.items; statuses.consultation = r.status; }),
       );
     }
 

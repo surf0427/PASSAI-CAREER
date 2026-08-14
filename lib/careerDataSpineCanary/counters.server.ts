@@ -19,8 +19,12 @@ import type { CanaryObservation } from './observation';
 import {
   CANARY_CONTEXT_OUTCOMES,
   CANARY_MEMORY_OUTCOMES,
+  CANARY_PURPOSE_COVERAGES,
+  CANARY_SOURCE_ORIGINS,
   CANARY_SYNC_OUTCOMES,
 } from './observation';
+import { CAREER_SOURCE_KINDS } from '@/lib/careerSourceData/types';
+import { SOURCE_SYNC_VERDICTS } from '@/lib/careerSourceSync/signal';
 
 type CounterMap = Record<string, number>;
 
@@ -34,6 +38,12 @@ type CanaryCounterState = {
   purpose: CounterMap;
   /** prompt へ載った section 数の合計（平均算出用。内容は持たない）。 */
   memorySectionTotal: number;
+  /** Batch 2: `<kind>:<server|bridge>` 別件数（key 空間は固定 enum の直積で有界）。 */
+  sourceOrigin: CounterMap;
+  /** Batch 2: `<kind>:<verdict>` 別件数。 */
+  sourceVerdict: CounterMap;
+  /** Batch 2: purpose 単位の server 化度合い別件数。 */
+  coverage: CounterMap;
 };
 
 function emptyState(now: number): CanaryCounterState {
@@ -47,6 +57,13 @@ function emptyState(now: number): CanaryCounterState {
     context: zero(CANARY_CONTEXT_OUTCOMES),
     purpose: {},
     memorySectionTotal: 0,
+    sourceOrigin: zero(
+      CAREER_SOURCE_KINDS.flatMap((k) => CANARY_SOURCE_ORIGINS.map((o) => `${k}:${o}`)),
+    ),
+    sourceVerdict: zero(
+      CAREER_SOURCE_KINDS.flatMap((k) => SOURCE_SYNC_VERDICTS.map((v) => `${k}:${v}`)),
+    ),
+    coverage: zero(CANARY_PURPOSE_COVERAGES),
   };
 }
 
@@ -64,6 +81,21 @@ export function recordCanaryObservation(obs: CanaryObservation): void {
     if (Number.isFinite(obs.memorySectionCount)) {
       state.memorySectionTotal += Math.max(0, Math.trunc(obs.memorySectionCount));
     }
+    // ★ key は「既知 kind × 既知 enum」だけを通す。未知の key は捨てる
+    //   （counter が任意文字列の受け皿にならない＝識別子混入経路を作らない）。
+    if (obs.sourceOrigins) {
+      for (const [kind, origin] of Object.entries(obs.sourceOrigins)) {
+        const key = `${kind}:${origin}`;
+        if (key in state.sourceOrigin) state.sourceOrigin[key] += 1;
+      }
+    }
+    if (obs.sourceVerdicts) {
+      for (const [kind, verdict] of Object.entries(obs.sourceVerdicts)) {
+        const key = `${kind}:${verdict}`;
+        if (key in state.sourceVerdict) state.sourceVerdict[key] += 1;
+      }
+    }
+    if (obs.coverage && obs.coverage in state.coverage) state.coverage[obs.coverage] += 1;
   } catch {
     /* never-throw: 観測は機能の成功条件にしない */
   }
@@ -82,6 +114,10 @@ export type CanaryCounterSnapshot = {
   memory: CounterMap;
   context: CounterMap;
   purpose: CounterMap;
+  /** Batch 2: source kind 別の採用元 / verdict / purpose coverage。 */
+  sourceOrigin: CounterMap;
+  sourceVerdict: CounterMap;
+  coverage: CounterMap;
   rates: {
     syncVerified: number;
     syncMismatch: number;
@@ -110,6 +146,9 @@ export function snapshotCanaryCounters(): CanaryCounterSnapshot {
     memory: { ...state.memory },
     context: { ...state.context },
     purpose: { ...state.purpose },
+    sourceOrigin: { ...state.sourceOrigin },
+    sourceVerdict: { ...state.sourceVerdict },
+    coverage: { ...state.coverage },
     rates: {
       syncVerified: rate(state.sync.verified ?? 0, syncTotal),
       syncMismatch: rate(state.sync.mismatch ?? 0, syncTotal),

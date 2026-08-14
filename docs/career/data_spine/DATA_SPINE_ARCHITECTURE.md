@@ -492,3 +492,52 @@ stopped at Human architectural decisions.
 
 Collective-intelligence success is a **separate milestone** requiring consent/legal/product gates
 before Layer 4/5 production activation.
+
+---
+
+# Batch 2 — cross-feature source の per-source 解決（`D-S6`）
+
+```text
+request ──┬─ body（bridge: 従来どおり全 field を載せる）
+          └─ header `x-career-source-sync`（kind 別 revision claim / veto 専用）
+                    │
+                    ▼
+     loadPurposeServerContext(purpose, kinds, req)     ← purpose あたり **1 read**
+                    │
+        ┌───────────┴────────────┐
+        │ 1. purpose opt-in?      │ no → I/O ゼロ
+        │ 2. canary user?         │ no → table read ゼロ（authorize hook）
+        │ 3. kind 別 sync verify   │
+        └───────────┬────────────┘
+                    ▼
+        origin: { profile:'server', matching:'bridge', ... }   ← **kind 単位**
+                    │
+                    ▼
+        serverOnlyBundle()  … verified な kind だけ実データ、他は空
+                    │
+                    ▼
+        **client と同一の pure selector**（buildInterviewRequestContext 等）
+                    │
+                    ▼
+        field 単位で server / bridge を **択一**（両方入れる経路は存在しない）
+                    │
+                    ▼
+                 prompt（出力は verified 時 bridge と同一）
+```
+
+## なぜ selector を共有するのか
+
+server 側で payload 組み立てを再実装すると、history 件数上限・圧縮・fallback の
+意味論が 2 箇所に分裂し、静かに drift する。同じ pure 関数を使えば:
+
+- 意味論の分裂が起きない
+- context budget が変わらない
+- verified 時に **出力が bridge と完全一致する**（＝移行の安全性が証明可能）
+
+## 1 read に統合した理由
+
+base と cross-feature を別 read にすると、(a) purpose あたり 2 往復、
+(b) 2 つの read の間で mirror が更新されると **read skew** が起きる、
+(c) 観測 counter が二重計上される。Batch 2 では 1 read に統合した。
+
+---

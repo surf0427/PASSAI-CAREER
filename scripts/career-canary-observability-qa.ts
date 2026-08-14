@@ -135,6 +135,41 @@ function main() {
     resetCanaryCounters(0);
   }
 
+  console.log('[O6] Batch 2: source kind 別の観測（origin / verdict / coverage）');
+  {
+    resetCanaryCounters(0);
+    recordCanaryObservation({
+      purpose: 'interview_practice', sync: null, memory: null, context: 'server_context_used',
+      memorySectionCount: 0,
+      sourceOrigins: { profile: 'server', matching: 'bridge' },
+      sourceVerdicts: { profile: 'verified', matching: 'mismatch' },
+      coverage: 'partial_server',
+    });
+    const s = snapshotCanaryCounters();
+    check(s.sourceOrigin['profile:server'] === 1, 'source origin: profile:server');
+    check(s.sourceOrigin['matching:bridge'] === 1, 'source origin: matching:bridge');
+    check(s.sourceVerdict['matching:mismatch'] === 1, '★ source 別 mismatch が取れる（どの source が同期していないか）');
+    check(s.sourceVerdict['profile:verified'] === 1, 'source verdict: profile:verified');
+    check(s.coverage.partial_server === 1, 'purpose coverage: partial_server');
+    check(s.coverage.full_server === 0 && s.coverage.gated_off === 0, '他 coverage は増えない');
+
+    // ★ 未知 key を counter へ入れられない（識別子が key として混入する経路を作らない）。
+    recordCanaryObservation({
+      purpose: 'interview_practice', sync: null, memory: null, context: null, memorySectionCount: 0,
+      // ★ 合成 UUID。実 canary user の UUID は repo へ hardcode しない（env/operator 制御のまま）。
+      sourceOrigins: { '22222222-2222-4222-8222-222222222222': 'server' } as never,
+      sourceVerdicts: { 'user@example.com': 'verified' } as never,
+      coverage: 'not_a_coverage' as never,
+    });
+    const s2 = snapshotCanaryCounters();
+    const json2 = JSON.stringify(s2);
+    check(!/22222222|example\.com/.test(json2), '★ 未知 key（UUID / email 風）は counter に入らない');
+    check(!('not_a_coverage' in s2.coverage), '未知 coverage は無視される');
+    // key 空間が固定 enum の直積で有界であること。
+    check(Object.keys(s2.sourceOrigin).length === Object.keys(s.sourceOrigin).length, 'key 空間が増えない（有界）');
+    resetCanaryCounters(0);
+  }
+
   console.log('[O5] 静的 guard: 観測経路が raw content を受け取れない');
   {
     const obs = readFileSync(join(ROOT, 'lib/careerDataSpineCanary/observation.ts'), 'utf8');

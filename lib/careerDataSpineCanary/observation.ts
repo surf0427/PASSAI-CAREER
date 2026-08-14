@@ -46,6 +46,18 @@ export const CANARY_CONTEXT_OUTCOMES: readonly CanaryContextOutcome[] = [
   'server_context_used', 'bridge_fallback', 'sync_unverified', 'purpose_disabled', 'user_not_canary',
 ];
 
+// ── Batch 2: source kind 別の観測 ───────────────────────────────────
+// 「purpose 全体」ではなく「どの source が server 化できたか / なぜ落ちたか」を見るための enum。
+// 記録するのは **kind 名と enum の組だけ**（件数のみ。識別子・本文は持たない）。
+export type CanarySourceOrigin = 'server' | 'bridge';
+export const CANARY_SOURCE_ORIGINS: readonly CanarySourceOrigin[] = ['server', 'bridge'];
+
+/** purpose 単位の server 化度合い。partial は「一部 kind だけ server」。 */
+export type CanaryPurposeCoverage = 'full_server' | 'partial_server' | 'bridge_fallback' | 'gated_off';
+export const CANARY_PURPOSE_COVERAGES: readonly CanaryPurposeCoverage[] = [
+  'full_server', 'partial_server', 'bridge_fallback', 'gated_off',
+];
+
 /** 1 request 分の観測（enum + 件数のみ。識別子を持たない）。 */
 export type CanaryObservation = {
   purpose: CareerContextPurpose;
@@ -54,6 +66,12 @@ export type CanaryObservation = {
   context: CanaryContextOutcome | null;
   /** prompt へ載った Personal Memory section 数（内容は含まない）。 */
   memorySectionCount: number;
+  /** Batch 2: source kind → 採用元（enum のみ。省略可）。 */
+  sourceOrigins?: Readonly<Record<string, CanarySourceOrigin>> | null;
+  /** Batch 2: source kind → sync verdict（enum のみ。省略可）。 */
+  sourceVerdicts?: Readonly<Record<string, string>> | null;
+  /** Batch 2: purpose 単位の server 化度合い（省略可）。 */
+  coverage?: CanaryPurposeCoverage | null;
 };
 
 // ── 正規化 ─────────────────────────────────────────────────────────

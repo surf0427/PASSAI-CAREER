@@ -25,6 +25,11 @@ import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { loadEsLogs } from '@/app/career/es/esStorage';
 import { loadInterviewResults } from '@/app/career/interview/interviewStorage';
+// Batch 2: cross-feature source kind の canonical loader。
+import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
+import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
+import { loadPresentationResults } from '@/app/career/presentation/presentationStorage';
+import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 
 function safe<T>(fn: () => T, fallback: T): T {
   try {
@@ -49,6 +54,10 @@ export function loadCanonicalSourceBundle(
     selfAnalysisLogs: want.has('self_analysis') ? safe(() => loadSelfAnalysisLogs(), []) : [],
     esLogs: want.has('es') ? safe(() => loadEsLogs(), []) : [],
     interviewResults: want.has('interview') ? safe(() => loadInterviewResults(), []) : [],
+    matchingLogs: want.has('matching') ? safe(() => loadMatchingLogs(), []) : [],
+    companyResearchLogs: want.has('company_research') ? safe(() => loadCompanyResearchLogs(), []) : [],
+    presentationResults: want.has('presentation') ? safe(() => loadPresentationResults(), []) : [],
+    consultationThreads: want.has('consultation') ? safe(() => loadConsultationThreads(), []) : [],
   } as CareerSourceBundle;
 }
 

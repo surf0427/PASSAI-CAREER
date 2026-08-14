@@ -190,7 +190,8 @@ async function main() {
   console.log('[Q7] Event Signal が Personal Memory / server context へ混ざらない');
   {
     for (const rel of [
-      'lib/careerServerContext/resolveBaseInputs.server.ts',
+      'lib/careerServerContext/purposeContext.server.ts',
+      'lib/careerServerContext/crossFeatureSources.server.ts',
       'lib/careerServerContext/baseContext.server.ts',
       'lib/careerMemory/persistence/personalMemoryReadServer.server.ts',
       'lib/careerMemory/personalMemoryDedupe.ts',
@@ -311,12 +312,20 @@ async function main() {
   {
     for (const rel of ['app/api/career/consultation/route.ts', 'app/api/career/company-research/route.ts']) {
       const code = readFileSync(join(ROOT, rel), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
-      check(/resolveServerBaseInputs\(/.test(code), `${rel}: 共有 resolver 経由`);
-      check(/profile:\s*base\.profile/.test(code) || /profile:\s*base\.profile,/.test(code), `${rel}: base 由来を prompt へ渡す`);
+      // Batch 2: 共有 resolver は purpose 別 resolveContextInputs（base + cross-feature を 1 read）。
+      check(/resolve\w*ContextInputs\(/.test(code), `${rel}: 共有 resolver 経由`);
+      check(/profile:\s*ctx\.profile/.test(code), `${rel}: resolver 由来を prompt へ渡す`);
+      // `b.profile` が残ってよいのは **resolver への引数**としてだけ（prompt へ直接渡さない）。
+      const bodyProfileUses = code.match(/profile:\s*b\.profile/g)?.length ?? 0;
+      const insideResolverArg = (code.match(/resolve\w*ContextInputs\(\s*\{[^}]*profile:\s*b\.profile/g) ?? []).length;
+      check(
+        bodyProfileUses === insideResolverArg,
+        `${rel}: request body を prompt へ直接渡さない（body 参照 ${bodyProfileUses} / resolver 引数 ${insideResolverArg}）`,
+      );
       check(!/serviceRole|SERVICE_ROLE/.test(code), `${rel}: service role なし`);
       check(!/b\.userId|body\.userId/.test(code), `${rel}: client 由来 userId を使わない`);
     }
-    const resolver = readFileSync(join(ROOT, 'lib/careerServerContext/resolveBaseInputs.server.ts'), 'utf8');
+    const resolver = readFileSync(join(ROOT, 'lib/careerServerContext/purposeContext.server.ts'), 'utf8');
     check(/^import 'server-only';$/m.test(resolver), "resolver は server-only");
     check(!/NODE_ENV/.test(resolver), 'default-ON / NODE_ENV bypass なし');
   }
