@@ -1299,6 +1299,155 @@ ETL）が解決したため、**技術的な未決事項はゼロ**になった�
 
 ---
 
+# 2.11 Policy Freeze（`D-P1` 〜 `D-P6` / 2026-08-14 Human 承認）
+
+## D-P1 — 承認済み policy の単一 typed / versioned source
+
+**Decision ID:** D-P1 / **Status:** LOCKED
+
+`lib/careerCollectiveIntelligence/policy/registry.ts` に H-L1〜H-L6 の承認結果を凍結した。
+
+### 二重管理を検出する仕組み
+
+既存 module（`careerAggregate/policy.ts` / `rareCategory.ts`）は歴史的に
+同じ閾値を PROVISIONAL 値として持っている。これらを **削除せず**、
+QA `PF-1` が **registry と一致していること**を検証する形にした。
+
+理由: 既存 module は多数の QA から参照されており、値の移動は広範囲の変更になる。
+「一致を強制する」ほうが、変更範囲を増やさずに単一権威を実現できる。
+どちらかを変えて片方を忘れれば QA が落ちる。
+
+### policy version
+
+`CURRENT_POLICY_VERSION = 1` / `SUPPORTED_POLICY_VERSIONS = [1]`。
+未サポート version は **fail-closed**（serve しない・cleanup も計画しない・共有も許可しない）。
+
+---
+
+## D-P2 — retention の実装（H-L2 / 法務保留のまま実装）
+
+**Decision ID:** D-P2 / **Status:** LOCKED（値は PROVISIONALLY_APPROVED_PENDING_LEGAL）
+
+承認された 5 種別（90 / 30 / 730 / 400 / 180 日）を registry へ。
+`retentionPlanner.ts` に期限計算 / cleanup planner / dry-run / candidate 列挙 /
+safe-delete port を実装した。
+
+### destructive にならない構造
+
+```text
+実際に削除されるのは以下がすべて揃ったときだけ:
+  dryRun === false（明示）
+  AND policy version サポート対象
+  AND legalApproved === true
+  AND SafeDeletePort 実装あり
+```
+
+★ `SafeDeletePort` の production 実装は **repo に存在しない**（`PF-11` が固定）。
+コードから destructive cleanup を起動する経路が無い状態で実装を完成させている。
+
+### 判定不能を「削除してよい」にしない
+
+由来時刻不明 / 未知 class / 未サポート version はすべて `undetermined` で、
+**触らない**（削除もしないし serve もしない）。
+
+---
+
+## D-P3 — moderator 認可（H-L6）
+
+**Decision ID:** D-P3 / **Status:** LOCKED（provider は provisioning 項目）
+
+監査の結果、本 repo に admin / moderator の認可基盤は **存在しなかった**。
+そこで interface + fail-closed gate までを実装し、実 provider は Human provisioning とした。
+
+```text
+provider 未設定 → no_moderator_provider で全拒否
+```
+
+★ ここを「adapter が無いから素通し」にすると **全 member が moderator** になる。
+最も危険な失敗なので、明示的に拒否する実装にした。
+
+client 由来の `isAdmin` / `moderatorId` / `role` を根拠にしないことを
+`containsForbiddenModeratorInput` と静的 guard（`PF-7`）の両方で固定する。
+
+---
+
+## D-P4 — 共有の二段 gate（H-L4）と撤回（H-L5）
+
+**Decision ID:** D-P4 / **Status:** LOCKED
+
+### 二段 gate
+
+```text
+master opt-in（company_knowledge_contribution scope）
+AND per-contribution confirmation（share_granted）
+```
+
+片方だけでは通らないことを `PF-4` / `PF-5` が **両方向**から固定する。
+consent family が Personal Optimization と異なることも検証する。
+
+### 撤回時の保守的 fallback
+
+`derived_multi_source` は本来 `legal_policy_gate`（法務判断）。
+legal 未承認の間は **自動 retain を production behavior にしない**という指示に従い、
+可逆な `unpublish` へ倒す。
+
+```text
+削除は不可逆 / 非公開化は可逆
+→ 迷う状態では可逆な方を選ぶ
+```
+
+`revoked → future contributions blocked` は状態に関わらず **常に true**。
+
+---
+
+## D-P5 — preflight と legal gate（H-L7）
+
+**Decision ID:** D-P5 / **Status:** LOCKED（legal は未承認）
+
+`preflight.ts` が 10 項目の readiness を返す。秘密情報は含めない。
+
+### legal approval の唯一の判定
+
+```ts
+isLegalApproved({ approved, source })
+  // approved === true かつ source が非空文字列のときのみ true
+```
+
+★ 「module が存在するから approved」「env 未設定だから approved」を
+**構造的に不可能**にした。承認は明示的な true と出所文字列の両方が必要。
+
+---
+
+## D-P6 — production candidate migration package
+
+**Decision ID:** D-P6 / **Status:** LOCKED（**未適用**）
+
+`supabase/migrations_pending/` に 4 つの migration と README を用意した。
+
+### RLS 順序の原則（最重要）
+
+```text
+禁止: CREATE TABLE → GRANT → ENABLE RLS
+      （GRANT 後・RLS 前の一瞬、table が保護なしで公開される）
+
+必須: CREATE TABLE → ENABLE RLS → CREATE POLICY → GRANT
+```
+
+`PF-13` が全 migration でこの順序を静的に検査する。
+
+### rollback の原則
+
+DDL rollback は前進のみ。**consent ledger と provenance は rollback で消さない**
+（消すと「誰が何に同意していたか」を再構成できなくなる）。
+rollback は「読めなくする」方向で行い、「消す」方向では行わない。
+
+### 適用済み DDL は変更していない
+
+`career_*_apply.sql` は依然 policy 無し・GRANT 無しの deny-by-default のまま
+（`PF-13` が検証）。migration package を誤って apply 側へ移すと QA が落ちる。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

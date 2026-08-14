@@ -1,5 +1,20 @@
 # PASSAI CAREER — Collective Intelligence Recommended Decisions
 
+> ✅ **2026-08-14: Human がすべての推奨を承認しました。**
+> 本文書は「なぜその値を推奨したか」の根拠として保持します。
+> **承認結果と現在の状態は `DATA_SPINE_STATE.md` §5.4 を参照してください。**
+>
+> | ID | 承認結果 |
+> |---|---|
+> | H-L1 cohort 閾値 | **APPROVED**（10/20/50/100） |
+> | H-L2 retention | **PROVISIONALLY_APPROVED_PENDING_LEGAL**（5 種別） |
+> | H-L3 利用目的 | **APPROVED**（internal + user-facing。AI context 除外） |
+> | H-L4 sharing | **APPROVED**（二段 gate） |
+> | H-L5 撤回後 | **PROVISIONALLY_APPROVED_PENDING_LEGAL**（状態別） |
+> | H-L6 moderation | **APPROVED**（自動 pre-screen + 人手承認） |
+> | H-L7 legal | **PENDING_LEGAL_REVIEW** — `COLLECTIVE_INTELLIGENCE_LEGAL_REVIEW.md` |
+> | H-L8 infra | **TECHNICALLY_RESOLVED / PROVISIONING_PENDING** |
+
 **目的:** Human が **YES / NO で処理できる**まで絞った決裁票。
 
 **前提（Decision Resolution Batch 後）:**

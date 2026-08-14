@@ -433,6 +433,105 @@ scheduling（cron の時刻・再試行間隔は provider 側）。
 
 ---
 
+# 5.4 Policy Freeze（Human 承認済み / 2026-08-14）
+
+## 5.4.1 承認結果
+
+| ID | Status | 内容 |
+|---|---|---|
+| **H-L1** cohort 閾値 | **APPROVED** | 10 / 20 / 50 / 100（+ rare category 20） |
+| **H-L2** retention | **PROVISIONALLY_APPROVED_PENDING_LEGAL** | 5 種別（90 / 30 / 730 / 400 / 180 日） |
+| **H-L3** 利用目的 | **APPROVED** | 許可 = internal analytics + user-facing trend。**AI context 除外** |
+| **H-L4** sharing | **APPROVED** | master opt-in **AND** per-contribution 確認（二段） |
+| **H-L5** 撤回後 | **PROVISIONALLY_APPROVED_PENDING_LEGAL** | 状態別（delete / unpublish / legal gate） |
+| **H-L6** moderation | **APPROVED** | 自動 pre-screen → 人手承認 → 公開 |
+| **H-L7** legal | **PENDING_LEGAL_REVIEW** | `COLLECTIVE_INTELLIGENCE_LEGAL_REVIEW.md` の 10 項目 |
+| **H-L8** infra | **TECHNICALLY_RESOLVED / PROVISIONING_PENDING** | migration 準備済み・未適用 |
+
+## 5.4.2 policy の単一 source（`D-P1`）
+
+```text
+lib/careerCollectiveIntelligence/policy/registry.ts
+```
+
+policy version（`CURRENT_POLICY_VERSION = 1`）を持ち、consent record /
+aggregate provenance / shared knowledge provenance から追跡できる。
+**未サポート version は fail-closed**（serve しない・cleanup も計画しない）。
+
+★ 既存 module（`careerAggregate/policy.ts` / `rareCategory.ts`）の値と
+registry の値が **一致していること**を QA `PF-1` が検証する（二重管理の検出）。
+
+## 5.4.3 承認内容の実装先
+
+| 承認 | 実装 |
+|---|---|
+| H-L1 cohort | `policy/registry.ts` の `COHORT_POLICY`（既存 guard と値一致） |
+| H-L2 retention | `policy/retentionPlanner.ts`（期限計算 / planner / dry-run / safe-delete port） |
+| H-L3 purpose | `registry.ts` の `ALLOWED_/FORBIDDEN_AGGREGATE_PURPOSES` + 静的 guard（`PF-3`） |
+| H-L4 sharing | `policy/sharingGate.ts` の `evaluateSharingStages`（二段 gate） |
+| H-L5 withdrawal | `sharingGate.ts` の `planWithdrawal`（legal 未承認時は `unpublish` へ倒す） |
+| H-L6 moderation | `moderation/moderatorAuthorization.ts`（**provider 未設定は全拒否**） |
+| H-L7 legal | `preflight.ts` の `isLegalApproved`（承認 source 必須） |
+| H-L8 infra | `supabase/migrations_pending/`（4 SQL + README・**未適用**） |
+
+## 5.4.4 destructive 操作が起きない構造
+
+retention cleanup が実際に削除するのは、以下が **すべて**揃ったときだけ:
+
+```text
+dryRun === false（明示）
+AND policy version がサポート対象
+AND legalApproved === true
+AND SafeDeletePort の実装が渡されている
+```
+
+★ 現在 `SafeDeletePort` の production 実装は **repo に存在しない**（`PF-11` が固定）。
+つまりコードから destructive cleanup を起動する経路が無い。
+
+## 5.4.5 production candidate migration（**未適用**）
+
+```text
+supabase/migrations_pending/
+  README.md                              … 適用条件・順序・rollback・preflight・post-apply 検証
+  010_consent_policies_and_ledger.sql    … consent manifest + append-only ledger + append RPC
+  020_contributor_subject_identity.sql   … I2 対応表 + ensure/unlink RPC
+  030_layer5_read_contract.sql           … owner-scoped policy + published view（security_invoker）
+  040_layer4_read_contract.sql           … published/valid のみ SELECT + index
+```
+
+**RLS 安全性:** すべての migration が
+`CREATE TABLE → ENABLE RLS → CREATE POLICY → GRANT` の順序。
+GRANT を最後にすることで「保護なしで公開される瞬間」を作らない（`PF-13` が静的に検査）。
+
+**適用済み DDL 側は変更していない**（依然 policy 無し・deny-by-default）。
+
+## 5.4.6 moderator 認可（`D-P3`）
+
+本 repo に admin / moderator の認可基盤は **存在しない**（監査で確認）。
+そこで **interface + fail-closed gate** までを実装し、実 provider は provisioning 項目とした。
+
+```text
+provider 未設定 → no_moderator_provider で **全拒否**
+（「adapter が無いから素通し」には絶対にしない）
+```
+
+client 由来の `isAdmin` / `moderatorId` / `role` を根拠にする実装が repo に無いことを
+`PF-7` が静的に固定する。
+
+## 5.4.7 batch provider（推奨）
+
+| | provider | 備考 |
+|---|---|---|
+| **推奨** | Supabase `pg_cron` + SECURITY DEFINER RPC | DB 内で完結。排他・retry を同 transaction で扱える。member path と物理的に分離 |
+| 代替 A | Vercel Cron + 専用 route | route である以上 member path と同じ入口になる点に注意 |
+| 代替 B | GitHub Actions schedule | 完全外部。secret 管理が増える |
+
+どれを選んでも `batchRunner.ts` は変更不要（provider-neutral）。
+**concurrency は 1**（runner は分散ロックを提供しないため provider 側で保証する）。
+
+---
+
+
 # 5.2 ★ 未実施の検証（隠さない）
 
 > **Actual signed-in browser E2E remains outstanding.**

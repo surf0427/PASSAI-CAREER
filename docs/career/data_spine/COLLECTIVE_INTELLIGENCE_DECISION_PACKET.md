@@ -1,5 +1,9 @@
 # PASSAI CAREER — Collective Intelligence Decision Packet
 
+> ✅ **2026-08-14: H-L1〜H-L6 は Human 承認済み**（H-L7 は法務レビュー待ち）。
+> 承認結果は `DATA_SPINE_STATE.md` §5.4、
+> 実装された policy は `lib/careerCollectiveIntelligence/policy/registry.ts` を参照。
+>
 > ⚠ **この文書は Closure Batch 時点の版です。**
 > Decision Resolution Batch（`D-R1`〜`D-R3`）で H-L8 の technical 部分が解決したため、
 > **最新の決裁票は `COLLECTIVE_INTELLIGENCE_RECOMMENDED_DECISIONS.md`** を参照してください。
