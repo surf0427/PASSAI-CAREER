@@ -74,6 +74,10 @@ function main() {
 
     // Source-Sync
     check(normalizeSyncOutcome(meta(), true) === 'verified', 'veto なし → verified');
+    // ★ 未評価（gate 拒否 / skipped）を verified と報告しない（rollout 率の水増し防止）。
+    check(normalizeSyncOutcome(meta({ gate: 'disabled' }), true) === null, '★ gate disabled → null（未評価）');
+    check(normalizeSyncOutcome(meta({ gate: 'denied' }), true) === null, '★ gate denied → null（未評価）');
+    check(normalizeSyncOutcome(meta({ read: 'skipped' }), true) === null, '★ read skipped → null（未評価）');
     check(normalizeSyncOutcome(meta({ vetoed: { base: 'mismatch' } }), true) === 'mismatch', 'mismatch');
     check(normalizeSyncOutcome(meta({ vetoed: { base: 'unreadable' } }), true) === 'unreadable', 'unreadable が最優先');
     check(normalizeSyncOutcome(meta({ vetoed: { base: 'unclaimed' } }), false) === 'unclaimed', 'signal 無し → unclaimed');

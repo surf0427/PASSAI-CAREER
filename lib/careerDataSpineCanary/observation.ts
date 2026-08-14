@@ -87,11 +87,21 @@ export function normalizeMemoryOutcome(meta: MemoryMetaLike): CanaryMemoryOutcom
   return 'omitted';
 }
 
-/** Source-Sync の代表 outcome（memory meta の veto から導く）。 */
+/**
+ * Source-Sync の代表 outcome（memory meta の veto から導く）。
+ *
+ * ★ 返り値 null = 「sync を **評価していない**」。
+ *   gate 拒否 / master OFF / 対象外 purpose では sync 検証自体が走らないため、
+ *   veto が空でも `verified` と報告してはいけない（rollout 判断の verified 率が水増しされる）。
+ *   2026-08-14 の canary 実機検証で検出した観測バグの修正。
+ */
 export function normalizeSyncOutcome(
   meta: MemoryMetaLike,
   signalPresent: boolean,
-): CanarySyncOutcome {
+): CanarySyncOutcome | null {
+  // sync が評価される前に打ち切られたケースは「未評価」。
+  if (meta.gate !== 'allowed') return null;
+  if (meta.read === 'skipped') return null;
   const vetoes = Object.values(meta.vetoed);
   if (vetoes.includes('unreadable')) return 'unreadable';
   if (vetoes.includes('mismatch')) return 'mismatch';
