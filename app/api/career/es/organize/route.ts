@@ -5,7 +5,12 @@
 //   DB / 課金 / usage には接続しない。AI 呼び出し系の純粋ユーティリティのみ利用する。
 
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+import {
+  AI_BUDGET_PRESET_80S_WALL,
+  createAiCallBudget,
+  createTimeoutSignal,
+  isAbortError,
+} from '@/lib/aiTimeout';
 import {
   CAREER_ES_ORGANIZE_MODEL,
   ES_ORGANIZE_SYSTEM_PROMPT,
@@ -72,7 +77,15 @@ export async function POST(req: Request) {
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（他 route と同方針）。
+    // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
+    // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
+    const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = aiBudget.nextCallTimeoutMs();
+      // 残予算が retry に足りない → retry せず打ち切る（wall 超過による 504 を防ぐ）。
+      if (callTimeoutMs === null) {
+        return jsonError('AI_ES_ORGANIZE_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
+      }
       const message = await anthropic.messages.create(
         {
           model: CAREER_ES_ORGANIZE_MODEL,
@@ -87,7 +100,7 @@ export async function POST(req: Request) {
           ],
           messages: [{ role: 'user', content: userMessage }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';

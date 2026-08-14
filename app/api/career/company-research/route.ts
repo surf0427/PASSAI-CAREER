@@ -31,7 +31,11 @@ import type {
 } from '@/types/careerCompanyResearch';
 import { CAREER_COMPANY_INTEREST_LABELS } from '@/types/careerCompanyResearch';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import {
+  AI_BUDGET_PRESET_80S_WALL,
+  createAiCallBudget,
+  createTimeoutSignal,
+} from '@/lib/aiTimeout';
 // P17-M1: Personal Memory（Layer 2）を owner-scoped で server read（flag OFF/gate deny では I/O ゼロ・fail-open）。
 import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
 // D-R2: client canonical revision（header 由来・veto 専用）。未提示なら Memory は使われない。
@@ -363,7 +367,21 @@ export async function POST(req: Request) {
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（他 career API と同方針）。
+    // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
+    // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
+    const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = aiBudget.nextCallTimeoutMs();
+      // 残予算が retry に足りない → retry せず打ち切る（wall 超過による 504 を防ぐ）。
+      if (callTimeoutMs === null) {
+        return Response.json(
+          {
+            error: 'AI_COMPANY_RESEARCH_PARSE_FAILED',
+            detail: 'AI応答をJSONとして解釈できませんでした。',
+          },
+          { status: 502 },
+        );
+      }
       const message = await anthropic.messages.create(
         {
           model: MODEL,
@@ -372,7 +390,7 @@ export async function POST(req: Request) {
           system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';

@@ -14,7 +14,12 @@ import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+import {
+  DEFAULT_AI_TIMEOUT_MS,
+  createAiCallBudget,
+  createTimeoutSignal,
+  isAbortError,
+} from '@/lib/aiTimeout';
 import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
 import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
 import type {
@@ -69,6 +74,13 @@ export const runtime = 'nodejs';
 // Next の segment config は静的解析対象のため **リテラル必須**（import した定数は不可）。
 // 値は constants.ROUTE_MAX_DURATION_SECONDS と一致させる（QA で不一致を検出）。
 export const maxDuration = 300;
+
+// legacy 同期経路の AI 合計時間予算（ms）。job 経路（PROVIDER_DEADLINE_MS=225s）とは別物で、
+// legacy は client の AbortController（run/page.tsx GENERATE_TIMEOUT_MS=70s）が実効的な
+// 外側境界になるため、そこに収まる 60s を合計上限とする。
+const LEGACY_AI_TOTAL_BUDGET_MS = 60_000;
+// max_tokens 4000 の再生成に最低限必要な残予算（下回れば retry せず parse エラーを返す）。
+const LEGACY_AI_MIN_RETRY_BUDGET_MS = 25_000;
 
 // 失敗時の共通 JSON レスポンス（legacy 用）。error=機械コード / code=同値 / detail=ユーザー向け。
 function jsonError(code: string, status: number, detail: string) {
@@ -142,7 +154,22 @@ async function legacyGenerate(input: SelfAnalysisSummaryInput): Promise<Response
     const { system, user } = buildSelfAnalysisMessages(input);
 
     let result: CareerSelfAnalysisResult | null = null;
+    // legacy 経路の AI 合計時間予算。client（run/page.tsx GENERATE_TIMEOUT_MS=70s）は
+    // 「サーバ 60s」を前提に決まっているが、parse retry が満額 signal を再発行すると
+    // 合計 120s となり client が先に abort し、誤った network 文言が出ていた。
+    // 合計を 60s に固定して client 側の前提を回復する（per-call の値は不変）。
+    const budget = createAiCallBudget({
+      totalBudgetMs: LEGACY_AI_TOTAL_BUDGET_MS,
+      perCallTimeoutMs: DEFAULT_AI_TIMEOUT_MS,
+      minRetryBudgetMs: LEGACY_AI_MIN_RETRY_BUDGET_MS,
+    });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = budget.nextCallTimeoutMs();
+      // 残予算不足 → retry せず打ち切る（client abort より先に JSON エラーを返す）。
+      if (callTimeoutMs === null) {
+        logFailure('parse-failed', meta);
+        return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
+      }
       const message = await anthropic.messages.create(
         {
           model: SELF_ANALYSIS_MODEL,
@@ -151,7 +178,7 @@ async function legacyGenerate(input: SelfAnalysisSummaryInput): Promise<Response
           system,
           messages: [{ role: 'user', content: user }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';

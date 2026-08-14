@@ -14,7 +14,7 @@ import type {
 } from '@/lib/careerAi';
 import type { CareerSelfAnalysisTurn } from '@/types/careerSelfAnalysis';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+import { createAiCallBudget, createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 import {
   CAREER_SELF_ANALYSIS_MODEL,
   CAREER_SELF_ANALYSIS_MAX_TURNS,
@@ -34,6 +34,14 @@ const MAX_ANSWER_CHARS = 8000;
 // AI timeout を 30 秒に絞ることで、応答が遅い場合でも Vercel/モバイルSafari が接続を
 // 切る前に必ず JSON エラーを返せる（＝スマホで raw な "Load failed" を出さない）。
 const QUESTION_AI_TIMEOUT_MS = 30_000;
+// 1 request で AI に使ってよい合計時間。上の「必ず 30 秒以内に JSON を返す」という不変条件は
+// **合計**についての約束であり、client 側 QUESTION_TIMEOUT_MS=35s もその前提で決まっている。
+// parse retry が満額 signal を再発行すると合計 60s となり client が先に abort して
+// "時間内に応答がありませんでした（電波…）" という誤った network 文言が出ていた。
+// 合計を per-call と同値に固定し、残予算から attempt の timeout を導出する。
+const QUESTION_AI_TOTAL_BUDGET_MS = 30_000;
+// max_tokens 500 の再生成に最低限必要な残予算（下回れば retry せず parse エラーを返す）。
+const QUESTION_AI_MIN_RETRY_BUDGET_MS = 10_000;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -184,8 +192,19 @@ export async function POST(req: Request) {
       { role: 'answer', content: answer },
     ];
 
-    // parse 失敗時のみ 1 回だけ temperature 0 で再生成する。
+    // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（合計は budget 内に収める）。
+    const budget = createAiCallBudget({
+      totalBudgetMs: QUESTION_AI_TOTAL_BUDGET_MS,
+      perCallTimeoutMs: QUESTION_AI_TIMEOUT_MS,
+      minRetryBudgetMs: QUESTION_AI_MIN_RETRY_BUDGET_MS,
+    });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = budget.nextCallTimeoutMs();
+      // 残予算不足 → retry せず打ち切る（client の 35s abort より先に JSON を返す）。
+      if (callTimeoutMs === null) {
+        logFailure('followup-parse', meta);
+        return jsonError('AI_SELF_ANALYSIS_PARSE_FAILED', 502, 'AIの応答を解釈できませんでした。もう一度お試しください。');
+      }
       const message = await anthropic.messages.create(
         {
           model: CAREER_SELF_ANALYSIS_MODEL,
@@ -194,7 +213,7 @@ export async function POST(req: Request) {
           system,
           messages: [{ role: 'user', content: buildFollowupUserPrompt(priorTurns) }],
         },
-        { signal: createTimeoutSignal(QUESTION_AI_TIMEOUT_MS) },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';

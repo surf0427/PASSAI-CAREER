@@ -47,7 +47,11 @@ import { buildConsultationSystemPrompt } from './consultationPrompt';
 //   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
 import { resolveConsultationContextInputs } from './resolveContextInputs';
 import { anthropic, extractJson } from '@/lib/ai';
-import { createTimeoutSignal } from '@/lib/aiTimeout';
+import {
+  AI_BUDGET_PRESET_80S_WALL,
+  createAiCallBudget,
+  createTimeoutSignal,
+} from '@/lib/aiTimeout';
 // P10-D: L2 Event Signal を「最近の準備状況を踏まえた次アクション提案の補助」としてのみ描画する。
 //   構造化 summary（bucket/band のみ）を server 側で固定ラベルへ render する（生 JSON は prompt に出さない）。
 // P10-F: server-authoritative な guard で解決する（無効なら client 強制 body を無視して空文字）。
@@ -307,7 +311,18 @@ export async function POST(req: Request) {
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する。
+    // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
+    // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
+    const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const callTimeoutMs = aiBudget.nextCallTimeoutMs();
+      // 残予算が retry に足りない → retry せず打ち切る（wall 超過による 504 を防ぐ）。
+      if (callTimeoutMs === null) {
+        return Response.json(
+          { error: 'AI_CONSULTATION_PARSE_FAILED', detail: 'AI応答を解釈できませんでした。' },
+          { status: 502 },
+        );
+      }
       const message_ = await anthropic.messages.create(
         {
           model: MODEL,
@@ -319,7 +334,7 @@ export async function POST(req: Request) {
           system: systemPrompt,
           messages: [...history, { role: 'user', content: message }],
         },
-        { signal: createTimeoutSignal() },
+        { signal: createTimeoutSignal(callTimeoutMs) },
       );
 
       const raw = message_.content[0]?.type === 'text' ? message_.content[0].text : '';
