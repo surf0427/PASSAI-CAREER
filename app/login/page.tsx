@@ -124,8 +124,10 @@ function LoginForm() {
       return;
     }
     if (result.kind === 'no-env') {
+      // 設定不備（公開 env が build に inline されていない）。時間をおいても解消しないため
+      // 「再度お試しください」とは案内しない（transient failure と混同させない）。
       setSendError(
-        'ストレージに接続できません。少し時間をおいて再度お試しください。',
+        'ただいまログインをご利用いただけません（サーバー設定の問題）。時間をおいても解消しないため、恐れ入りますが運営までお問い合わせください。',
       );
       return;
     }
@@ -146,8 +148,9 @@ function LoginForm() {
     }
     setVerifying(false);
     if (result.kind === 'no-env') {
+      // 設定不備。retry 案内をしない（handleSend と同一方針）。
       setVerifyError(
-        'ストレージに接続できません。少し時間をおいて再度お試しください。',
+        'ただいまログインをご利用いただけません（サーバー設定の問題）。時間をおいても解消しないため、恐れ入りますが運営までお問い合わせください。',
       );
       return;
     }

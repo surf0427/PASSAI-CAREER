@@ -90,7 +90,11 @@ function CareerLoginForm() {
       return;
     }
     if (result.kind === 'no-env') {
-      setSendError('ストレージに接続できません。少し時間をおいて再度お試しください。');
+      // CAREER 専用 env が build に inline されていない（production では shared fallback 禁止）。
+      // 設定不備であり時間経過では解消しないため、retry を促す文言にしない。
+      setSendError(
+        'ただいまログインをご利用いただけません（サーバー設定の問題）。時間をおいても解消しないため、恐れ入りますが運営までお問い合わせください。',
+      );
       return;
     }
     setSendError('コードを送信できませんでした。メールアドレスを確認して再度お試しください。');
@@ -103,7 +107,10 @@ function CareerLoginForm() {
     const result = await verifyCareerEmailOtp(step.email, code);
     if (result.kind === 'no-env') {
       setVerifying(false);
-      setVerifyError('ストレージに接続できません。少し時間をおいて再度お試しください。');
+      // 設定不備。retry 案内をしない（handleSend と同一方針）。
+      setVerifyError(
+        'ただいまログインをご利用いただけません（サーバー設定の問題）。時間をおいても解消しないため、恐れ入りますが運営までお問い合わせください。',
+      );
       return;
     }
     if (result.kind === 'error') {
