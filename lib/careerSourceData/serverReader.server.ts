@@ -68,6 +68,13 @@ export type CareerSourceReaderDeps = {
   now: () => number;
 };
 
+/**
+ * 呼び出し側の追加 gate（canary allowlist 等）。
+ * server auth で確定した userId を受け取り、false を返すと **table read を 1 回も行わない**。
+ * ★ client 申告値は渡さない（引数は必ず auth 由来の userId）。
+ */
+export type CareerSourceAuthorize = (userId: string) => boolean;
+
 const SINGLE_ROW_LIMIT = 1;
 
 function outcome(
@@ -164,6 +171,7 @@ async function readSingleSource<TRow, TDomain>(
 export async function loadCareerSourceData(
   kinds: readonly CareerSourceKind[],
   deps: CareerSourceReaderDeps = realDeps,
+  authorize?: CareerSourceAuthorize,
 ): Promise<CareerSourceReadOutcome> {
   const statuses = emptySourceStatuses();
   try {
@@ -189,6 +197,16 @@ export async function loadCareerSourceData(
     if (!userId) {
       return outcome(EMPTY_CAREER_SOURCE_BUNDLE, {
         outcome: 'unauthenticated',
+        statuses,
+        durationMs: null,
+      });
+    }
+
+    // ★ 呼び出し側 gate（canary allowlist 等）。deny なら **table read ゼロ**で返す。
+    //   userId は server auth 由来のみ（client 申告値をここへ渡す経路は存在しない）。
+    if (authorize && !authorize(userId)) {
+      return outcome(EMPTY_CAREER_SOURCE_BUNDLE, {
+        outcome: 'unauthorized',
         statuses,
         durationMs: null,
       });

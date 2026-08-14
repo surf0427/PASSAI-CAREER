@@ -20,6 +20,9 @@ import { loadServerBaseContext } from '@/lib/careerServerContext/baseContext.ser
 import type { BaseContextDecisionReason } from '@/lib/careerServerContext/baseContextPolicy';
 // D-R2: client canonical revision（header 由来・veto 専用）。
 import { readSourceSyncSignal } from '@/lib/careerSourceSync/request.server';
+// Canary observability（enum + 件数のみ。識別子・本文は載せない）。
+import { normalizeContextOutcome } from '@/lib/careerDataSpineCanary/observation';
+import { recordCanaryObservation } from '@/lib/careerDataSpineCanary/counters.server';
 
 export type InterviewBaseInputs = {
   profile: CareerProfileInput | null;
@@ -53,6 +56,14 @@ export async function resolveInterviewBaseInputs(
       'interview_practice',
       req ? readSourceSyncSignal(req) : undefined,
     );
+    // 観測: server context を使ったか / なぜ bridge へ倒れたか（PII なし）。
+    recordCanaryObservation({
+      purpose: 'interview_practice',
+      sync: null,
+      memory: null,
+      context: normalizeContextOutcome(server.reason),
+      memorySectionCount: 0,
+    });
     if (!server.context) return { ...fallback, source: server.reason };
     return { ...server.context, source: server.reason };
   } catch {

@@ -333,7 +333,8 @@ Orchestrator 自体は **純関数のまま**（I/O を内部に持たない）�
 | directory | 位置づけ |
 |---|---|
 | `lib/careerContextLoaders/` | **P17-A の fail-closed scaffold**。常に `disabled` を返す。静的 guard が「production から import 0」を強制している。ここに live loader を置いてはいけない。 |
-| `lib/careerServerContext/` | **通電済みの Layer 1 server loader**（NEXT-6）。purpose 単位 opt-in・default OFF。 |
+| `lib/careerServerContext/` | **通電済みの Layer 1 server loader**（NEXT-6）。purpose opt-in + **canary user allowlist**（`D-S4`）・default OFF。 |
+| `lib/careerDataSpineCanary/` | Canary observability（enum のみの観測語彙 + process-local counters）。PII を構造的に持たない。 |
 | `lib/careerMemory/persistence/*.server.ts` | 通電済みの Layer 2 server read（canary gate 付き）。 |
 
 ## Purpose-specific reduction
@@ -354,7 +355,7 @@ omission・fallback behavior。
 | Layer 1 | Layer 2 | Deterministic owner-scoped projection |
 | Feature action | Layer 3 | Privacy-safe behavioral event only |
 | Layer 1 | Server Layer 1 reader | Owner-scoped RLS read |
-| Layer 1 | Orchestrator | purpose opt-in **かつ sync 証明済み**の server base context のみ |
+| Layer 1 | Orchestrator | purpose opt-in **かつ canary user かつ sync 検証済み**の server base context のみ（`D-S4`） |
 | Client | Server（sync signal） | revision token のみ。**veto 専用**（content / selector / 権限に使わない） |
 | Layer 2 | Orchestrator | Purpose-allowed sections only |
 | Layer 3 | Layer 4 | Privacy-preserving approved ETL only |
@@ -375,6 +376,7 @@ omission・fallback behavior。
 | Client-declared `fresh` → permanent freshness authority | Retired（D-R1・rollback 専用） |
 | Client sync signal → content authority / DB selector / user_id | `D-S1` trust model 違反（veto 専用） |
 | D-R1 の再有効化（unsafe rollback） | `D-S2`。production 経路も env も存在しない |
+| purpose flag だけで server context を全ユーザーへ有効化 | `D-S4`。user allowlist が必須（default deny） |
 | 証明できない mirror content → prompt | `D-S1` veto（旧 D-R2 の 3 ケース） |
 | QA weakening → GREEN | Safety contract violation |
 

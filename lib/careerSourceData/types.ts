@@ -75,7 +75,9 @@ export type CareerSourceReadStatus = 'ok' | 'truncated' | 'error' | 'skipped';
 // 観測用の安全 metadata のみ（本文 / UUID / env / raw error を含めない）。
 export type CareerSourceReadMeta = {
   // 認証・env・gate の総合結果。
-  outcome: 'skipped' | 'unauthenticated' | 'ok' | 'error';
+  //   unauthorized: 認証は通ったが **呼び出し側の gate（canary allowlist 等）が許可しなかった**。
+  //     この場合 table read は 1 回も行わない（I/O ゼロ）。
+  outcome: 'skipped' | 'unauthenticated' | 'unauthorized' | 'ok' | 'error';
   // Source 別の read 状態。
   statuses: Readonly<Record<CareerSourceKind, CareerSourceReadStatus>>;
   // 全体の所要時間（観測用。DI 可能な now から算出）。

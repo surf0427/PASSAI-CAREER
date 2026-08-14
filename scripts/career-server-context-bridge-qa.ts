@@ -48,6 +48,7 @@ import {
 } from '@/lib/careerSourceSync/signal';
 
 const ROOT = process.cwd();
+const CANARY_UID = '11111111-1111-1111-1111-111111111111';
 let failures = 0;
 const check = (ok: boolean, name: string, detail?: string) => {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${!ok && detail ? ` — ${detail}` : ''}`);
@@ -106,11 +107,20 @@ function deps(opts: {
 }): ServerBaseContextDeps {
   const { enabled = true, outcome, spy } = opts;
   return {
-    enabledPurposes: () => (enabled ? ['interview_practice'] : []),
-    loadSources: async (kinds) => {
+    loadCanaryConfig: () => ({
+      purposes: enabled ? (['interview_practice'] as const) : [],
+      valid: true,
+      userIds: [CANARY_UID],
+    }),
+    loadSources: async (kinds, authorize) => {
       spy.loads++;
       spy.kinds = [...kinds];
       if (outcome === 'throw') throw new Error('boom');
+      // reader の authorize hook を模す（canary user なら通す）。
+      if (authorize && !authorize(CANARY_UID)) {
+        const statuses = emptySourceStatuses();
+        return { bundle: EMPTY_CAREER_SOURCE_BUNDLE, meta: { outcome: 'unauthorized', statuses, durationMs: 0 } };
+      }
       return outcome ?? outcomeWith(BUNDLE);
     },
   };

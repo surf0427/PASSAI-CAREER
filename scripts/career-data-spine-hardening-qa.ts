@@ -144,7 +144,7 @@ async function main() {
 
     // server base context も同様（bridge へ fallback）。
     const ctx = await loadServerBaseContext('interview_practice', EMPTY_SOURCE_SYNC_SIGNAL, {
-      enabledPurposes: () => ['interview_practice'],
+      loadCanaryConfig: () => ({ purposes: ['interview_practice'], valid: true, userIds: [UID] }),
       loadSources: async () => sourceOk(MIRROR),
     });
     check(ctx.context === null && ctx.reason === 'sync_unverified', 'base context も veto → bridge fallback');
@@ -201,7 +201,7 @@ async function main() {
 
     // server context OFF（purpose 未 opt-in）→ bridge。
     const ctx = await loadServerBaseContext('interview_practice', syncOf(MIRROR), {
-      enabledPurposes: () => [],
+      loadCanaryConfig: () => ({ purposes: [], valid: true, userIds: [UID] }),
       loadSources: async () => { throw new Error('must not be called'); },
     });
     check(ctx.context === null && ctx.reason === 'flag_off', 'server context OFF → bridge fallback（I/O ゼロ）');

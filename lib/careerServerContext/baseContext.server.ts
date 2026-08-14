@@ -36,12 +36,16 @@ import {
 import {
   BASE_CONTEXT_SOURCE_KINDS,
   decideBaseContextSource,
-  isServerContextEnabledForPurpose,
-  parseServerContextPurposes,
   type BaseContextDecisionReason,
 } from './baseContextPolicy';
-
-export const CAREER_SERVER_CONTEXT_PURPOSES_ENV = 'CAREER_SERVER_CONTEXT_PURPOSES';
+// Canary: purpose gate に加えて **user allowlist** を要求する（1 ユーザー限定運用）。
+import {
+  isServerContextCanaryUser,
+  isServerContextPurposeEnabled,
+  type ServerContextCanaryConfig,
+} from './canaryGate';
+import { loadServerContextCanaryConfigFromEnv } from './canaryGate.server';
+import type { CareerSourceAuthorize } from '@/lib/careerSourceData/serverReader.server';
 
 // route が request body の代わりに使う base 入力（Orchestrator へ渡す形と 1:1）。
 export type ServerBaseContext = {
@@ -57,13 +61,18 @@ export type ServerBaseContextResult = {
 };
 
 export type ServerBaseContextDeps = {
-  enabledPurposes: () => CareerContextPurpose[];
-  loadSources: (kinds: readonly CareerSourceKind[]) => Promise<CareerSourceReadOutcome>;
+  /** purpose 集合 + canary user allowlist（default deny）。 */
+  loadCanaryConfig: () => ServerContextCanaryConfig;
+  /** authorize は server auth 由来 userId のみを受け取り、deny なら table read ゼロ。 */
+  loadSources: (
+    kinds: readonly CareerSourceKind[],
+    authorize?: CareerSourceAuthorize,
+  ) => Promise<CareerSourceReadOutcome>;
 };
 
 const realDeps: ServerBaseContextDeps = {
-  enabledPurposes: () => parseServerContextPurposes(process.env[CAREER_SERVER_CONTEXT_PURPOSES_ENV]),
-  loadSources: (kinds) => loadCareerSourceData(kinds),
+  loadCanaryConfig: loadServerContextCanaryConfigFromEnv,
+  loadSources: (kinds, authorize) => loadCareerSourceData(kinds, undefined, authorize),
 };
 
 // 「実データがあるか」の判定（3 Source すべて空なら request body へ fallback）。
@@ -77,9 +86,16 @@ function hasAnyData(outcome: CareerSourceReadOutcome): boolean {
 
 /**
  * purpose 別に server-driven base context を解決する（never-throw・fail-open）。
- * opt-in していない purpose では **I/O ゼロ**（Source read もしない）。
  *
- * ★ D-R2: `syncSignal` 未指定（= claim なし）なら server Source を採用しない。
+ * ★ Canary gate（3 条件すべて必要。1 つでも欠ければ既存 bridge へ fallback）:
+ *     1. purpose が opt-in 済み（`CAREER_SERVER_CONTEXT_PURPOSES`）
+ *     2. requesting user が canary allowlist に居る（`CAREER_SERVER_CONTEXT_CANARY_USER_IDS`）
+ *        — userId は **server auth 由来のみ**。client が canary identity を選べる経路は無い。
+ *     3. Source-Sync が verified（`D-S1`）
+ *
+ * ★ opt-in していない purpose では **I/O ゼロ**（client 生成も Source read もしない）。
+ *   canary 対象外 user では auth のみ行い **table read ゼロ**（reader の authorize hook）。
+ * ★ `syncSignal` 未指定（= claim なし）なら server Source を採用しない（D-S1 veto）。
  *   fallback 先は request body bridge なので、product 出力は従来どおり。
  */
 export async function loadServerBaseContext(
@@ -88,10 +104,19 @@ export async function loadServerBaseContext(
   deps: ServerBaseContextDeps = realDeps,
 ): Promise<ServerBaseContextResult> {
   try {
-    const enabled = isServerContextEnabledForPurpose(purpose, deps.enabledPurposes());
-    if (!enabled) return { context: null, reason: 'flag_off' };
+    const canary = deps.loadCanaryConfig();
+    // 1) purpose gate（未 opt-in は I/O ゼロ）。
+    if (!isServerContextPurposeEnabled(purpose, canary)) {
+      return { context: null, reason: 'flag_off' };
+    }
 
-    const outcome = await deps.loadSources(BASE_CONTEXT_SOURCE_KINDS);
+    // 2) user gate は Source read の直前に評価する（deny なら table read ゼロ）。
+    const outcome = await deps.loadSources(BASE_CONTEXT_SOURCE_KINDS, (userId) =>
+      isServerContextCanaryUser(userId, canary),
+    );
+    if (outcome.meta.outcome === 'unauthorized') {
+      return { context: null, reason: 'user_not_canary' };
+    }
     // client 申告 canonical == mirror を検証できたか（3 Source すべて）。
     const verification = verifySourceSync(
       syncSignal,

@@ -52,7 +52,8 @@ export function isServerContextEnabledForPurpose(
 //   sync_unverified: client canonical と mirror の一致を検証できなかった（D-S1 veto）。
 //     → server context を使わず、**request body bridge（＝client canonical そのもの）** へ倒す。
 export type BaseContextDecisionReason =
-  | 'flag_off'
+  | 'flag_off'          // purpose が opt-in されていない
+  | 'user_not_canary'   // purpose は有効だが requesting user が canary allowlist に無い
   | 'source_unavailable'
   | 'source_empty'
   | 'sync_unverified'

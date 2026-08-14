@@ -24,6 +24,7 @@
 - Completed slices: **NEXT-1 / NEXT-2 / NEXT-3 / NEXT-4 / NEXT-5 / NEXT-6（第一 slice）/ NEXT-7（gated）**
   \+ **D-S1 source-sync veto（D-R2 closure / H-1・H-2 closed）**
   \+ **hardening: `D-S2` unsafe rollback 削除 / `D-S3` write ordering（W3・W4 修正 + 限界の明記）**
+  \+ **`D-S4` canary activation foundation（user-scoped Server Context gate + observability + runbook）**
 - Human decision で止めた項目: H-3 write-back / H-4 rollout / H-6 / H-7 / H-8（fail-closed のまま）
 
 ---
@@ -147,6 +148,8 @@
 |---|---|---|
 | `CAREER_PERSONAL_MEMORY_SERVER_REBUILD_DISABLED` | 未設定（= false） | true で rebuild-on-stale を停止 |
 | `CAREER_SERVER_CONTEXT_PURPOSES` | 未設定（= 空 / OFF） | purpose 単位で server-driven base context を opt-in |
+| `CAREER_SERVER_CONTEXT_CANARY_USER_IDS` | 未設定（= 誰も許可しない） | ★ Server Context の **user allowlist**。purpose だけでは有効化されない |
+| `CAREER_DATA_SPINE_CANARY_DIAGNOSTICS_ENABLED` | 未設定（= OFF） | canary counters の operator inspection path |
 | `CAREER_CONSENT_CAPTURE_ENABLED` | 未設定（= OFF） | consent capture surface の運用側有効化 |
 | `CAREER_CONSENT_POLICY_LEGAL_APPROVED` | 未設定（= 未承認） | 同意文言の法務承認 flag |
 
@@ -165,6 +168,8 @@ env 未設定の既定状態で各 gate を実評価した結果:
 | consent capture gate | `enabled:false`（`flag_off`） |
 | Personal Memory read master | `false` |
 | server context purposes | `[]`（bridge 退役 OFF） |
+| server context canary allowlist | 未設定（= 誰も許可しない） |
+| canary diagnostics | `false` |
 | Data Spine readiness | `ready:false` |
 | L4 read / consultation | `false` / `false` |
 | L5 read / research | `false` / `false` |
@@ -189,6 +194,8 @@ env 未設定の既定状態で各 gate を実評価した結果:
 | `qa:careerSourceSync` | PASS |
 | `qa:careerMirrorWriteOrdering` | PASS |
 | `qa:careerDataSpineHardening`（H1〜H8） | PASS |
+| `qa:careerCanaryActivation`（C1〜C13） | PASS |
+| `qa:careerCanaryObservability`（O1〜O5 / P1〜P2） | PASS |
 | `qa:careerEvents`（callsites 含む） | PASS |
 | `qa:careerEventSignalSeries`（5 suite 全て） | PASS |
 | `qa:careerAggregateSeries` | PASS |
@@ -217,6 +224,12 @@ cross-feature context を server 側で組む。byte parity harness を維持。
 ## NEXT-6c — 他 purpose への横展開
 **Size:** L（purpose 単位に分割）
 `consultation` → `company_research_review` → `es_generation` の順を推奨。
+
+## NEXT-7b — Canary 運用（実施可能・未実施）
+**Size:** S / **Human decision:** canary user UUID の指定のみ
+`docs/career/data_spine/CANARY_RUNBOOK.md` の Stage 1 → Stage 2 を実施し、
+`rates.syncVerified` / `syncMismatch` / `contextUsed` / `bridgeFallback` を観測する。
+★ 拡大（他ユーザー）は H-4 の decision。canary では広げない。
 
 ## NEXT-8 — Personal Memory rollout
 **Size:** S / **Human decision:** H-4

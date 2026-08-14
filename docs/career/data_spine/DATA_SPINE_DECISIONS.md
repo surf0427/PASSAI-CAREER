@@ -404,6 +404,95 @@ mirror が巻き戻っても、要求端末の claim と一致しなくなるた
 
 ---
 
+---
+
+## D-S4 — Canary activation gate（user-scoped Server Context）
+
+**Decision ID:** D-S4
+**Date:** 2026-08-14（canary activation foundation）
+**Status:** LOCKED（実装済み・**未 activation**）
+
+### 問題
+
+`CAREER_SERVER_CONTEXT_PURPOSES=interview_practice` だけでは、その purpose を使う
+**全ユーザー**が新経路に乗る。これは canary ではない（Personal Memory 側には既に
+user allowlist があるのに、Server Context 側だけ purpose gate しか無かった）。
+
+### Decision
+
+Server Context にも **user allowlist を必須**にする。gate は 3 条件の AND。
+
+```text
+purpose opt-in（CAREER_SERVER_CONTEXT_PURPOSES）
+  AND
+requesting user ∈ canary allowlist（CAREER_SERVER_CONTEXT_CANARY_USER_IDS）
+  AND
+Source-Sync verified（D-S1）
+        ↓
+   server-derived context を使用
+```
+
+いずれか欠けたら **既存 request-body bridge**（Server Context）または
+**Memory 無し**（Personal Memory）へ fallback する。
+`Source-Sync unverified → 古い mirror を使う` は起きない。
+
+### 実装上の要点
+
+- allowlist の parse は既存 `parseCanaryUserIds` を **再利用**（不正 1 件で全体 deny /
+  cap / exact match / default deny の意味論を 2 箇所で実装しない）。
+- **default deny**: 未設定・空・不正はすべて「誰も許可しない」。
+  空 allowlist を「全員許可」と解釈しない。
+- user gate は Layer 1 reader の `authorize` hook で評価する。
+  → canary 対象外 user では **table read が 1 回も発生しない**（auth のみ）。
+- userId は **server auth 由来のみ**。reader は `authorize(userId)` にしか値を渡さず、
+  request body を参照しない（QA C8 が静的にも動的にも固定）。
+- `NODE_ENV` による自動 ON / default true をコードに置かない（activation は operator 制御）。
+
+### Observability（H-4 evidence path）
+
+`lib/careerDataSpineCanary/` に enum のみの観測語彙と process-local counters を置く。
+
+- Source-Sync: `verified` / `unclaimed` / `mismatch` / `unreadable` / `invalid`
+- Personal Memory: `persisted` / `rebuilt` / `stale` / `invalid` / `omitted`
+- Server Context: `server_context_used` / `bridge_fallback` / `sync_unverified` /
+  `purpose_disabled` / `user_not_canary`
+
+正規化は「失敗理由を成功で覆い隠さない」順序（一部 section が成功していても
+mismatch があれば `stale` を表面化）。
+
+**記録するのは enum と件数のみ。** userId / 本文 / prompt / AI response / email / name を
+構造的に保持しない（型 + QA O4/O5 で担保）。
+operator inspection は `GET /api/career/data-spine-canary`（env + member + canary allowlist の三重 gate）。
+
+★ counters は **process-local の近似値**（再起動でリセット・serverless では instance 別）。
+傾向値であり監査値ではない旨を snapshot 自身に含めている。
+
+### Rollback
+
+`D-S2` の safe rollback contract に従う。env を消して再起動するだけ。
+code rollback も DB rollback も不要（本 canary は DDL を伴わない）。
+D-R1 への復帰経路は存在しない。
+
+### Activation gate
+
+本 decision は **activation ではない**。全 flag は未設定のまま。
+実施手順は `docs/career/data_spine/CANARY_RUNBOOK.md`。
+必要な Human 入力は canary user の UUID 1 件のみ。
+
+### H-4 との関係
+
+本 canary は H-4（rollout 基準）を **閉じない**。
+H-4 を判断するための **evidence path** を用意しただけである。
+拡大判断は observed `syncVerified` / `syncMismatch` / `contextUsed` / `bridgeFallback` /
+`error` を見てから Human が行う。
+
+### QA / evidence
+
+- `scripts/career-canary-activation-qa.ts` — C1〜C13
+- `scripts/career-canary-observability-qa.ts` — O1〜O5 / P1〜P2（shadow parity 含む）
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、
@@ -551,7 +640,7 @@ mirror 書込失敗が product 障害にならない（offline / network failure
 **Status:** HUMAN_REQUIRED（暫定解 `D-P3` = write-back しない）
 
 ## H-4 — Personal Memory rollout criteria
-**Status:** HUMAN_REQUIRED
+**Status:** HUMAN_REQUIRED（`D-S4` で **evidence path** が用意された。基準自体は未決）
 どの stale/error/parity 閾値で canary を超えて rollout してよいか。
 観測材料として `PersonalMemoryReadMetaSafe.origins`（persisted / rebuilt / legacy）と
 `sourceRead` が使えるようになった。
