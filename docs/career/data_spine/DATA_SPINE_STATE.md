@@ -241,6 +241,160 @@ kind ごとに別 select であり、その間に他端末の write が入れば
 
 ---
 
+# 5.3 Collective Intelligence（Layer 4 / Layer 5 / Consent）— Closure Batch 2026-08-14
+
+## 5.3.0 `ACTIVATION_READY` の定義（`D-C7`）
+
+```text
+ACTIVATION_READY =
+  code path complete + schema complete/drafted + RLS complete
+  + consent gates complete + privacy guards complete
+  + moderation gate complete（Layer 5 のみ必須）+ QA complete + default OFF
+```
+
+```text
+ACTIVATION_READY ≠ LEGALLY_APPROVED
+ACTIVATION_READY ≠ PRODUCTION_ENABLED
+```
+
+実装が完成していることと、有効化してよいことは **別**。
+有効化には `evaluateActivation()` の全条件（flag AND canary AND infra AND policy AND consent
+AND legal AND retention/cohort AND moderation）が必要で、そのほとんどは Human decision。
+
+## 5.3.1 Layer 4 matrix
+
+| Component | Status | Production-ready? | Human blocker |
+|---|---|---|---|
+| projection（default-deny allowlist） | COMPLETE | ✅ | — |
+| contribution bounding（user-level boolean） | COMPLETE | ✅ | — |
+| cohort guard（absolute / audience 閾値） | COMPLETE | ⚠ 閾値が PROVISIONAL | H-L1 |
+| rare category / 交差 dimension 禁止 | COMPLETE | ✅ | — |
+| artifact（suppressed は数値を持たない） | COMPLETE | ✅ | — |
+| provenance（source class / version / policy） | COMPLETE | ✅ | — |
+| **source eligibility 表**（`D-C2`） | COMPLETE（本 Batch 新設） | ✅ | — |
+| **retention policy**（`D-C3`） | COMPLETE（構造のみ・期間は未確定） | ⚠ fail-closed で未設定 | H-L2 |
+| invalidation / regeneration | COMPLETE | ⚠ executor 未実装 | H-L8 |
+| **deletion propagation matrix**（`D-C6`） | COMPLETE（本 Batch 新設） | 一部 human_policy_required | H-L5 |
+| renderer（disclaimer / 禁止表現） | COMPLETE | ⚠ 文言の法務確認 | H-L7 |
+| DDL（table / RLS enabled / policy 無し） | COMPLETE | ⚠ read policy 未作成（意図的） | H-L8 |
+| read repository / batch repository | COMPLETE | ⚠ 実 DB 未接続 | H-L8 |
+| ETL | SCAFFOLD_ONLY（offline synthetic） | ❌ production batch 無し | H-L8 |
+| shadow dispatcher（consultation） | COMPLETE | ⚠ synthetic-only 固定 | H-L8 |
+| **production consumer** | **0** | — | 意図的（増やさない） |
+
+## 5.3.2 Layer 5 matrix
+
+| Component | Status | Production-ready? | Human blocker |
+|---|---|---|---|
+| company identity resolution（alias collision 検出） | COMPLETE | ✅ | — |
+| contribution 型 / fingerprint / validation | COMPLETE | ✅ | — |
+| **source class 分類**（`D-C4`） | COMPLETE（本 Batch 新設） | ✅ | — |
+| **explicit sharing admission gate**（`D-C4`） | COMPLETE（本 Batch 新設） | ✅ | — |
+| PII scan（not_scanned を安全と見なさない） | COMPLETE | ⚠ regex ベースの限界あり | H-L7 |
+| moderation FSM（raw → published 不可） | COMPLETE | ⚠ 運用者不在 | H-L6 |
+| lifecycle 遷移表 | COMPLETE | ✅ | — |
+| dedupe / conflict（自動統合しない） | COMPLETE | ✅ | — |
+| provenance（internal / public 分離） | COMPLETE | ✅ | — |
+| consent snapshot（append-only） | COMPLETE | ⚠ policy version 未確定 | H-L4 |
+| projection（published のみ・contributor 非開示） | COMPLETE | ✅ | — |
+| DDL（table / RLS enabled / policy 無し） | COMPLETE | ⚠ owner 列 / read view 未作成 | H-L8 |
+| repository（supabase read/write） | PARTIAL | ❌ 実 DB 未接続 | H-L8 |
+| takedown / legal hold | COMPLETE（型・状態のみ） | ❌ 運用 process 無し | H-L6 |
+| VERIFIED_PUBLIC_SOURCE 取り込み | SCAFFOLD_ONLY（型のみ） | ❌ 実装なし | H-L4 |
+| **production consumer** | **0** | — | 意図的 |
+
+## 5.3.3 Data eligibility matrix
+
+| Data class | Personal | Aggregate | Shared KB |
+|---|---:|---:|---:|
+| `source.profile` / `activity` / `values` | ✅ | ❌ | ❌ |
+| `source.self_analysis` / `es` / `interview` | ✅ | ❌ | ❌ |
+| `source.matching` / `presentation` / `consultation` | ✅ | ❌ | ❌ |
+| `source.gd_room` / `gd_solo` | ✅ | ❌ | ❌ |
+| **`source.company_research`** | ✅ | ❌ | ❌ **自動共有なし** |
+| `memory.base` / `self_analysis` / `es` / `interview` | ✅ | ❌ | ❌ |
+| **`event.feature_usage`** | ✅ | ⚠ **条件付き可** | ❌ |
+| `event.signal_summary` | ✅ | ❌ | ❌ |
+| **`contribution.company_knowledge`** | — | ❌ | ⚠ **条件付き可** |
+| `raw.free_text` | ✅ | ❌ | ❌ |
+| *未知の data class* | ✅ | ❌ | ❌ （default deny） |
+
+★ 「条件付き可」は **分類上の上限**であって許可ではない。
+consent scope + cohort 閾値 + suppression（Layer 4）/ 明示 consent + PII scrub + provenance +
+moderation（Layer 5）をすべて満たしたときだけ実際に通る。
+
+★ `ANONYMOUS_AGGREGATABLE` は **1 種類のみ**（`event.feature_usage`）。
+「Event Log があるから全 event を aggregate してよい」は構造的に成立しない。
+
+## 5.3.4 Consent matrix
+
+| Purpose (scope) | Family | Explicit consent? | Default | Revocable |
+|---|---|---:|---|---:|
+| `personal_service_processing` | personal_optimization | 不要（サービス提供） | **deny** | ✅ |
+| `internal_aggregated_analytics` | aggregate_contribution | **必要** | **deny** | ✅ |
+| `user_facing_aggregated_insight` | aggregate_contribution | **必要** | **deny** | ✅ |
+| `ai_context_aggregated_insight` | aggregate_contribution | **必要** | **deny** | ✅ |
+| `externally_shared_insight` | aggregate_contribution | **必要** | **deny** | ✅ |
+| `company_knowledge_contribution` | company_knowledge_sharing | **必要** | **deny** | ✅ |
+
+★ `defaultGranted` は型レベルで `false` に固定してある（「既定で同意済み」の entry を **書けない**）。
+★ family が同じでも scope が違えば別 consent（`isSameConsentPurpose` は同一 scope のみ true）。
+★ missing / unknown / invalid version / unsupported version はすべて **NOT CONSENTED**。
+
+## 5.3.5 Activation gates
+
+```text
+Layer 4 activated =
+    feature flag ON
+AND requesting user が canary allowlist
+AND infrastructure ready
+AND policy readiness（LAYER4_REQUIRED_DECISIONS 全承認）
+AND consent ready
+AND legal approved
+AND retention configured（期間 + policy version）
+AND cohort threshold configured
+
+Layer 5 activated =
+    上記の共通条件（Layer 5 の readiness decision 集合）
+AND moderation ready          ← Layer 5 のみ追加
+```
+
+いずれか 1 つでも欠ければ **OFF**。既定（何も設定しない状態）では
+`blockers = [consent_not_ready, flag_off, infrastructure_not_ready, legal_not_approved,
+policy_not_ready, user_not_canary, …]` となり、決して有効化されない。
+
+**事故 ON の否定**（`isAccidentalEnablePattern`）: `NODE_ENV=production` / env 未設定の true 化 /
+空 allowlist の全許可 / 法務未設定の approved 化 / moderation module の存在だけ、
+これらはいずれも activation の根拠として認めない。
+
+## 5.3.6 ★ residual boundary（隠さない）
+
+**member request path から service-role read port へ到達しうる経路が 1 本ある。**
+
+```text
+app/api/career/consultation/route.ts（member request）
+  → dispatchAggregatedInsightConsultationShadow（fire-and-forget）
+    → runAggregatedInsightConsultationShadow
+      → getSharedServiceRoleReadPort   ← service role
+```
+
+現在の制限（QA `CI-extra service-role boundary` が固定）:
+
+- master flag / consumer flag が **両方 OFF**（既定）なら runtime に入らず I/O ゼロ
+- `synthetic-only` の既定が **安全側の true**（real 化には明示 `false` が必要）
+- real mode は privileged client 生成 **前**に `real_mode_blocked` へ倒れる
+- read port は raw client を上位へ出さない
+- prompt / response には一切触れない（shadow）
+
+**それでも、これは Human 指示 §31 の「member-request path で service role を使わない」に
+厳密には反する残存境界である。** real-mode activation の **前に** この shadow 経路を
+member request path から外し、backoffice job へ移す必要がある（→ H-L8 の必須項目に含めた）。
+
+Personal Optimization 経路（`careerSourceData` / `careerServerContext` /
+`careerMemory/persistence`）と Layer 5 は service role を **一切使わない**（QA が固定）。
+
+---
+
 # 5.2 ★ 未実施の検証（隠さない）
 
 > **Actual signed-in browser E2E remains outstanding.**

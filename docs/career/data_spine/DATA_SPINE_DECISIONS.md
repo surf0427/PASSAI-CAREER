@@ -952,6 +952,213 @@ read 安全性は `D-S1` の Source-Sync veto が担保する（stale prompt 注
 
 ---
 
+# 2.9 Collective Intelligence Closure（`D-C1` 〜 `D-C8` / 2026-08-14）
+
+## D-C1 — Data Spine 横断の privacy 分類を型で固定する
+
+**Decision ID:** D-C1 / **Status:** LOCKED
+
+Layer 4 / Layer 5 の安全性を「各 module のコメントと慣習」に依存させない。
+`lib/careerDataGovernance/dataClassification.ts` に **単一の分類表**を置き、
+`PERSONAL_ONLY` / `ANONYMOUS_AGGREGATABLE` / `EXPLICITLY_SHAREABLE` を
+data class 単位で宣言する。
+
+### 構造的に禁止されること
+
+| 禁止したい論法 | 構造的な否定 |
+|---|---|
+| 「Personal Memory だから aggregate してよい」 | `memory.*` は全て `PERSONAL_ONLY` / `mayBeAggregated=false` |
+| 「Event Log にあるから aggregate してよい」 | `event.signal_summary` は `PERSONAL_ONLY`。aggregate 可なのは `event.feature_usage` のみ |
+| 「企業研究を保存したから共有してよい」 | `source.company_research` は `PERSONAL_ONLY` / `requiredConsentScope=null` |
+| 「新しい data を足したが分類し忘れた」 | 未知 class は **`PERSONAL_ONLY`**（default deny） |
+
+★ 分類が許すことは **上限**であって許可ではない。実際の通過には gate（consent / flag /
+cohort / moderation）が別途必要。この 2 段構えを崩さない。
+
+---
+
+## D-C2 — Layer 4 source eligibility を allowlist 化する
+
+**Decision ID:** D-C2 / **Status:** LOCKED
+
+`lib/careerAggregate/sourceEligibility.ts` に全 data class の eligibility 表を置く。
+
+- **eligible は `event.feature_usage` の 1 種類のみ**
+- ineligible には必ず **理由**を書く（監査で読める形にする）
+- `isAggregateEligibleSource()` は **allowlist と分類表の二重一致**を要求する
+  （どちらか片方が緩んでも通らない）
+- artifact の provenance に `sourceDataClass` を載せ、
+  「どの分類の data から作られたか」を artifact 自身から追えるようにした
+
+---
+
+## D-C3 — retention は「期間を決めない」が「構造は決める」
+
+**Decision ID:** D-C3 / **Status:** LOCKED（期間は H-L2 で未確定）
+
+法的保持期間をコードで確定しない。代わりに構造を確定する:
+
+```text
+configurable          … 期間は必ず外部 config から来る（コードに法的既定値を持たない）
+fail-closed           … 未設定 / 不正 / policy version 欠落 → NOT_CONFIGURED → **serve しない**
+no indefinite silent  … Infinity / 0 / 負 / 非整数 / 10 年超 はすべて invalid（無期限を表現できない）
+policy version required … どの policy 下で保持しているかを常に追える
+```
+
+★ fail-closed の **向き**が重要: retention 未確定のときは「消す」のではなく **serve しない**。
+未決状態で自動削除すると復元不能な破壊になるため、削除は Human decision 後。
+
+---
+
+## D-C4 — Layer 5 source class と明示共有の連言 gate
+
+**Decision ID:** D-C4 / **Status:** LOCKED
+
+### source class（`lib/careerCompanyKnowledge/sourceClass.ts`）
+
+| class | 意味 | public read |
+|---|---|---:|
+| `PRIVATE_PERSONAL_RESEARCH` | 本人が自分のために保存 | ❌ |
+| `USER_SHARED_CONTRIBUTION` | 明示共有したが未 publish | ❌ |
+| `VERIFIED_PUBLIC_SOURCE` | 将来の official 取り込み（**実装なし・型のみ**） | ❌ |
+| `MODERATED_SHARED_KNOWLEDGE` | moderation 通過・published | ✅ |
+
+### admission gate（**全条件の連言**）
+
+```text
+authenticated user
+AND explicit sharing consent（有効かつサポート version）
+AND eligible content
+AND PII scrub（clean のみ。not_scanned は不可）
+AND provenance
+AND moderation state（approved 以上）
+```
+
+1 つでも欠ければ `NO CONTRIBUTION`。**理由をすべて返す**（最初の 1 件で打ち切らない）。
+
+### 暗黙同意の否定
+
+`NON_CONSENT_SIGNALS`（app 利用 / 企業研究保存 / AI 生成 / 一般規約同意 / Event Log /
+Personal Memory 同意 / 曖昧な UI 操作 …）は共有同意として **一切参照しない**。
+`isImpliedConsentAcceptable()` は引数に関わらず常に `false`。
+
+### private research → 共有の自動経路が存在しないこと
+
+`CareerCompanyResearchLog → CompanyKnowledgeContribution` の変換 module は repo に **存在しない**。
+QA `CI-8` が repo 走査で固定する（誰かが作ったら即 FAIL）。
+
+---
+
+## D-C5 — consent purpose registry を中立位置へ集約する
+
+**Decision ID:** D-C5 / **Status:** LOCKED
+
+### 発見した層の逆転
+
+consent scope の語彙が `lib/careerAggregate/policy.ts`（＝**Layer 4**）にあり、
+`lib/careerConsent/*` がそこから import していた。
+Layer 5 の consent（`company_knowledge_contribution`）まで Layer 4 経由で参照するのは、
+purpose 分離という設計意図と噛み合わない。
+
+### 対処
+
+`lib/careerConsent/purposeRegistry.ts` に **中立な typed registry** を新設し、
+3 family（`personal_optimization` / `aggregate_contribution` / `company_knowledge_sharing`）を
+明示的に分離した。
+
+★ 既存 `CONSENT_SCOPES` は **触っていない**（依存の向きを反転させると既存 QA を巻き込むため）。
+新規判定は registry 経由、既存経路は現状維持。Batch 3 で既存側を registry へ寄せる。
+
+### default deny の構造的保証
+
+`defaultGranted` は型レベルで `false` に固定（「既定で同意済み」の entry を **書けない**）。
+`evaluateConsent()` は missing / unknown scope / revoked / invalid version /
+unsupported version をすべて `NOT CONSENTED` にする。
+
+---
+
+## D-C6 — 削除 / 撤回の伝播マトリクスを型で持つ
+
+**Decision ID:** D-C6 / **Status:** LOCKED（一部 H-L5 待ち）
+
+`lib/careerDataGovernance/deletionPropagation.ts` に
+trigger（source 削除 / consent 撤回 / アカウント削除）× target（pending / published contribution /
+aggregate input / aggregate output / personal memory）の **15 通り**を宣言する。
+
+効果は 4 分類: `automatically_deleted` / `invalidated_and_rebuilt` /
+`future_use_only_blocked` / `human_policy_required`。
+
+### ★ 隠さない事実（`IRREVERSIBLE_FACTS` としてコードに明記）
+
+```text
+aggregate は user-level 逆引きを保持しないため、
+生成済み artifact から特定個人の寄与だけを差し引くことはできない。
+対応は window 単位の invalidate + regeneration のみ。
+```
+
+これは欠陥ではなく「個人を逆算できる情報を持たない」設計の帰結。
+ただし **できないことを「できる」と書かない**ため、コードと docs の両方に残す。
+
+既 publish の shared knowledge の削除可否は **H-L5**（法務判断）。コードで確定しない。
+
+---
+
+## D-C7 — 統合 activation gate と `ACTIVATION_READY` の定義
+
+**Decision ID:** D-C7 / **Status:** LOCKED
+
+`lib/careerDataSpineGate/activation.ts` が既存 gate 群（flags / readiness / canary）を
+**1 つの連言判定**へまとめる。個々の gate は書き直さない。
+
+```text
+Layer 4: flag AND canary AND infra AND policy AND consent AND legal
+         AND retention_configured AND cohort_threshold_configured
+Layer 5: flag AND canary AND infra AND policy AND consent AND legal
+         AND moderation_ready
+```
+
+blocker は **すべて**返す（operator が「あと何が必要か」を一度に把握できる）。
+
+### `ACTIVATION_READY ≠ PRODUCTION_ENABLED`
+
+`evaluateActivationReadiness()` は **実装完成度**を返し、
+`evaluateActivation()` は **今この request で使ってよいか**を返す。
+QA `CI-extra` が「全 aspect 完了でも activation は false」を固定する。
+
+### 事故 ON の否定（`isAccidentalEnablePattern`）
+
+`NODE_ENV=production` / env 未設定の true 化 / 空 allowlist の全許可 /
+法務未設定の approved 化 / moderation module の存在だけ — いずれも activation の根拠にしない。
+
+---
+
+## D-C8 — activation 用 SQL は draft に留める
+
+**Decision ID:** D-C8 / **Status:** LOCKED
+
+現在の適用済み DDL は「table 作成済み・RLS 有効・**policy 無し**・GRANT 無し」＝
+deny-by-default で正しく閉じている。したがって activation の実体は
+**どの policy をいつ足すか**に集約される。
+
+`supabase/prototype/collective_intelligence_activation_draft.sql` に、
+その read contract（Layer 4 の published/valid のみ SELECT、Layer 5 の owner-scoped と
+published view の分離、`auth.uid()` 束縛 RPC、retention sweep の service-role 分離）を
+**コメントアウトした draft** として書き出した。
+
+適用禁止の担保:
+- `supabase/prototype/` 配下（`*_apply.sql` 命名を避ける）
+- CI / deploy から自動実行されない
+- QA `CI-9` が **適用済みファイル側に policy / GRANT が無いこと**を固定する
+  （draft を誤って apply ファイルへ移すと QA が落ちる）
+
+### 未解決の identity 問題（H-L8）
+
+Layer 5 の contribution は contributor を **opaque key** で持ち、型に auth user id が無い。
+owner-scoped RLS を張るには `contributor_user_id uuid` + `auth.uid() = contributor_user_id` が必要で、
+これは identity strategy の Human decision。opaque key のままでは owner RLS を張れない。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

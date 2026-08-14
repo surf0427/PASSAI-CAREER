@@ -62,7 +62,15 @@ type BaseInput = {
   consentScope: ConsentScope;
   qualityStatus: AggregateQualityStatus;
   rolledUpFrom?: CohortType | null;
+  /** Closure Batch（`D-C2`）: retention policy version（未確定なら null）。 */
+  retentionPolicyVersion?: string | null;
 };
+
+/**
+ * 現行 metric（feature_usage_prevalence）の唯一の入力 data class。
+ * `lib/careerAggregate/sourceEligibility.ts` の allowlist と一致していること（QA が固定）。
+ */
+export const AGGREGATE_SOURCE_DATA_CLASS = 'event.feature_usage' as const;
 
 function buildBase(input: BaseInput): SafeAggregateArtifactBase {
   const provenance: AggregateProvenance = {
@@ -72,6 +80,10 @@ function buildBase(input: BaseInput): SafeAggregateArtifactBase {
     audience: input.audience,
     policyStatus: FEATURE_USAGE_PREVALENCE.status,
     rolledUpFrom: input.rolledUpFrom ?? null,
+    // ★ この metric の唯一の eligible source（`sourceEligibility.ts` の allowlist と一致）。
+    //   artifact 自身から「どの分類の data 由来か」を追えるようにする（Human 指示 §10）。
+    sourceDataClass: AGGREGATE_SOURCE_DATA_CLASS,
+    retentionPolicyVersion: input.retentionPolicyVersion ?? null,
   };
   return {
     metricKey: FEATURE_USAGE_PREVALENCE.metricKey,

@@ -606,3 +606,78 @@ Class 2 source は client canonical を持たないためこの veto の対象�
 そもそも server が著者なので「要求端末より古い」という状態が概念的に存在しない。
 
 ---
+
+---
+
+# Collective Intelligence — privacy 分類と 2 段 gate（`D-C1` 〜 `D-C7`）
+
+## 全体像
+
+```text
+                    ┌─────────────────────────────────────────┐
+                    │  dataClassification.ts（単一の分類表）   │
+                    │  未知 class → PERSONAL_ONLY（default deny）│
+                    └───────────────┬─────────────────────────┘
+                                    │ 分類は「上限」であって許可ではない
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+  PERSONAL_ONLY            ANONYMOUS_AGGREGATABLE      EXPLICITLY_SHAREABLE
+  （Layer 1/2/3 の大半）      （event.feature_usage のみ）  （contribution のみ）
+        │                           │                           │
+        │                           ▼                           ▼
+        │                 ┌──────────────────┐        ┌──────────────────┐
+        │                 │ Layer 4 gate     │        │ Layer 5 gate     │
+        │                 │ consent scope    │        │ 明示 consent      │
+        │                 │ + cohort 閾値     │        │ + PII scrub      │
+        │                 │ + suppression    │        │ + provenance     │
+        │                 │ + retention      │        │ + moderation     │
+        │                 └────────┬─────────┘        └────────┬─────────┘
+        ▼                          ▼                           ▼
+  personal prompt          aggregate artifact          published knowledge
+                           （行を返さない）              （contributor 非開示）
+```
+
+## 2 段構えにした理由
+
+分類だけでも gate だけでも足りない。
+
+- **分類だけ**: 「aggregate 可能」な data を無条件に集計してしまう
+- **gate だけ**: gate を通す経路を新規に足すと、分類の意図を知らずに personal data が流れる
+
+分類（上限）と gate（条件）の **両方を満たしたときだけ**通す。
+`isAggregateEligibleSource()` は allowlist と分類表の **二重一致**を要求し、
+片方が緩んでも通らないようにしてある。
+
+## Layer 4 output contract
+
+```text
+返す   : aggregate / count / distribution / bucket / summary + provenance
+返さない: individual row / user id / exact timestamp / free text / cohort size（suppressed 時）
+```
+
+`SafeAggregateArtifact` は判別共用体（`valid` / `zero` / `suppressed`）で、
+**suppressed variant には数値 field が型として存在しない**。
+「suppress したのに数値が残っていた」が型レベルで起こらない。
+
+## Layer 5 read contract
+
+```text
+private personal research  ─ 読む人 ─→ 本人のみ（Layer 1 の owner-scoped read）
+shared knowledge           ─ 読む人 ─→ published のみ・contributor 非開示
+```
+
+この 2 つを **同じ reader / 同じ view で混ぜない**。
+private research reader は `careerSourceData`、shared KB reader は `careerCompanyKnowledge` にあり、
+Layer 5 module 群は private research storage を import しない（QA `CI-8` が固定）。
+
+## activation gate（`ACTIVATION_READY` とは別物）
+
+```text
+evaluateActivationReadiness()  … 実装が完成しているか（= ACTIVATION_READY）
+evaluateActivation()           … 今この request で使ってよいか（= PRODUCTION_ENABLED 相当）
+```
+
+前者が true でも後者は false でありうる（というのが現在の状態）。
+両者を混同しないことが、この層の運用上もっとも重要な区別。
+
+---

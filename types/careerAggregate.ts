@@ -198,6 +198,14 @@ export type AggregateProvenance = {
   policyStatus: PolicyStatus;
   /** graduation_year → all へ roll-up した場合の元 cohort（監査用）。 */
   rolledUpFrom: CohortType | null;
+  /**
+   * Closure Batch（`D-C2`）: この aggregate の入力になった **data class**。
+   * 「どの分類の data から作られたか」を artifact 自身から追えるようにする（Human 指示 §10）。
+   * optional は後方互換のため。未設定は「未記録」であり「任意 source 可」ではない。
+   */
+  sourceDataClass?: string | null;
+  /** Closure Batch: retention / policy の版（どの policy 下で保持しているか）。 */
+  retentionPolicyVersion?: string | null;
 };
 
 /** 全 variant 共通の非数値メタ（識別子・exact time・raw を含めない）。 */

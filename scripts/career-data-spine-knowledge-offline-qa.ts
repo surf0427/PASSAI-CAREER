@@ -492,6 +492,11 @@ console.log('[J] Production isolation (static guard)');
     'lib/careerAggregate/shadowDispatcher.server.ts',
     // P17-E2: synthetic shadow read repository（governance を使う sanctioned 統合層）。
     'lib/careerAggregate/syntheticShadowReadRepository.ts',
+    // Closure Batch（`D-C2` / `D-C3`）: source eligibility 表 と retention policy。
+    //   どちらも offline pure（DB / env / production consumer 非依存）で、
+    //   governance の分類表を参照する sanctioned な offline scaffold。
+    'lib/careerAggregate/sourceEligibility.ts',
+    'lib/careerAggregate/retention.ts',
   ].map((f) => join(ROOT, f));
   // P17-E: server composition（careerAggregate/server/*）も sanctioned な統合層として除外。
   const isNewModule = (f: string) =>
@@ -520,7 +525,14 @@ console.log('[J] Production isolation (static guard)');
   check('J1 app/ から新モジュール import 0', appFiles.filter((f) => importsForbidden(readFileSync(f, 'utf8'))).length === 0);
   check('J2 app/api/ から新モジュール import 0', apiFiles.filter((f) => importsForbidden(readFileSync(f, 'utf8'))).length === 0);
   check('J3 production prompt から新モジュール import 0', promptFiles.filter((f) => importsForbidden(readFileSync(f, 'utf8'))).length === 0);
-  check('J4 production consumer 全体で新モジュール import 0', consumerFiles.filter((f) => importsForbidden(readFileSync(f, 'utf8'))).length === 0);
+  const j4Offenders = consumerFiles.filter((f) => importsForbidden(readFileSync(f, 'utf8')));
+  check('J4 production consumer 全体で新モジュール import 0', j4Offenders.length === 0,
+    j4Offenders.map((f) => f.slice(ROOT.length + 1)).join(','));
+  // ★ manifest の陳腐化検知: NEW_AGG_FILES に挙げたファイルが実在すること
+  //   （リネーム / 削除で manifest だけ残る事故を即 FAIL にする）。
+  const missingManifest = NEW_AGG_FILES.filter((f) => !existsSync(f));
+  check('J4b NEW_AGG_FILES manifest が実体と一致', missingManifest.length === 0,
+    missingManifest.map((f) => f.slice(ROOT.length + 1)).join(','));
 
   // orchestrator 未変更（新モジュール非 import）
   const orch = readFileSync(join(ROOT, 'lib/careerContext/orchestrator.ts'), 'utf8');

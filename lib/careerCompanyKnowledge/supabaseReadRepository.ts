@@ -93,7 +93,11 @@ function parseContribution(
     roleCategory: (str(row.role_category) || 'unknown') as RoleCategory,
     bodySummary: evidenceSummary,
     // published lifecycle は consent granted を含意（lifecycle は consent 無しで published に到達しない）。
-    consentState: lifecycleState === 'published' ? 'share_granted' : 'not_shared',
+    //   ★ Closure Batch: `revoked` 列も **同時に**満たすことを要求する（defense in depth）。
+    //     lifecycle_state の更新漏れで published のまま revoked=true な行が残っても、
+    //     ここで share_granted へ復帰させない（`__excluded` 側の判定と二重化する）。
+    consentState:
+      lifecycleState === 'published' && !bool(row.revoked) ? 'share_granted' : 'not_shared',
     submittedAt: str(row.submitted_at),
     moderation,
     provenanceNote: str(row.provenance_note) || null,

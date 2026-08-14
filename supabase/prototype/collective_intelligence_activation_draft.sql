@@ -1,0 +1,186 @@
+-- ============================================================================
+-- ⛔ DRAFT ONLY — DO NOT APPLY TO PRODUCTION SUPABASE ⛔
+--
+-- PASSAI CAREER — Layer 4 / Layer 5 を activation するときに **追加で必要になる**
+-- read contract（RLS policy / GRANT / index）の draft（Collective Intelligence Closure / `D-C8`）。
+--
+-- 現在の production 適用済み DDL（supabase/career_aggregated_insight_apply.sql /
+-- career_company_knowledge_apply.sql）は:
+--     ✅ table 作成済み
+--     ✅ RLS 有効
+--     ✅ policy **無し** / anon・authenticated への GRANT **無し**
+--   ＝ **deny-by-default**。誰も読めない状態で正しく閉じている。
+--
+-- したがって「activation に何が足りないか」は、
+--   **どの policy を、どの scope で、いつ足すか** に集約される。
+-- 本 draft はそれを具体化して Human/infra decision（H-L8）を可能にするためのものであり、
+-- 適用は Human の明示判断（+ 法務承認 H-L7）の後に行う。
+--
+-- 適用禁止の担保:
+--   - `supabase/prototype/` 配下（`*_apply.sql` 命名を避けている）
+--   - CI / deploy から自動実行されない（本 repo に Supabase CLI / config.toml / auto-migration は無い）
+--   - QA `career-collective-intelligence-closure-qa` の CI-9 が
+--     **production 適用ファイル側に policy / GRANT が無いこと**を固定している
+--     （本 draft を誤って apply ファイルへ移すと QA が落ちる）
+-- ============================================================================
+
+
+-- ============================================================================
+-- 1. Layer 4 — Aggregated Insight の read contract
+-- ============================================================================
+--
+-- ★ Layer 4 の artifact は **個人データではない**（suppression 済みの集計値のみ）。
+--   したがって owner-scoped RLS ではなく「認証済み member なら読める」形が自然に見えるが、
+--   canary 期間は **さらに絞る**べきである。理由:
+--     - cohort 閾値が PROVISIONAL（H-L1 未確定）
+--     - retention が未確定（H-L2 未確定）
+--     - 表示文言の法務確認が未了（H-L7）
+--
+--   → 初期は「published かつ suppressed でない artifact のみ」を
+--     authenticated へ SELECT 許可する案を draft しておく。
+--     canary allowlist は **アプリ層の gate**（`evaluateActivation`）で行い、
+--     RLS には user list を焼き込まない（allowlist 変更で migration したくないため）。
+
+-- 1.1 read 用 index（activation 時に必要）。
+--   read key = (metric_key, feature, cohort_type, cohort_value, time_bucket, audience)
+-- CREATE INDEX IF NOT EXISTS career_aggregate_artifacts_read_idx
+--   ON career_aggregate_artifacts (metric_key, feature, cohort_type, cohort_value, time_bucket, audience);
+
+-- 1.2 read policy（★ 未適用 draft）。
+--   ⚠ `kind = 'suppressed'` の行は数値を持たないが、**存在自体が「その cohort は小さい」を示唆**する。
+--     したがって suppressed 行も read 対象から外す（complementary suppression）。
+-- ALTER TABLE career_aggregate_artifacts ENABLE ROW LEVEL SECURITY;  -- 既に有効
+-- GRANT SELECT ON career_aggregate_artifacts TO authenticated;
+-- CREATE POLICY "career_aggregate_artifacts member read published"
+--   ON career_aggregate_artifacts
+--   FOR SELECT TO authenticated
+--   USING (
+--     publish_state = 'published'
+--     AND kind = 'valid'                 -- suppressed / zero は返さない
+--     AND expires_at > now()             -- TTL 切れは返さない
+--   );
+
+-- 1.3 batch / invalidation / audit table は **member へ開放しない**。
+--   これらは運用側 metadata であり、公開すると window や再生成タイミングが漏れる。
+--   → GRANT も policy も作らない（現状のまま deny-by-default を維持）。
+
+-- 1.4 retention 実行 job（★ Human decision H-L2 の後）。
+--   retention は「削除」ではなく「serve しない」を先に満たす（lib/careerAggregate/retention.ts）。
+--   物理削除を入れる場合は cron + service-role batch とし、**member request path から完全分離**する。
+-- 例（draft・未適用）:
+-- CREATE OR REPLACE FUNCTION career_aggregate_retention_sweep(p_retention_days int)
+-- RETURNS int LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- DECLARE deleted int;
+-- BEGIN
+--   -- ⚠ service_role のみ実行可（authenticated へ EXECUTE を GRANT しない）。
+--   DELETE FROM career_aggregate_artifacts
+--    WHERE generated_at < now() - make_interval(days => p_retention_days);
+--   GET DIAGNOSTICS deleted = ROW_COUNT;
+--   RETURN deleted;
+-- END $$;
+-- REVOKE ALL ON FUNCTION career_aggregate_retention_sweep(int) FROM PUBLIC, anon, authenticated;
+
+
+-- ============================================================================
+-- 2. Layer 5 — Company Knowledge の read contract
+-- ============================================================================
+--
+-- ★ 2 系統をはっきり分ける（Human 指示 §24）:
+--     (a) contributor 本人が自分の寄与状態を見る  → **owner-scoped**
+--     (b) 一般 member が shared knowledge を読む  → **published のみ・contributor 非開示**
+--   この 2 つを同じ policy / 同じ view で扱わない。
+
+-- 2.1 (a) contributor 本人の寄与（owner-scoped）。
+--   ⚠ 現在の contribution table は contributor を opaque key で持つ設計
+--     （型に auth user id が存在しない）。owner RLS を張るには
+--     `contributor_user_id uuid` 列 + `auth.uid() = contributor_user_id` が必要。
+--     ★ これは **identity strategy の Human decision（H-L8 / readiness key `identity_strategy`）**。
+--     opaque key のまま owner RLS を張ることはできない（照合できない）ため、
+--     activation 時に方式を決める必要がある。
+-- ALTER TABLE career_company_knowledge_contributions
+--   ADD COLUMN IF NOT EXISTS contributor_user_id uuid;  -- ★ 方式未確定
+-- CREATE POLICY "career_ck_contributions owner select"
+--   ON career_company_knowledge_contributions
+--   FOR SELECT TO authenticated
+--   USING (auth.uid() = contributor_user_id);
+--   -- ⚠ INSERT policy は **張らない**。寄与は moderation を挟むため
+--   --    service-role gated な SECURITY DEFINER RPC 経由にする（直 INSERT 禁止）。
+
+-- 2.2 (b) 一般 member の shared knowledge read。
+--   ★ contribution table を直接読ませない。**published 済みの projection 専用 view / table** を読ませる。
+--     contributor 由来の内部 field（opaque key / fingerprint / provenance note）を含めないこと。
+-- CREATE OR REPLACE VIEW career_company_knowledge_published AS
+--   SELECT
+--     company_id,
+--     content_category,
+--     body_summary,
+--     evidence_kind,
+--     observed_period,
+--     selection_category,
+--     role_category,
+--     version
+--   FROM career_company_knowledge_contributions
+--   WHERE lifecycle_state = 'published'
+--     AND moderation_state = 'approved'
+--     AND pii_scan = 'clean'
+--     AND confidentiality = 'low'
+--     AND abuse <> 'upheld'
+--     AND COALESCE(legal_hold, false) = false
+--     AND COALESCE(excluded, false) = false;
+-- ALTER VIEW career_company_knowledge_published SET (security_invoker = on);
+-- GRANT SELECT ON career_company_knowledge_published TO authenticated;
+--   -- ⚠ contributor_user_id / __contributor_opaque_key / __content_fingerprint を **含めない**。
+--   --    含めると CI-14（public output に contributor PII なし）が壊れる。
+
+-- 2.3 寄与受付 RPC（★ Human decision 後）。
+--   直 INSERT を許さず、`auth.uid()` 由来の subject でのみ寄与を作る。
+-- CREATE OR REPLACE FUNCTION career_ck_submit_contribution(p_payload jsonb)
+-- RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- DECLARE v_uid uuid := auth.uid();
+-- BEGIN
+--   IF v_uid IS NULL THEN RAISE EXCEPTION 'LOGIN_REQUIRED'; END IF;
+--   -- ★ subject は **必ず auth.uid() から導出**。payload の user id は無視する
+--   --   （caller-selected user id を絶対に受け付けない）。
+--   -- ★ 初期 lifecycle は 'consent_pending'。published を直接作れない。
+--   ...
+-- END $$;
+-- REVOKE ALL ON FUNCTION career_ck_submit_contribution(jsonb) FROM PUBLIC, anon;
+-- GRANT EXECUTE ON FUNCTION career_ck_submit_contribution(jsonb) TO authenticated;
+
+-- 2.4 moderation table / audit / takedown は **member へ開放しない**。
+--   運用者向け backend（H-L6 moderation owner の決定が前提）。
+
+
+-- ============================================================================
+-- 3. Consent — production 形（現在 prototype のみ）
+-- ============================================================================
+--
+-- `supabase/prototype/consent_local_prototype.sql` は local 検証用で、
+-- subject FK / retention が未確定のまま `subject_user_id` を FK なし uuid で持つ。
+--
+-- production 版で確定が必要なもの（H-L7 / H-L8）:
+--   - `subject_user_id` を `auth.users(id)` へ FK するか（ON DELETE の挙動を含む）
+--   - consent ledger 自体の retention（同意証跡は削除してよいか＝法務判断）
+--   - RPC の grant 範囲（append は service-role gated SECURITY DEFINER + auth.uid() 束縛）
+--
+-- ★ ここで重要なのは「service role が member request path に現れない」こと:
+--     member は RPC を呼ぶ（`auth.uid()` 由来 subject）。
+--     service role は **背後の SECURITY DEFINER 実行**と **backoffice batch** のみ。
+--     API route が service-role client を直接使って consent を書く経路は作らない。
+
+
+-- ============================================================================
+-- 4. Activation checklist（この draft を適用してよい条件）
+-- ============================================================================
+--
+--   [ ] H-L1 minimum cohort threshold（本番値）が決定済み
+--   [ ] H-L2 retention 期間が決定済み
+--   [ ] H-L3 aggregation 利用目的が決定済み
+--   [ ] H-L4 company contribution sharing policy が決定済み
+--   [ ] H-L5 撤回後の既 publish knowledge の扱いが決定済み
+--   [ ] H-L6 moderation operational owner が決定済み
+--   [ ] H-L7 legal / privacy approval 取得済み
+--   [ ] H-L8 production infrastructure activation（project / identity strategy / table placement）
+--
+-- 1 つでも欠けている間は、この draft を `*_apply.sql` へ移さないこと。
+-- ============================================================================

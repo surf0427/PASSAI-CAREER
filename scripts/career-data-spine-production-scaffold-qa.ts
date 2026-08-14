@@ -450,7 +450,13 @@ function isolationChecks(): void {
     join(ROOT, 'lib/careerCompanyKnowledge/supabaseRepository.ts'),
     join(ROOT, 'lib/careerCompanyKnowledge/supabaseReadRepository.ts'),
   ].filter((f) => existsSync(f));
-  const envOffenders = newFiles.filter((f) => !envAllowed.has(f) && /process\.env/.test(readFileSync(f, 'utf8')));
+  // ★ コメント行は「読んでいる」に数えない（「本 module は process.env を読まない」という
+  //   記述で誤検知するため）。実コードのみを対象にする。
+  const stripComments = (src: string) =>
+    src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const envOffenders = newFiles.filter(
+    (f) => !envAllowed.has(f) && /process\.env/.test(stripComments(readFileSync(f, 'utf8'))),
+  );
   check('G6 config/flags 以外は process.env を読まない', envOffenders.length === 0, envOffenders.join(','));
 
   // client 生成 / supabase import 制限（DB boundary + repos は supabase client を作らない）。
