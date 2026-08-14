@@ -532,6 +532,94 @@ client 由来の `isAdmin` / `moderatorId` / `role` を根拠にする実装が 
 ---
 
 
+# 5.5 Operational Validation（2026-08-14 / production 未変更）
+
+詳細: `COLLECTIVE_INTELLIGENCE_OPERATIONAL_VALIDATION.md`
+
+## 5.5.1 実行環境の制約
+
+実 DB apply 検証（Option 1）を試みたが、`psql` / `docker` / Supabase CLI /
+postgres client library が **いずれも本環境に存在しない**。production DB へは接続しないため、
+**Option 2（静的実行検証）** を採用した。
+
+```text
+担保できた  : statement 分割 / transaction 境界 / RLS 順序 / 依存順序 / 冪等性 /
+              RPC の owner 束縛 / published view の漏洩
+担保できない: Postgres parser による文法検証 / 実行時権限 / RLS の実効性
+              → staging（実 DB）で要実施。runbook Step 3 がその工程
+```
+
+## 5.5.2 検証結果サマリ
+
+| 領域 | 結果 |
+|---|---|
+| Migration（M1〜M10） | ✅ 全項目 pass（owner-scoped policy 3 / 想定外 broad policy 0） |
+| Layer 4 dry-run（L4-1〜L4-10） | ✅ 61 projections → 60 contributions（heavy user 畳み込み）→ valid artifact |
+| Layer 4 suppression | ✅ n=3/15/30/80 すべて suppressed。suppressed に数値なし |
+| ETL（idempotency / retry / cursor / dry-run） | ✅ 再実行で execute 1 回。失敗時 cursor 据え置き。dry-run 書き込み 0 |
+| Layer 5 dry-run（L5-1〜L5-12） | ✅ draft→…→published を一本通し。拒否経路も全て検証 |
+| I2 identity lifecycle | ✅ unlink 後は本人にも他人にも紐づかない（provenance は保持） |
+| Consent lifecycle | ✅ grant→contribute→revoke→blocked / 未知 version で fail closed |
+| Retention 境界 | ✅ 10 fixture 中 境界超過 5 件だけが candidate |
+| Preflight（3 mode） | ✅ dev=ready / staging・production=NOT READY |
+
+## 5.5.3 ★ Legal Q3 の technical trace（法務へ渡す evidence）
+
+```text
+consent revoked
+  → 以後の projection が reject          【future input blocked】     ✅ 実測
+  → 以後の batch 入力に現れない           【future rebuild excludes】  ✅ 実測
+  → 影響 window を invalidate + regenerate                            ✅ 実装済み
+  → 生成済み artifact から個人寄与だけを差し引く                      ❌ 構造的に不可能
+```
+
+**技術的根拠:** artifact の field は集計値と provenance のみで、
+**個人を辿れる field が 1 つも無い**（QA が検証済み）。
+逆引きを保持すれば差し引き可能になるが、それは匿名集計の前提そのものを壊す。
+
+法務判断（A: 制約を許容 / B: 差し引き必須 → Layer 4 再設計）は Human が行う。
+
+## 5.5.4 Moderator adapter 判定 = **Case B**
+
+repo を再監査した結果、**trusted server-side admin identity source は存在しない**
+（role table / app_metadata role / admin route いずれも無し）。
+
+→ provider interface + provisioning contract のみを残した。
+production code path では `moderator provider missing → DENY`。
+QA では synthetic adapter を使う（production には存在しない）。
+Human approver は **hardcode していない**。
+
+## 5.5.5 Preflight target mode（`D-O2`）
+
+```text
+development  ready=true   （policy の整合のみ必須）
+staging      ready=false  blocking=[infra, migration, moderator, rls]
+production   ready=false  blocking=[infra, legal, migration, moderator, rls]
+mode 未指定  → production として評価（既定は最も厳しい側）
+```
+
+★ **environment による自動 approve はしない。** mode は「どの check を必須にするか」を
+変えるだけで、どれかを自動的に満たしたことにはしない。
+
+★ **blocking はすべて運用項目**。architecture 起因の blocker は **0**（QA `OD-12` が固定）。
+
+## 5.5.6 Canary stage と consumer 必要地点
+
+```text
+CI-0 all OFF                     … consumer 不要（現在ここ）
+CI-1 consent surface canary      … consumer 不要
+CI-2 contribution collection     … ★ Layer 5 投稿 UI が必要（初の consumer）
+CI-3 Layer 4 batch dry-run       … consumer 不要
+CI-4 Layer 4 canary serving      … ★ trend 表示 consumer が必要
+CI-5 Layer 5 moderation          … ★ moderation UI が必要
+CI-6 Layer 5 canary serving      … ★ 参考表示 consumer が必要
+```
+
+★ **CI-3 までは consumer 0 のまま到達できる**（legal → migration → batch → dry-run）。
+
+---
+
+
 # 5.2 ★ 未実施の検証（隠さない）
 
 > **Actual signed-in browser E2E remains outstanding.**

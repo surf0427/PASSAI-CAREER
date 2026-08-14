@@ -51,7 +51,43 @@ export const PREFLIGHT_CHECKS: readonly PreflightCheckKey[] = [
  * ★ すべて **呼び出し側が確認した事実**を渡す。本 module は env を読まない。
  * ★ 未指定は「未達」として扱う（`=== true` 判定）。
  */
+/**
+ * 検証対象の環境。
+ *
+ * ★ **environment による自動 approve は禁止**（Human 指示 §21）。
+ *   mode は「どの check を必須にするか」だけを変え、
+ *   「どれかを自動的に満たしたことにする」ことは絶対にしない。
+ *   production では全 check が必須で、legal 未承認なら必ず NOT READY。
+ */
+export type PreflightTargetMode = 'development' | 'staging' | 'production';
+
+export const PREFLIGHT_TARGET_MODES: readonly PreflightTargetMode[] = [
+  'development',
+  'staging',
+  'production',
+];
+
+/**
+ * mode 別に **必須**とする check。
+ *   development: policy の整合だけ（infra / legal は問わない）
+ *   staging    : infra と moderation まで（legal は問わない = 本番データを扱わないため）
+ *   production : **全 check**
+ *
+ * ★ development / staging で外れる check は「満たした」ではなく「今回は問わない」。
+ *   report には全 check の結果が入り、外れた check も `ok` の実値が見える。
+ */
+export const MODE_REQUIRED_CHECKS: Readonly<Record<PreflightTargetMode, readonly PreflightCheckKey[]>> = {
+  development: ['policy_frozen', 'policy_version_supported', 'cohort_configured', 'retention_configured'],
+  staging: [
+    'policy_frozen', 'policy_version_supported', 'cohort_configured', 'retention_configured',
+    'moderator_configured', 'infra_adapter_configured', 'migration_applied', 'rls_expected',
+  ],
+  production: PREFLIGHT_CHECKS,
+};
+
 export type PreflightInput = {
+  /** 検証対象の環境（既定 production = 最も厳しい）。 */
+  targetMode?: PreflightTargetMode;
   /** H-L7: 法務承認。★ 承認の source を明示できるときだけ true にする。 */
   legalApproved?: boolean;
   /** legal approval の出所（監査用。空なら未承認扱い）。 */
@@ -78,11 +114,14 @@ export type PreflightItem = {
 };
 
 export type PreflightReport = {
-  /** すべて ok か。 */
+  /** 対象 mode の必須 check がすべて ok か。 */
   ready: boolean;
+  targetMode: PreflightTargetMode;
   items: readonly PreflightItem[];
-  /** 未達の key（決定論順）。 */
+  /** 対象 mode で **必須なのに未達**の key（決定論順）。 */
   blocking: readonly PreflightCheckKey[];
+  /** mode では必須でないが未達の key（参考情報）。 */
+  advisory: readonly PreflightCheckKey[];
   /** policy の凍結状態（値は含めない）。 */
   policy: ReturnType<typeof currentPolicySnapshot>;
 };
@@ -170,8 +209,17 @@ export function runPreflight(input: PreflightInput | null | undefined): Prefligh
     },
   ];
 
-  const blocking = items.filter((i) => !i.ok).map((i) => i.key).sort();
-  return { ready: blocking.length === 0, items, blocking, policy: snapshot };
+  // ★ 既定は production（最も厳しい）。未指定で緩くならないようにする。
+  const targetMode: PreflightTargetMode = PREFLIGHT_TARGET_MODES.includes(
+    input?.targetMode as PreflightTargetMode,
+  )
+    ? (input!.targetMode as PreflightTargetMode)
+    : 'production';
+  const required = new Set(MODE_REQUIRED_CHECKS[targetMode]);
+  const failed = items.filter((i) => !i.ok).map((i) => i.key);
+  const blocking = failed.filter((k) => required.has(k)).sort();
+  const advisory = failed.filter((k) => !required.has(k)).sort();
+  return { ready: blocking.length === 0, targetMode, items, blocking, advisory, policy: snapshot };
 }
 
 /**

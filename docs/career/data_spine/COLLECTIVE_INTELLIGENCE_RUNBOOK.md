@@ -234,7 +234,7 @@ AND SafeDeletePort の実装が渡されている
 
 | | provider | 長所 | 短所 |
 |---|---|---|---|
-| **推奨** | **Supabase `pg_cron` + SECURITY DEFINER RPC** | DB 内で完結し、排他（advisory lock）と retry を同じ transaction で扱える。member path から完全に分離できる | SQL 実装が必要。監視は Supabase ログ依存 |
+| **推奨（再確認済み）** | **Supabase `pg_cron` + SECURITY DEFINER RPC** | DB 内で完結し、排他（advisory lock）と retry を同じ transaction で扱える。member path から完全に分離できる。**追加 credential 不要**（既に Supabase を使用） | SQL 実装が必要。監視は Supabase ログ依存 |
 | 代替 A | Vercel Cron + 専用 route | 実装が TypeScript で統一できる | **route である以上 member path と同じ入口**になる。認証と分離設計を厳密にする必要がある |
 | 代替 B | GitHub Actions schedule | 完全に外部。member path と物理的に分離 | secret 管理が増える。実行遅延が大きい |
 
@@ -245,12 +245,76 @@ AND SafeDeletePort の実装が渡されている
 | 項目 | 要件 |
 |---|---|
 | scheduling | 日次 1 回で十分（metric は月次 bucket） |
+| **credentials** | pg_cron は **追加 secret 不要**（DB 内実行）。Vercel Cron / GH Actions は service-role key の外部保管が必要 → 推奨理由の中核 |
+| **service boundary** | pg_cron は member request path と物理的に別。Vercel Cron は route であり同じ入口を共有する |
+| **cost** | pg_cron は追加コストなし。GH Actions は無料枠内だが遅延が大きい |
+| **maintenance** | pg_cron は SQL 保守が必要。TypeScript 統一を優先するなら Vercel Cron |
 | concurrency | **同時実行は 1**。runner は排他を提供しないため provider 側で保証する |
 | distributed lock | `claimRun` port の実装で DB の UNIQUE 制約 or advisory lock を使う |
 | retry | 失敗時は次回スケジュールで自然に再試行（cursor が進んでいない） |
 | cursor | DB に保存（provider 再起動で失わない） |
 | monitoring | run 状態（succeeded / failed / completed_empty）の可視化 |
 | alerting | 連続 failed が N 回で通知 |
+
+---
+
+# 5b. Canary stage 設計（consumer が必要になる地点を明示）
+
+```text
+CI-0  all OFF                        … 現在ここ。consumer 0 で問題ない
+CI-1  consent surface / ledger canary … consumer 不要（consent 取得 UI は既存 surface）
+CI-2  contribution collection canary  … ★ **Layer 5 投稿 UI が必要**（初の consumer）
+CI-3  Layer 4 batch dry-run           … consumer 不要（batch のみ）
+CI-4  Layer 4 canary serving          … ★ **trend 表示 consumer が必要**
+CI-5  Layer 5 contribution + moderation … ★ **moderation UI が必要**（運営向け）
+CI-6  Layer 5 canary serving          … ★ **企業研究の参考表示 consumer が必要**
+```
+
+## consumer が必要になる地点
+
+| Stage | 必要な実装 | 現在 |
+|---|---|---|
+| CI-0 / CI-1 / CI-3 | なし | ✅ 到達可能 |
+| CI-2 | Layer 5 投稿 UI（共有内容の作成 + per-item 確認） | ❌ 未実装 |
+| CI-4 | Layer 4 trend 表示（disclaimer 必須・suppressed 時は文言のみ） | ❌ 未実装 |
+| CI-5 | moderation 承認 UI（運営向け・moderator 認可必須） | ❌ 未実装 |
+| CI-6 | 企業研究への参考表示 | ❌ 未実装 |
+
+★ **CI-3 までは consumer 0 のまま到達できる。** つまり
+「legal 承認 → migration 適用 → batch provider → Layer 4 の batch dry-run」
+までは UI を作らずに検証を進められる。
+
+---
+
+# 5c. Consumer strategy（H-L3 / H-L4 に基づく contract・**実装しない**）
+
+## Layer 4 の consumer 候補
+
+| 候補 | 可否 | 制約 |
+|---|---|---|
+| aggregate trend / reference 表示 | ⭕ 許可（H-L3） | disclaimer 必須 / suppressed 時は `INSUFFICIENT_DATA_MESSAGE` のみ / 数値の比較表現禁止 |
+| internal analytics dashboard | ⭕ 許可（H-L3） | 運営向け。member へ出さない |
+| **benchmark 表示** | ❌ **禁止** | 「あなたは平均より下」型は `PROHIBITED_RENDER_PHRASES` で表現レベルでも禁止 |
+| AI context への投入 | ❌ 今回は禁止（H-L3） | 再検討には Human 承認が必要 |
+| matching への入力 | ❌ **恒久禁止** | `CONSUMER_CAPABILITIES` の `permanentlyProhibited` |
+
+## Layer 5 の consumer 候補
+
+| 候補 | 可否 | 制約 |
+|---|---|---|
+| moderated company knowledge の補足表示 | ⭕ 許可（H-L4） | published のみ / contributor 非開示 / freshness 表示 |
+| 企業研究ページでの参考表示 | ⭕ 許可 | 同上。**private research と混ぜて表示しない** |
+| 面接対策への自動投入 | ❌ 現時点で禁止 | personal context への自動流入は `D-C1` の分類に反する |
+
+## consumer 実装時に守る contract
+
+```text
+1. Layer 4/5 の read は必ず activation gate 越し（evaluateActivation）
+2. published / valid / suppressed 済みのオブジェクトしか受け取らない
+3. Personal Optimization の prompt へ **混ぜない**（別 block・別 renderer）
+4. consumer を足したら CONSUMER_CAPABILITIES の currentConnection を更新する
+   （QA が「consumer 0」を検証しているので、更新しないと落ちる＝気づける）
+```
 
 ---
 

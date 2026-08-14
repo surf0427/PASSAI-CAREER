@@ -1448,6 +1448,54 @@ rollback は「読めなくする」方向で行い、「消す」方向では�
 
 ---
 
+# 2.12 Operational Validation（`D-O1` 〜 `D-O3` / 2026-08-14）
+
+## D-O1 — migration validation は静的検証（Option 2）を採用
+
+**Decision ID:** D-O1 / **Status:** LOCKED
+
+実 DB apply 検証を優先したが、本環境には `psql` / `docker` / Supabase CLI /
+postgres client library が **いずれも存在しない**。production DB へは絶対に接続しないため、
+`scripts/ciOperational/sqlMigrationValidator.ts` による静的実行検証を採用した。
+
+### 担保範囲を誇張しない
+
+```text
+✅ statement 分割 / transaction 境界 / RLS 順序 / 依存順序 / 冪等性 /
+   RPC の owner 束縛 / published view の漏洩
+❌ Postgres parser による文法検証 / 実行時権限 / RLS policy の実効性
+```
+
+後者は staging（実 DB）で必要であり、runbook Step 3 に工程として明記した。
+「静的に通ったから apply して安全」とは書いていない。
+
+## D-O2 — preflight に target mode を追加（environment 自動 approve は禁止）
+
+**Decision ID:** D-O2 / **Status:** LOCKED
+
+`development` / `staging` / `production` の 3 mode を追加した。
+
+★ mode が変えるのは **「どの check を必須にするか」だけ**。
+「この environment だからこの check は満たしたことにする」は **一切しない**。
+未指定時は最も厳しい `production` として評価する（緩い側へ倒れない）。
+
+production では legal 未承認なら必ず NOT READY。
+
+## D-O3 — moderator adapter は Case B（interface のみ）
+
+**Decision ID:** D-O3 / **Status:** LOCKED
+
+repo 再監査の結果、trusted server-side admin identity source は **存在しない**
+（role table / app_metadata role / admin route いずれも無し）。
+
+→ **Case B**。provider interface + provisioning contract のみを残す。
+production code path では `moderator provider missing → DENY`。
+QA は synthetic adapter を使うが、それは production code には存在しない。
+
+Human approver をコードへ hardcode していない。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

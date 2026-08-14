@@ -70,6 +70,7 @@
     "qa:careerCollectiveIntelligenceClosure": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-collective-intelligence-closure-qa.ts",
     "qa:careerCollectiveIntelligenceDecisionResolution": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-collective-intelligence-decision-resolution-qa.ts",
     "qa:careerCollectiveIntelligenceProductionPrep": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-collective-intelligence-production-prep-qa.ts",
+    "qa:careerCollectiveIntelligenceOperationalDryRun": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-collective-intelligence-operational-dry-run-qa.ts",
     "qa:careerPersonalMemoryInvalidation": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-personal-memory-invalidation-qa.ts",
     "qa:careerPersonalMemoryMirrorDivergence": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-personal-memory-mirror-divergence-qa.ts",
     "qa:careerServerContextBridge": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-server-context-bridge-qa.ts",
