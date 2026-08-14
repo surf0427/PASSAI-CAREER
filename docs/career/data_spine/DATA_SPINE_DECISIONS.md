@@ -493,6 +493,91 @@ H-4 を判断するための **evidence path** を用意しただけである。
 
 ---
 
+---
+
+## D-S5 — Server Context Expansion Batch 1 + 重複注入の禁止
+
+**Decision ID:** D-S5
+**Date:** 2026-08-14（Batch 1）
+**Status:** LOCKED（実装済み・**未 activation 拡大**。canary 1 user / purpose 単位 opt-in のまま）
+
+### Decision
+
+`consultation` と `company_research_review` の **base context（profile / activity / values）** を
+`D-S4` の canary gate（purpose opt-in AND canary user AND Source-Sync verified）配下で
+server-driven 化した。共有 resolver `lib/careerServerContext/resolveBaseInputs.server.ts` に集約し、
+purpose を増やすたびに分岐を書き直さない形にした。
+
+### ★ 重複注入の禁止（本 Batch の最重要成果）
+
+canary ON 時の `company_research_review` に **実在した欠陥** を修正した:
+
+| 重複 | 内容 |
+|---|---|
+| base | `orchestrated.systemPrompt`（body の profile/activity/values）＋ Personal Memory `base` projection |
+| self_analysis | `renderSelfAnalysis(b.selfAnalysis)` ＋ Personal Memory `self_analysis` |
+
+同じ情報が 2 回 prompt に入り、AI に「別々の根拠」と誤認させる状態だった。
+
+**採用ポリシー: bridge wins / memory fills gaps**
+（`lib/careerMemory/personalMemoryDedupe.ts`）
+
+> その section に相当する bridge context が **実際に描画されるなら**、対応する Personal Memory
+> section を落とす。bridge が無いところだけ memory で埋める。
+
+この向きを選ぶ理由:
+- prompt は「増える」方向にしか変わらない（bridge があるケースは従来と完全に同じ）＝既存 parity を壊さない。
+- bridge 退役が進むほど自動的に memory へ主権が移る（migration が単調に進む）。
+- 逆向き（memory 優先で bridge を落とす）は memory が compact projection のため情報が減りうる。
+  canary 段階で品質を落とす方向は取らない。
+
+判定は「body に field がある」ではなく **「その block を実際に描画するか」** で行う
+（空文字で描画されない block は presence=false）。
+
+### purpose 別の bridge retirement status
+
+| purpose | status | server 化した context | bridge に残る context |
+|---|---|---|---|
+| `interview_practice` | **HYBRID** | base（profile/activity/values） | selfAnalysis / es / matching / consultationInsights / companyResearch |
+| `consultation` | **HYBRID** | base（profile/activity/values） | crossFeature 全部（selfAnalysis/es/interview/presentation/gd/gdRoom/matching/companyResearch + 各 History）、Event Signal |
+| `company_research_review` | **HYBRID** | base + Personal Memory（`base`/`self_analysis`、dedupe 済み） | selfAnalysis block / matching block |
+
+**FULL_SERVER の purpose はまだ無い。** big-bang より安全な HYBRID を選んでいる。
+
+### consultation に Personal Memory を **敢えて注入していない** 理由
+
+`personalMemorySectionsForPurpose('consultation')` は base/self_analysis/es/interview を許可するが、
+consultation の crossFeature bridge が既に同じ情報（自己分析 / ES / 面接）を送っている。
+両方入れると本 decision が禁止する重複注入になる。
+
+→ **crossFeature bridge を退役させてから** Personal Memory を通電する（Batch 2 以降）。
+   それには Layer 1 reader に `matching` / `company_research` / `presentation` / `gd` kind が必要。
+
+### Event Signal 境界（不変）
+
+Event Signal は consultation route が従来どおり独立に resolve し、
+Personal Memory / server context 経路には一切入らない（`D-L3`）。
+matching への ability 推論辺も増えていない（`D-L4`）。QA Q7 / Q8 が固定。
+
+### section isolation（部分検証）
+
+Source-Sync は **source kind 単位**。`profile` mismatch / `self_analysis` verified のとき、
+`base` section だけを veto し `self_analysis` は使う。
+「一部 mismatch だから全部 verified 扱い」も「全部捨てる」もしない（QA R4）。
+
+### QA / evidence
+
+- `scripts/career-server-context-batch1-qa.ts` — Q1〜Q8 / R1〜R6 / D1〜D3 / 静的境界
+- `scripts/career-consultation-orchestrator-parity-qa.ts` — 既存 byte parity（ALL_EXACT_MATCH 維持）
+
+### 既知の未実施（隠さない）
+
+> **Actual signed-in browser E2E remains outstanding.**
+> Human 指示により実ブラウザ session での E2E は延期。検証は real env-derived config /
+> fixture auth simulation / route-level logic / parity / adversarial QA の範囲。
+
+---
+
 # 3. Provisional implementation decisions（2026-08-14 / Human review 可能）
 
 > これらは Human の最終決定ではない。既存コードと設計思想から導いた暫定解であり、

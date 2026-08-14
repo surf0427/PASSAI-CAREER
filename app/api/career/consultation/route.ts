@@ -43,6 +43,9 @@ import {
 // P15-D: Personal Memory 由来の横断 context 組み立て + system prompt 組み立ては pure builder へ抽出。
 //   Event Signal は本 route が現行どおり resolve し、builder へ block 文字列として渡す（境界維持）。
 import { buildConsultationSystemPrompt } from './consultationPrompt';
+// Batch 1: base context（profile/activity/values）を canary + Source-Sync verified のときだけ
+//   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
+import { resolveServerBaseInputs } from '@/lib/careerServerContext/resolveBaseInputs.server';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 // P10-D: L2 Event Signal を「最近の準備状況を踏まえた次アクション提案の補助」としてのみ描画する。
@@ -253,12 +256,15 @@ export async function POST(req: Request) {
 
   // 就活版共通基盤 + 司令塔 persona + Personal Memory 横断（Orchestrator 経由）+ Event Signal（現行位置）を
   //   pure builder で組む。activity は相談用に圧縮（各配列3件・各文字列160字）してから渡す。
+  // Batch 1: canary + purpose ON + Source-Sync verified のときだけ server Layer 1 由来の base を使う。
+  //   ★ activity は server 由来でも **同じ圧縮** を通す（context size を従来と同条件に保つ）。
+  const base = await resolveServerBaseInputs('consultation', b, req);
   const systemPrompt = buildConsultationSystemPrompt({
-    profile: b.profile ?? null,
+    profile: base.profile,
     activity: compressCareerActivityForConsultation(
-      b.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
+      base.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
     ) as CareerActivityInput | null,
-    values: b.values ?? null,
+    values: base.values,
     crossFeature: {
       selfAnalysis: b.selfAnalysis ?? null,
       es: b.es ?? null,

@@ -1,7 +1,10 @@
 # PASSAI CAREER — Data Spine Canary Runbook
 
-**対象:** Human 本人 1 ユーザーだけで Personal Memory と `interview_practice` Server Context を
-安全に試験運用するための操作手順。
+**対象:** Human 本人 1 ユーザーだけで Personal Memory と Server Context
+（`interview_practice` / `consultation` / `company_research_review`）を安全に試験運用する手順。
+
+> ★ **Actual signed-in browser E2E remains outstanding.** 実ブラウザ session での
+> click-through と実 AI call は未実施（Human 指示により延期）。
 
 **前提 SHA:** `90608a6` 以降（本 runbook を含む canary commit）
 **Status:** 実装完了・**未 activation**（全 flag OFF）
@@ -129,6 +132,28 @@ CAREER_SERVER_CONTEXT_CANARY_USER_IDS=<CANARY_USER_ID>
 
 ---
 
+# 3b. Stage 2b — Batch 1 purpose を追加する（`D-S5`）
+
+`consultation` / `company_research_review` も同じ canary user で有効化できる。
+purpose は comma 区切りで **1 つずつ**足して観測する（一度に全部にしない）。
+
+```bash
+CAREER_SERVER_CONTEXT_PURPOSES=interview_practice,consultation
+# 観測して問題なければ
+CAREER_SERVER_CONTEXT_PURPOSES=interview_practice,consultation,company_research_review
+```
+
+## 確認すること
+
+| 観測 | 期待 |
+|---|---|
+| diagnostics `purpose` 別件数 | 有効化した purpose だけ増える |
+| `context` 内訳 | `server_context_used` / `bridge_fallback` が purpose 横断で妥当 |
+| `company_research_review` の prompt | ★ 同じ自己分析 / プロフィールが **2 回出ていない**（`D-S5` dedupe） |
+| `consultation` の prompt | Event Signal block が従来位置のまま・Personal Memory は入らない |
+
+---
+
 # 4. 観測（operator inspection）
 
 集計値だけを返す read-only エンドポイントを開く。
@@ -227,6 +252,7 @@ rollback は必ず「**context を減らす**」方向で行う。
 | Stage 0 | 全 OFF（現在） | — |
 | Stage 1 | Personal Memory / 1 user | read gate・Source-Sync・persisted/rebuilt/omitted の確認 |
 | Stage 2 | \+ `interview_practice` Server Context / 同一 1 user | server context 利用・bridge fallback・parity・context size |
+| Stage 2b | \+ `consultation` / `company_research_review`（`D-S5`）/ 同一 1 user | 重複注入が無いこと・purpose 横断の fallback 分類 |
 | Stage 3 | 観測のみ（拡大しない） | H-4 rollout evidence の蓄積 |
 
 **Stage 3 の次（他ユーザーへの拡大）は H-4 の Human decision。本 runbook では扱わない。**
@@ -238,7 +264,7 @@ rollback は必ず「**context を減らす**」方向で行う。
 - Consent production（`CAREER_CONSENT_*`）
 - Layer 4（`CAREER_AGGREGATED_INSIGHT_*`）
 - Layer 5（`CAREER_COMPANY_KNOWLEDGE_*`）
-- `interview_practice` 以外の Server Context purpose
+- Batch 1（`interview_practice` / `consultation` / `company_research_review`）以外の Server Context purpose
 - Personal Memory の広域 rollout（allowlist は 1 UUID のみ）
 
 ---

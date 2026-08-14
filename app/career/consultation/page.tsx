@@ -62,6 +62,8 @@ import type {
   CareerConsultationMessage,
   CareerConsultationRecommendedAction,
 } from '@/types/careerConsultation';
+import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
+import { BASE_CONTEXT_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -214,7 +216,12 @@ function CareerConsultationInner() {
     try {
       const res = await fetch('/api/career/consultation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // D-R2/D-S4: base context を server Source から出してよいかの claim（revision token のみ）。
+        //   生データは送らない。未送信・不一致なら server は bridge へ倒れる（安全側）。
+        headers: withSourceSyncHeader(
+          { 'Content-Type': 'application/json' },
+          BASE_CONTEXT_SYNC_KINDS,
+        ),
         body: JSON.stringify({
           message: trimmed,
           history,

@@ -25,6 +25,7 @@
   \+ **D-S1 source-sync veto（D-R2 closure / H-1・H-2 closed）**
   \+ **hardening: `D-S2` unsafe rollback 削除 / `D-S3` write ordering（W3・W4 修正 + 限界の明記）**
   \+ **`D-S4` canary activation foundation（user-scoped Server Context gate + observability + runbook）**
+  \+ **`D-S5` Server Context Expansion Batch 1（consultation / company_research_review + 重複注入防止）**
 - Human decision で止めた項目: H-3 write-back / H-4 rollout / H-6 / H-7 / H-8（fail-closed のまま）
 
 ---
@@ -117,6 +118,31 @@
 
 ---
 
+# 5.1 purpose 別 bridge retirement status（`D-S5`）
+
+| purpose | status | server 化済み | bridge に残る |
+|---|---|---|---|
+| `interview_practice` | HYBRID | base（profile/activity/values） | selfAnalysis / es / matching / consultationInsights / companyResearch |
+| `consultation` | HYBRID | base | crossFeature 全部 + Event Signal（意図的に分離） |
+| `company_research_review` | HYBRID | base + Personal Memory（dedupe 済み） | selfAnalysis block / matching block |
+| その他 purpose | LEGACY | — | すべて |
+
+**FULL_SERVER はまだ無し。** 安全な HYBRID を優先している。
+
+★ `consultation` に Personal Memory を注入していないのは重複回避のため（`D-S5` 参照）。
+
+---
+
+# 5.2 ★ 未実施の検証（隠さない）
+
+> **Actual signed-in browser E2E remains outstanding.**
+
+Human 指示により実ブラウザ session での E2E は延期。
+現在の検証範囲は real env-derived config / fixture auth simulation / route-level logic /
+parity harness / adversarial QA まで。実ユーザー click-through と実 AI call は未実施。
+
+---
+
 # 6. 既知の残課題
 
 0. **~~D-R2~~ は closed**（`D-S1`）。残るのは下記のみ。
@@ -135,7 +161,11 @@
    ★ member 向け read / write に **service-role credential は不要**。真の blocker は
    H-6（placement / identity）・H-7（法務文言と policy manifest 行）・DDL の production 適用。
 4. **Layer 4 / Layer 5 は production consumer ゼロのまま**（意図的）。
-5. **別端末 stale write による mirror 巻き戻り（`D-S3` W2/W5）は未防止**。
+5. **`es_generation` purpose は orphan**。ES 再設計（AI 代筆廃止）以降、
+   `buildCareerContextForPurpose('es_generation')` を呼ぶ live route が **存在しない**
+   （現行 ES route は deep / organize / es-review で、いずれも静的 system prompt）。
+   Batch 2 では「移行」ではなく **purpose の retirement か再マッピング** の decision が必要。
+6. **別端末 stale write による mirror 巻き戻り（`D-S3` W2/W5）は未防止**。
    read 安全性は `D-S1` veto が担保するが、mirror integrity は保証していない。
    完全防止には未適用 draft（`supabase/prototype/career_source_write_guard_draft.sql`）の適用と
    conflict 解決ポリシーの Human decision が必要。
@@ -196,6 +226,7 @@ env 未設定の既定状態で各 gate を実評価した結果:
 | `qa:careerDataSpineHardening`（H1〜H8） | PASS |
 | `qa:careerCanaryActivation`（C1〜C13） | PASS |
 | `qa:careerCanaryObservability`（O1〜O5 / P1〜P2） | PASS |
+| `qa:careerServerContextBatch1`（Q1〜Q8 / R1〜R6 / D1〜D3） | PASS |
 | `qa:careerEvents`（callsites 含む） | PASS |
 | `qa:careerEventSignalSeries`（5 suite 全て） | PASS |
 | `qa:careerAggregateSeries` | PASS |

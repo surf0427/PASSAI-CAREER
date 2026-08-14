@@ -36,6 +36,9 @@ import { createTimeoutSignal } from '@/lib/aiTimeout';
 import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
 // D-R2: client canonical revision（header 由来・veto 専用）。未提示なら Memory は使われない。
 import { readSourceSyncSignal } from '@/lib/careerSourceSync/request.server';
+// Batch 1: base context の server 化 + Personal Memory と bridge の重複注入防止。
+import { resolveServerBaseInputs } from '@/lib/careerServerContext/resolveBaseInputs.server';
+import { dedupePersonalMemorySections } from '@/lib/careerMemory/personalMemoryDedupe';
 // Canary observability（enum + 件数のみ）。
 import {
   normalizeMemoryOutcome,
@@ -275,12 +278,14 @@ export async function POST(req: Request) {
   const interest = interestLabel(b.interestLevel);
   const sources = str(b.sources);
 
+  // Batch 1: canary + Source-Sync verified のときだけ server Layer 1 由来の base を使う。
+  const base = await resolveServerBaseInputs('company_research_review', b, req);
   // 就活版共通基盤でプロフィール+活動+就活軸の土台を組む。
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
-    profile: b.profile ?? null,
-    activity: b.activity ?? null,
-    values: b.values ?? null,
+    profile: base.profile,
+    activity: base.activity,
+    values: base.values,
     userInput: '',
   });
   // P17-M1: Personal Memory を server read（base / self_analysis のみ）。企業の客観情報は歪めず、
@@ -298,15 +303,24 @@ export async function POST(req: Request) {
     context: null,
     memorySectionCount: memoryOutcome.meta.sectionCount,
   });
-  const personalMemory = memoryOutcome.sections;
+  // ↑ memory 観測は read 時点の値。重複除去後の実注入数は下の dedupe で決まる。
+  const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
+  const matchingBlock = renderMatching(b.matching);
+
+  // ★ Batch 1（D-S5）: bridge と重複する Personal Memory section を落とす。
+  //   base       : base system prompt が profile/activity/values を必ず描画するため常に重複。
+  //   self_analysis: 自己分析 block を実際に描画するときだけ重複（空なら memory で埋めてよい）。
+  //   「bridge wins / memory fills gaps」= prompt は増える方向にしか変わらない。
+  const dedupe = dedupePersonalMemorySections(memoryOutcome.sections, {
+    base: true,
+    self_analysis: selfAnalysisBlock !== '',
+  });
+  const personalMemory = dedupe.sections;
   // P3-C: base system prompt を Context Orchestrator（purpose=company_research_review）経由で取得する。
   //   委譲のため出力は現行と同一。添削対象の verifiedResearchText 等は user メッセージ側で不変。
   const orchestrated = buildCareerContextForPurpose('company_research_review', context, {
     personalMemory,
   });
-
-  const selfAnalysisBlock = renderSelfAnalysis(b.selfAnalysis);
-  const matchingBlock = renderMatching(b.matching);
 
   const systemPrompt = [
     RESEARCHER_PERSONA,
