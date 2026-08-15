@@ -228,6 +228,16 @@ const CONTRACTS: RouteContract[] = [
     boundSource: 'maxDuration=80',
     minMarginMs: 5_000,
   },
+  {
+    // ES 深掘りの「材料候補 × 設問」関連判定（Material Selection V1 で追加）。
+    // route-local 予算は es/deep と同一ポリシー（per-call 30s / total 45s / minRetry 12s）。
+    // 関連判定は候補ラベルのみ・max_tokens 900 と軽く、深掘り質問と同じ予算方針に揃えてある。
+    file: 'app/api/career/es/materials/route.ts',
+    worstCaseTotalMs: 45_000,
+    boundMs: WALL_80S,
+    boundSource: 'maxDuration=80',
+    minMarginMs: 5_000,
+  },
 ];
 
 function read(file: string): string {
