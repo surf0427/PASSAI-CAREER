@@ -188,6 +188,11 @@ async function legacyGenerate(input: SelfAnalysisSummaryInput): Promise<Response
           model: SELF_ANALYSIS_MODEL,
           max_tokens: 4000,
           temperature: attempt === 2 ? 0 : 0.5,
+          // job 経路（summaryProvider）と同値。legacy は AI 合計 60s で打ち切るため、
+          // 出力量を絞らないと生成が予算内に収まらない（実測: 未指定だと 4000 tokens
+          // ≒80s に達し AI_TIMEOUT になる）。出力契約は不変。
+          thinking: { type: 'disabled' },
+          output_config: { effort: 'low' },
           system,
           messages: [{ role: 'user', content: user }],
         },

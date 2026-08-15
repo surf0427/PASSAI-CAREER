@@ -38,6 +38,13 @@ export const anthropicSelfAnalysisProvider: SelfAnalysisProvider = {
         model: SELF_ANALYSIS_MODEL,
         max_tokens: SELF_ANALYSIS_MAX_TOKENS,
         temperature,
+        // 出力量（＝レイテンシ）を絞るための明示設定。Sonnet 4.6 は effort 未指定だと
+        // 既定 'high' で走り、thinking 未指定でも既定は思考なし。ここを明示することで:
+        //   - effort='low': 同一 prompt で出力トークンが約 15〜20% 減る（実測）。
+        //   - thinking='disabled': 将来の既定変更で暗黙に思考が入るのを防ぐ。
+        // 出力契約（18 キー）は不変。legacy 経路（route.ts）と同値に保つこと。
+        thinking: { type: 'disabled' },
+        output_config: { effort: 'low' },
         system,
         messages: [{ role: 'user', content: user }],
       },

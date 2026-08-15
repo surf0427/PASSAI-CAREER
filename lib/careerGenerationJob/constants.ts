@@ -16,7 +16,12 @@ export const SELF_ANALYSIS_MODEL = 'claude-sonnet-4-6' as const;
 
 // prompt / output schema を変えたら revision を上げる → 旧 idempotency key と衝突させない。
 // （プロンプト本文・schema 本体は保存せず、この version 文字列だけを key/row に反映する。）
-export const SELF_ANALYSIS_PROMPT_REVISION = 'self-analysis-prompt-2026-07-15' as const;
+// 2026-08-15: 出力量予算（配列最大3個 / 1文60字 CAP + 仮説 FLOOR）を導入し、
+//   provider 側に effort='low' を明示した。出力の意味的な形（長さ・項目数）が変わるため
+//   revision を上げ、旧 idempotency key と分離する。
+//   ★ これは同時に、旧設定で OUTPUT_TRUNCATED（非 retryable terminal）になった job 行と
+//     natural key が衝突しないことも意味する（同一入力のユーザーが再実行できる）。
+export const SELF_ANALYSIS_PROMPT_REVISION = 'self-analysis-prompt-2026-08-15' as const;
 export const SELF_ANALYSIS_OUTPUT_SCHEMA_REVISION = 'self-analysis-schema-v2' as const;
 
 // ── attempt / retry ─────────────────────────────────────────────────
