@@ -14,6 +14,9 @@ import type { CareerPresentationResult } from '@/types/careerPresentation';
 import type { CareerActivity } from '@/types/careerActivity';
 // P4-B: str / truncate / strList / repeatedItems を共通 util へ集約（出力は従来と byte 一致）。
 import { str, truncate, strList, repeatedItems } from '@/lib/careerMemory/summaryUtils';
+// 自己分析の更新（revision 追記）は「同じ自己分析の新しい版」。相談AIへ渡す履歴では
+// lineage ごとに最新 revision だけを 1 件として数える（過去 revision は削除しない）。
+import { collapseSelfAnalysisRevisions } from '@/lib/careerSelfAnalysis/revisionLineage';
 
 // 件数上限（各ログ最新 N 件）。トークン肥大を避けるため 3 件まで。
 const HISTORY_LIMIT = 3;
@@ -37,7 +40,8 @@ export function buildSelfAnalysisHistory(
   limit = HISTORY_LIMIT,
 ): SelfAnalysisHistorySnapshot[] {
   if (!logs || logs.length === 0) return [];
-  return logs
+  // revision を持たないデータでは入力配列がそのまま返るため、既存出力は byte 一致。
+  return collapseSelfAnalysisRevisions(logs)
     .slice(0, Math.max(1, limit))
     .map((log) => {
       const r = log?.result;

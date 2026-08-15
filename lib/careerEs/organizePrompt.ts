@@ -35,19 +35,50 @@ export const ES_ORGANIZE_SYSTEM_PROMPT = [
 
 export type EsOrganizeTurn = { role: 'question' | 'answer'; content: string };
 
+/**
+ * 材料整理の user message。
+ *
+ * V1: 深掘り前にユーザーが選んだ既存 Career Data（knownFacts）を optional で受け取り、
+ * 「選択済みの材料」と「Q&A で新たに出た具体」を 1 つのメモへ統合できるようにする。
+ *   - 渡すのは **ユーザーが選択したものだけ**（選択していない候補は含めない）。
+ *   - 同じ事実を重複して載せない・書かれていない事実を創作しないことを明示する。
+ *   - 未指定なら従来と完全に同じ文字列を返す（既存呼び出しは byte 一致）。
+ */
 export function buildEsOrganizeUserMessage(
   question: string,
   turns: EsOrganizeTurn[],
+  knownFacts?: readonly string[] | null,
 ): string {
   const qa = turns
     .map((t) => (t.role === 'question' ? `Q. ${t.content}` : `A. ${t.content}`))
     .join('\n');
+  const facts = (Array.isArray(knownFacts) ? knownFacts : [])
+    .map((f) => (typeof f === 'string' ? f.trim() : ''))
+    .filter((f) => f !== '');
+
+  if (facts.length === 0) {
+    return [
+      `【ES設問】\n${question}`,
+      '',
+      `【深掘りQ&A（本人の回答）】\n${qa || '（なし）'}`,
+      '',
+      '上記の回答をもとに、本人が自分で本文を書くための材料メモを、指定の JSON 形式で整理してください。',
+      '本文は書かないでください。',
+    ].join('\n');
+  }
+
   return [
     `【ES設問】\n${question}`,
     '',
+    `【本人が今回の材料として選んだ既存の情報（過去に本人が入力・整理したもの）】\n${facts
+      .map((f) => `- ${f}`)
+      .join('\n')}`,
+    '',
     `【深掘りQ&A（本人の回答）】\n${qa || '（なし）'}`,
     '',
-    '上記の回答をもとに、本人が自分で本文を書くための材料メモを、指定の JSON 形式で整理してください。',
+    '上記2つをもとに、本人が自分で本文を書くための材料メモを、指定の JSON 形式で整理してください。',
+    '- 選んだ既存情報と Q&A の内容を統合し、同じ事実を2回書かない。',
+    '- 上に書かれていない事実（数字・所属・体験）を創作しない。',
     '本文は書かないでください。',
   ].join('\n');
 }

@@ -20,7 +20,7 @@ import {
   SELF_ANALYSIS_OUTPUT_SCHEMA_REVISION,
   SELF_ANALYSIS_PROMPT_REVISION,
 } from '@/lib/careerGenerationJob/constants';
-import { saveCompletedSelfAnalysis } from './finalizeSummary';
+import { saveCompletedSelfAnalysis, type SaveRevisionTarget } from './finalizeSummary';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 
 const IDLE_VIEW: GenerationView = {
@@ -60,12 +60,36 @@ export interface UseSelfAnalysisGenerationArgs {
   getRequestBody: () => SelfAnalysisRequestBody | null;
   /** event 記録用の深掘り回数。 */
   getTurnCount: () => number;
+  /**
+   * 「過去の結果を更新する」のときだけ、更新対象 lineage と備考を返す。
+   * 未指定 / null なら新規 lineage として保存する（run 画面の従来挙動）。
+   */
+  getRevisionTarget?: () => SaveRevisionTarget | null;
+  /** 完了後の遷移先。未指定なら結果画面（最新表示）。 */
+  resultHref?: string;
+  /**
+   * pending slot（localStorage）の owner scope に付ける接尾辞。
+   *
+   * 新規フロー（run）と更新フロー（update）は保存の仕方が違うため、同じ slot を共有すると
+   * 「更新の生成中に run 画面へ移動 → run 側の controller が resume → 更新なのに新規として保存」
+   * が起こりうる。scope を分けて、各フローが **自分が出した job だけ** を resume するようにする。
+   *
+   * ★ ownerScope は client 内の slot 名と stale-response guard にのみ使う値で、
+   *   server へは送らない（job の所有者は常に認証 cookie 由来）。
+   *   run 画面は未指定＝従来と同一 key のまま。
+   */
+  pendingScope?: string;
 }
+
+const DEFAULT_RESULT_HREF = '/career/self-analysis/result';
 
 export function useSelfAnalysisGeneration({
   userId,
   getRequestBody,
   getTurnCount,
+  getRevisionTarget,
+  resultHref = DEFAULT_RESULT_HREF,
+  pendingScope = '',
 }: UseSelfAnalysisGenerationArgs) {
   const router = useRouter();
   const [view, setView] = useState<GenerationView>(IDLE_VIEW);
@@ -74,7 +98,10 @@ export function useSelfAnalysisGeneration({
   const userIdRef = useRef(userId);
   const getBodyRef = useRef(getRequestBody);
   const getTurnRef = useRef(getTurnCount);
+  const getRevisionRef = useRef(getRevisionTarget);
   const routerRef = useRef(router);
+  const resultHrefRef = useRef(resultHref);
+  const pendingScopeRef = useRef(pendingScope);
 
   // 「常に最新の props を読む」ための ref 同期。**render 中には書かない**
   // （react-hooks/refs: render 中の ref 書込みは再描画整合性を壊しうる）。
@@ -84,7 +111,10 @@ export function useSelfAnalysisGeneration({
     userIdRef.current = userId;
     getBodyRef.current = getRequestBody;
     getTurnRef.current = getTurnCount;
+    getRevisionRef.current = getRevisionTarget;
     routerRef.current = router;
+    resultHrefRef.current = resultHref;
+    pendingScopeRef.current = pendingScope;
   });
 
   // mount: controller 生成 → pending から resume → multi-tab listener。unmount: dispose。
@@ -94,19 +124,28 @@ export function useSelfAnalysisGeneration({
   //   ★ cleanup で dispose し ref を空に戻すので、再 mount では必ず新しい controller を作る
   //     （dispose 済み controller が再利用されて polling が無言で止まることを防ぐ）。
   useEffect(() => {
+    // pending slot / stale-response guard 用の client-local scope。
+    // suffix 未指定（run 画面）では userId そのままで、従来と同じ key になる。
+    const ownerScope = (): string | null => {
+      const uid = userIdRef.current;
+      if (!uid) return null;
+      return pendingScopeRef.current ? `${uid}${pendingScopeRef.current}` : uid;
+    };
+
     const c = new SelfAnalysisGenerationController({
-      getOwnerScope: () => userIdRef.current,
+      getOwnerScope: ownerScope,
       buildRequestBody: () => getBodyRef.current(),
       postGenerate: (body) => httpPost('/api/career/self-analysis', body),
       getStatus: (jobId) =>
         httpGet(`/api/career/self-analysis/job?jobId=${encodeURIComponent(jobId)}`),
       finalize: async ({ result }) =>
-        saveCompletedSelfAnalysis({
+        !!saveCompletedSelfAnalysis({
           result: result as CareerSelfAnalysisResult,
           userId: userIdRef.current,
           turnCount: getTurnRef.current(),
+          revision: getRevisionRef.current?.() ?? null,
         }),
-      navigate: () => routerRef.current.push('/career/self-analysis/result'),
+      navigate: () => routerRef.current.push(resultHrefRef.current),
       storage: window.localStorage,
       now: () => Date.now(),
       schedule: (ms, cb) => window.setTimeout(cb, ms),
@@ -120,7 +159,7 @@ export function useSelfAnalysisGeneration({
     c.resumeFromMount();
 
     const onStorage = (e: StorageEvent) => {
-      const owner = userIdRef.current;
+      const owner = ownerScope();
       if (!owner) return;
       if (e.key === keyForOwner(owner)) c.handleExternalPendingChange(e.newValue);
     };

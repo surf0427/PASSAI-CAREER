@@ -31,6 +31,10 @@ import {
   computeLogSectionLatestAt,
   computeContentRevision,
 } from './revision';
+// 自己分析の「更新」は既存ログの上書きではなく revision の追記で表現される。
+// Layer 2 projection では lineage ごとに最新 revision だけを 1 件として数える
+// （過去 revision は Layer 1 に残り続ける。ここで削除は一切しない）。
+import { collapseSelfAnalysisRevisions } from '@/lib/careerSelfAnalysis/revisionLineage';
 
 const HISTORY_LIMIT = 3;
 
@@ -178,7 +182,11 @@ function recurring(lists: string[][]): string[] {
 }
 
 export function buildSelfAnalysisMemorySection(logs: CareerSelfAnalysisLog[]): SectionRebuildResult {
-  const valid = (Array.isArray(logs) ? logs : []).filter((l) => l && l.result);
+  // revision を持たないデータでは collapse は入力配列をそのまま返すため、
+  // 既存ユーザーの payload / sourceRevision / sourceUpdatedAt は byte 一致のまま。
+  const valid = collapseSelfAnalysisRevisions(
+    (Array.isArray(logs) ? logs : []).filter((l) => l && l.result),
+  );
   const sorted = sortByCreatedDesc(valid);
   const latest = sorted.slice(0, HISTORY_LIMIT).map((log) => {
     const r = log.result;

@@ -53,6 +53,7 @@ import {
   buildSelfAnalysisMessages,
   normalizeConversation,
   normalizeResult,
+  normalizeRevisionInput,
   type SelfAnalysisSummaryInput,
 } from '@/lib/careerSelfAnalysis/summaryPrompt';
 import { resolveSelfAnalysisContextInputs } from './resolveContextInputs';
@@ -128,6 +129,7 @@ type ParsedBody = {
   userInput: string;
   conversation: SelfAnalysisSummaryInput['conversation'];
   pastSummaries: SelfAnalysisSummaryInput['pastSummaries'];
+  revisionOf: SelfAnalysisSummaryInput['revisionOf'];
 };
 
 function parseBody(body: unknown): ParsedBody {
@@ -138,6 +140,7 @@ function parseBody(body: unknown): ParsedBody {
     conversation?: unknown;
     userInput?: string;
     pastSummaries?: unknown;
+    revisionOf?: unknown;
   };
   return {
     profile: b.profile ?? null,
@@ -146,6 +149,8 @@ function parseBody(body: unknown): ParsedBody {
     userInput: typeof b.userInput === 'string' ? b.userInput : '',
     conversation: normalizeConversation(b.conversation),
     pastSummaries: normalizeSelfAnalysisPastSummaries(b.pastSummaries),
+    // 「過去の結果を更新する」導線のみ。不正・不足なら null（＝新規生成として扱う）。
+    revisionOf: normalizeRevisionInput(b.revisionOf),
   };
 }
 
@@ -282,6 +287,8 @@ export async function POST(req: Request) {
     userInput: parsed.userInput,
     conversation: parsed.conversation,
     pastSummaries: ctx.pastSummaries,
+    // conversation / userInput と同じく **その request 固有の入力**（Layer 1 source ではない）。
+    revisionOf: parsed.revisionOf,
   };
 
   return handleSelfAnalysisJobPost(
@@ -305,6 +312,8 @@ export async function POST(req: Request) {
           activity: i.activity,
           values: i.values,
           conversation: i.conversation,
+          // 更新生成のみ key の材料に加わる（新規生成では null → key は従来と同一）。
+          revisionOf: i.revisionOf ?? null,
           promptRevision: SELF_ANALYSIS_PROMPT_REVISION,
           outputSchemaRevision: SELF_ANALYSIS_OUTPUT_SCHEMA_REVISION,
           model: SELF_ANALYSIS_MODEL,

@@ -6,17 +6,27 @@
 //   - 設問種別ごとの上限に達したら done を返す（ガクチカ 5〜8 / 志望動機 3〜5 等）。
 //   - 会話状態（turns）はクライアントが送る（ステートレス）。DB / 課金 / usage には接続しない。
 //   - AI は本文を書かない（ai_policy）。質問生成のみ。
+//
+// V1（材料選択フェーズ）:
+//   client が「ユーザーが選択した既存 Career Data」から作った knownFacts / missingAxes を
+//   optional で受け取り、既知の事実を再質問しないよう制約する（＋既知の分だけ質問数を減らす）。
+//   ★ server は Data Spine（Layer 1）を読まない。既知情報は **request body 経由のみ**
+//     （この route は引き続き server context consumer ではない）。
+//   ★ 未指定なら prompt も上限も従来と完全に同じ（既存呼び出し・関連情報なしは挙動不変）。
 
 import { anthropic, extractJson } from '@/lib/ai';
 import { createAiCallBudget, createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
 import {
   CAREER_ES_DEEP_MODEL,
+  ES_KNOWN_FACTS_MAX_LINES,
+  ES_KNOWN_FACTS_MAX_LINE_CHARS,
   classifyEsQuestionType,
-  esQuestionTurnCap,
+  esTurnCapForContext,
   esCountAnswers,
   buildEsDeepSystem,
   buildEsSeedUserPrompt,
   buildEsFollowupUserPrompt,
+  type EsDeepDiveContext,
   type EsQuestionType,
   type EsTurn,
 } from '@/lib/careerEs/deepDivePrompt';
@@ -38,6 +48,22 @@ function str(value: unknown): string {
 
 function jsonError(code: string, status: number, detail: string) {
   return Response.json({ error: code, code, detail }, { status });
+}
+
+// 既知事実 / 不足観点（client が選択材料から作る）。文字列配列のみ採用し、件数・長さを bound する。
+function normalizeStringList(value: unknown, maxItems: number, maxChars: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const line = item.trim().slice(0, maxChars);
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+    if (out.length >= maxItems) break;
+  }
+  return out;
 }
 
 function normalizeTurns(value: unknown): EsTurn[] {
@@ -75,6 +101,8 @@ export async function POST(req: Request) {
     questionType?: unknown;
     turns?: unknown;
     answer?: unknown;
+    knownFacts?: unknown;
+    missingAxes?: unknown;
   };
 
   const question = str(b.question);
@@ -90,14 +118,22 @@ export async function POST(req: Request) {
     b.questionType === 'other'
       ? b.questionType
       : classifyEsQuestionType(question);
-  const cap = esQuestionTurnCap(questionType);
+
+  // 選択材料 context（未指定なら空 = 従来挙動）。
+  const context: EsDeepDiveContext = {
+    knownFacts: normalizeStringList(b.knownFacts, ES_KNOWN_FACTS_MAX_LINES, ES_KNOWN_FACTS_MAX_LINE_CHARS),
+    // 観点 key は短い識別子。未知 key は builder 側が捨てる。
+    missingAxes: normalizeStringList(b.missingAxes, 16, 40),
+  };
+  // 既知の観点が多いほど質問数上限を下げる（下限は ES_MIN_TURN_CAP）。
+  const cap = esTurnCapForContext(questionType, context);
 
   const turns = normalizeTurns(b.turns);
   const answer = str(b.answer);
   const isSeed = turns.length === 0 && !answer;
 
   try {
-    const system = buildEsDeepSystem(question, questionType);
+    const system = buildEsDeepSystem(question, questionType, context);
 
     // ── seed（1問目）─────────────────────────────────────────────
     if (isSeed) {
@@ -107,7 +143,7 @@ export async function POST(req: Request) {
           max_tokens: 400,
           temperature: 0.6,
           system,
-          messages: [{ role: 'user', content: buildEsSeedUserPrompt(questionType) }],
+          messages: [{ role: 'user', content: buildEsSeedUserPrompt(questionType, context) }],
         },
         { signal: createTimeoutSignal(QUESTION_AI_TIMEOUT_MS) },
       );
@@ -155,7 +191,9 @@ export async function POST(req: Request) {
           max_tokens: 500,
           temperature: attempt === 2 ? 0 : 0.6,
           system,
-          messages: [{ role: 'user', content: buildEsFollowupUserPrompt(questionType, priorTurns) }],
+          messages: [
+            { role: 'user', content: buildEsFollowupUserPrompt(questionType, priorTurns, context) },
+          ],
         },
         { signal: createTimeoutSignal(callTimeoutMs) },
       );

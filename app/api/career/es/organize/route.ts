@@ -17,6 +17,10 @@ import {
   buildEsOrganizeUserMessage,
   type EsOrganizeTurn,
 } from '@/lib/careerEs/organizePrompt';
+import {
+  ES_KNOWN_FACTS_MAX_LINES,
+  ES_KNOWN_FACTS_MAX_LINE_CHARS,
+} from '@/lib/careerEs/deepDivePrompt';
 
 export const maxDuration = 80;
 
@@ -42,6 +46,22 @@ function normalizeTurns(value: unknown): EsOrganizeTurn[] {
   return out;
 }
 
+// 既知事実（選択材料）の防御正規化。件数・長さを bound し、prompt 肥大を防ぐ。
+function normalizeKnownFacts(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const line = item.trim().slice(0, ES_KNOWN_FACTS_MAX_LINE_CHARS);
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+    if (out.length >= ES_KNOWN_FACTS_MAX_LINES) break;
+  }
+  return out;
+}
+
 function normalizeMemo(raw: unknown): string[] {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   if (!Array.isArray(r.memo)) return [];
@@ -62,10 +82,13 @@ export async function POST(req: Request) {
   const b = (body && typeof body === 'object' ? body : {}) as {
     question?: unknown;
     turns?: unknown;
+    knownFacts?: unknown;
   };
 
   const question = str(b.question);
   const turns = normalizeTurns(b.turns);
+  // 選択材料の既知事実（client が選択済み材料からのみ作る）。未指定なら従来どおり。
+  const knownFacts = normalizeKnownFacts(b.knownFacts);
   if (!question) {
     return jsonError('INPUT_REQUIRED', 400, 'ES設問が指定されていません。');
   }
@@ -73,7 +96,7 @@ export async function POST(req: Request) {
     return jsonError('INPUT_REQUIRED', 400, '整理する回答がありません。');
   }
 
-  const userMessage = buildEsOrganizeUserMessage(question, turns);
+  const userMessage = buildEsOrganizeUserMessage(question, turns, knownFacts);
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（他 route と同方針）。

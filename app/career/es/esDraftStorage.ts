@@ -1,7 +1,9 @@
 import {
   ES_DRAFT_SCHEMA_VERSION,
   type CareerEsDraft,
+  type CareerEsDraftMaterials,
 } from '@/types/careerEs';
+import { normalizeSelectedMaterials } from '@/lib/careerEs/materialCandidates';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 
 // 就活版 ES「作成中ドラフト」の localStorage 保存層（正式ログ careerEsLogs とは別ストア）。
@@ -17,6 +19,19 @@ const MAX_DRAFTS = 20;
 // guest / member を通じて owner を安定比較するための正規化（guest は null）。
 function normalizeOwner(ownerId: string | null | undefined): string | null {
   return typeof ownerId === 'string' && ownerId !== '' ? ownerId : null;
+}
+
+// 材料選択の結果（V1 で追加）を防御的に正規化する。
+//   ★ ES_DRAFT_SCHEMA_VERSION は上げない（optional な純追加。旧 draft は materials 欠損のまま
+//     読める＝作成中の下書きを破棄しない）。壊れた materials は「未選択」に倒す。
+function normalizeMaterials(raw: unknown): CareerEsDraftMaterials | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  // decided が立っていない中途半端な値は「未実施」として捨てる（選択フェーズをやり直す）。
+  if (r.decided !== true) return undefined;
+  const coverage =
+    r.coverage === 'full' || r.coverage === 'partial' || r.coverage === 'none' ? r.coverage : 'none';
+  return { decided: true, coverage, selected: normalizeSelectedMaterials(r.selected) };
 }
 
 // 壊れた / 旧スキーマの draft を防御的に正規化する。
@@ -46,6 +61,8 @@ function normalizeDraft(raw: unknown): CareerEsDraft | null {
     draft.selectionType = r.selectionType;
   }
   if (typeof r.questionType === 'string') draft.questionType = r.questionType;
+  const materials = normalizeMaterials(r.materials);
+  if (materials) draft.materials = materials;
   if (Array.isArray(r.deepTurns)) {
     draft.deepTurns = r.deepTurns
       .map((t) => {

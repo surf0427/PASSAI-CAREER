@@ -239,7 +239,11 @@ function formatDate(iso: string): string {
 function resumeStatusLabel(d: CareerEsDraft): string {
   if (d.mode === 'deep' && !d.organized) {
     const answered = (d.deepTurns ?? []).filter((t) => t.role === 'answer').length;
-    return answered > 0 ? `深掘り中（${answered}問回答済み）` : '深掘り開始前';
+    if (answered > 0) return `深掘り中（${answered}問回答済み）`;
+    // materials 未決定 & 深掘り未着手 = 材料選択フェーズから再開する（旧 draft は深掘りから）。
+    if (!d.materials?.decided) return '材料選択から';
+    const used = d.materials.selected.length;
+    return used > 0 ? `深掘り開始前（材料${used}件を選択済み）` : '深掘り開始前';
   }
   if (d.body && d.body.trim()) return '本文執筆中';
   return d.mode === 'deep' ? '整理済み・本文未着手' : '本文未着手';

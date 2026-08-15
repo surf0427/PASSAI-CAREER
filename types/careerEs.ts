@@ -100,6 +100,48 @@ export type CareerEsReview = {
   priorityActions: string[];
 };
 
+// ── ES 深掘りの「材料候補」（既存 Career Data の参照） ───────────────────
+// V1 の位置づけ:
+//   深掘り開始前に「今回の設問に使えそうな既存 Career Data」をユーザーが選ぶ。
+//   選択結果は **ES ローカル**（careerEsDrafts → CareerEsLog.deepDive）にのみ保存する。
+//   Career Data（careerActivityData / careerSelfAnalysisLogs / careerValues 等）へは
+//   一切書き戻さない（Data Spine への自動昇格なし）。
+//
+// スナップショット方針:
+//   選択時点の label / facts / factKinds を **そのまま保持**する。候補元（活動整理の
+//   エントリ等）が後から編集・削除されても、作成中の ES が壊れない・会話の前提が
+//   途中で変わらないようにするため（id は traceability 用に持つが、再解決には依存しない）。
+
+// 候補の出所。Layer 1（localStorage canonical）の種別と 1:1。
+export type CareerEsMaterialSourceKind = 'activity' | 'values' | 'profile' | 'selfAnalysis';
+
+// 設問との関連判定の結果（コード側が決定論で導出する。AI には決めさせない）。
+//   full    … 選択候補で必要観点の大半が埋まる
+//   partial … 関連はあるが不足観点が多い
+//   none    … 関連する既存情報が無い（候補リストを表示しない＝1 から深掘り）
+export type CareerEsMaterialCoverage = 'full' | 'partial' | 'none';
+
+// ユーザーが選択した 1 材料（選択時点のスナップショット）。
+export type CareerEsSelectedMaterial = {
+  // 安定 ID（例: 'activity:focusedActivities:<entryId>' / 'values:priorities'）。
+  id: string;
+  sourceKind: CareerEsMaterialSourceKind;
+  // 1 行ラベル（選択時点のスナップショット）。
+  label: string;
+  // 既知事実の行（'ラベル: 値'）。深掘りの「すでに分かっていること」に使う。
+  facts: string[];
+  // 充足した観点の種別（軸カバレッジ算出に使う。lib/careerEs の EsMaterialFactKind）。
+  factKinds: string[];
+};
+
+// 材料選択フェーズの結果（draft に保存する）。
+export type CareerEsDraftMaterials = {
+  // フェーズを通過したか（none で通過した場合も true。再開時に選択画面へ戻さないため）。
+  decided: boolean;
+  coverage: CareerEsMaterialCoverage;
+  selected: CareerEsSelectedMaterial[];
+};
+
 // ── ES 作成中ドラフト（careerEsLogs とは別ストア） ─────────────────────
 // 深掘りQ&Aの途中離脱・リロードで進捗が失われないよう、未完成の作成状態を保存する。
 // 正式ログ（careerEsLogs）とは意図的に分離する:
@@ -131,6 +173,10 @@ export type CareerEsDraft = {
   questionType?: string;
 
   // ── 深掘り進捗（mode='deep'） ──
+  // 材料選択フェーズの結果（V1 で追加・optional）。
+  //   欠損 = 材料選択フェーズを実施していない旧 draft。読み込み側は「未実施」として扱う
+  //   （ただし深掘りが既に始まっている旧 draft を選択画面へ戻さないこと）。
+  materials?: CareerEsDraftMaterials;
   // Q&A 履歴（末尾が question なら未回答の保留質問）。
   deepTurns?: { role: 'question' | 'answer'; content: string }[];
   // 材料整理メモ（organize 完了後）。
@@ -193,6 +239,9 @@ export type CareerEsLog = {
   deepDive?: {
     turns: { role: 'question' | 'answer'; content: string }[];
     memo?: string[];
+    // 深掘り開始前にユーザーが選んだ既存 Career Data（V1 で追加・optional）。
+    // 「この版がどの既存材料を前提に書かれたか」の traceability。欠損は「材料選択なし」。
+    materials?: CareerEsSelectedMaterial[];
   };
 
   // ── ログの出自（添削からの改善版保存など） ──────────────────────────

@@ -18,6 +18,8 @@
 //     形式が残っていても、内容があれば 1 要素の配列へ安全に変換する（空なら破棄）。
 //   - 経験系の旧 `achievement`（成果）は、新 `quantitativeResult`（定量的な成果）が空のときに
 //     フォールバックとして取り込む。
+//   - 趣味・特技 / 表彰・実績も「複数登録（配列）」へ移行済み。旧版の単一テキスト（string）が
+//     残っていれば 1 件目のカードへ畳み込む（空なら破棄）。
 
 import {
   safeGetStorage,
@@ -41,6 +43,8 @@ import type {
   LanguageEntry,
   SnsEntry,
   PortfolioEntry,
+  HobbyEntry,
+  AwardEntry,
   ItSkillLevel,
   LanguageLevel,
 } from '@/types/careerActivity';
@@ -156,6 +160,14 @@ function listOrLegacyString<T extends { id: string }>(
   return [];
 }
 
+// 中身が空（id しか無い）のカードを捨てる。趣味・特技 / 表彰・実績 のように
+// 「追加ボタンで空行が増えやすい」1 フィールドのカードで、空行を保存しないために使う。
+function dropEmptyEntries<T extends { id: string }>(entries: T[]): T[] {
+  return entries.filter((entry) =>
+    entryHasContent(entry as unknown as Record<string, unknown>),
+  );
+}
+
 function itSkillLevel(value: unknown): ItSkillLevel {
   const s = str(value);
   return IS_VALID_IT_SKILL_LEVEL.has(s) ? (s as ItSkillLevel) : '';
@@ -261,6 +273,16 @@ const mapOverseas = (o: Record<string, unknown>): OverseasEntry => ({
   memo: str(o.memo),
 });
 
+const mapHobby = (h: Record<string, unknown>): HobbyEntry => ({
+  id: id(h.id),
+  name: str(h.name),
+});
+
+const mapAward = (a: Record<string, unknown>): AwardEntry => ({
+  id: id(a.id),
+  title: str(a.title),
+});
+
 const mapPortfolio = (p: Record<string, unknown>): PortfolioEntry => ({
   id: id(p.id),
   name: str(p.name),
@@ -336,8 +358,18 @@ export function normalizeCareerActivity(raw: unknown): CareerActivity {
     certifications,
     itSkills,
     languages,
-    hobbies: str(obj.hobbies),
-    awards: str(obj.awards),
+    // ⑬⑭ 趣味・特技 / 表彰・実績。旧「1 つの自由記述テキスト」は 1 件目のカードへ畳み込む。
+    // 空だけのカードは保存しない（追加直後の空行を localStorage に残さない）。
+    hobbies: dropEmptyEntries(
+      listOrLegacyString<HobbyEntry>(obj.hobbies, mapHobby, (text) =>
+        mapHobby({ name: text }),
+      ),
+    ),
+    awards: dropEmptyEntries(
+      listOrLegacyString<AwardEntry>(obj.awards, mapAward, (text) =>
+        mapAward({ title: text }),
+      ),
+    ),
     // 旧自由入力テキストは theme / overview に畳み込んで 1 件へ移行する。
     snsActivities: listOrLegacyString<SnsEntry>(obj.snsActivities, mapSns, (text) =>
       mapSns({ theme: text }),

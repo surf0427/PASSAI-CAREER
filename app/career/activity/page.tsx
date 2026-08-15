@@ -71,6 +71,8 @@ import {
   newLanguageEntry,
   newSnsEntry,
   newPortfolioEntry,
+  newHobbyEntry,
+  newAwardEntry,
 } from '@/types/careerActivity';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import {
@@ -108,7 +110,7 @@ type ObjSectionKey =
   | 'lifeExperiences';
 
 // 自由記述（トップレベル string）フィールドのキー。
-type TextFieldKey = 'hobbies' | 'awards' | 'freeNote';
+type TextFieldKey = 'freeNote';
 
 function ActivityForm({ initial }: { initial: CareerActivity | null }) {
   const [activity, setActivity] = useState<CareerActivity>(
@@ -338,12 +340,6 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
                 placeholder="例：3.4 / 4.0"
               />
             </div>
-            <TextField
-              label="成績・受賞歴（任意）"
-              value={activity.academics.academicAwards}
-              onChange={(v) => setObj('academics', 'academicAwards', v)}
-              placeholder="例：成績優秀者表彰、学会発表 など"
-            />
           </div>
         </SectionCard>
 
@@ -1060,22 +1056,88 @@ function ActivityForm({ initial }: { initial: CareerActivity | null }) {
         </SectionCard>
 
         {/* ⑬ 趣味・特技 */}
-        <SectionCard emoji="🎨" title="趣味・特技">
-          <TextareaField
-            label="趣味・特技"
-            value={activity.hobbies}
-            onChange={(v) => setText('hobbies', v)}
-            placeholder="打ち込んでいる趣味や、人より得意なことを書いてください。"
+        <SectionCard
+          emoji="🎨"
+          title="趣味・特技"
+          description="複数登録できます。1 つずつ分けて登録すると、AI がそれぞれを個別の強みとして扱えます。"
+        >
+          <RepeatableList
+            items={activity.hobbies}
+            addLabel="趣味・特技を追加"
+            emptyHint="打ち込んでいる趣味や、人より得意なことを 1 つずつ追加してください。"
+            itemLabel={(i) => `趣味・特技 ${i + 1}`}
+            onAdd={() =>
+              update((p) => ({
+                ...p,
+                hobbies: [...p.hobbies, newHobbyEntry()],
+              }))
+            }
+            onRemove={(id) =>
+              update((p) => ({
+                ...p,
+                hobbies: p.hobbies.filter((it) => it.id !== id),
+              }))
+            }
+            renderItem={(item) => {
+              const patch = (patchObj: Partial<typeof item>) =>
+                update((p) => ({
+                  ...p,
+                  hobbies: p.hobbies.map((it) =>
+                    it.id === item.id ? { ...it, ...patchObj } : it,
+                  ),
+                }));
+              return (
+                <TextField
+                  label="趣味・特技"
+                  value={item.name}
+                  onChange={(v) => patch({ name: v })}
+                  placeholder="例：写真 / フルマラソン / 料理"
+                />
+              );
+            }}
           />
         </SectionCard>
 
         {/* ⑭ 表彰・実績 */}
-        <SectionCard emoji="🏆" title="表彰・実績">
-          <TextareaField
-            label="表彰・実績"
-            value={activity.awards}
-            onChange={(v) => setText('awards', v)}
-            placeholder="例：大会入賞、社内 MVP、コンテスト受賞 など"
+        <SectionCard
+          emoji="🏆"
+          title="表彰・実績"
+          description="複数登録できます。1 実績 = 1 項目で登録してください。"
+        >
+          <RepeatableList
+            items={activity.awards}
+            addLabel="表彰・実績を追加"
+            emptyHint="受賞・表彰・社内表彰などを 1 つずつ追加してください。"
+            itemLabel={(i) => `表彰・実績 ${i + 1}`}
+            onAdd={() =>
+              update((p) => ({
+                ...p,
+                awards: [...p.awards, newAwardEntry()],
+              }))
+            }
+            onRemove={(id) =>
+              update((p) => ({
+                ...p,
+                awards: p.awards.filter((it) => it.id !== id),
+              }))
+            }
+            renderItem={(item) => {
+              const patch = (patchObj: Partial<typeof item>) =>
+                update((p) => ({
+                  ...p,
+                  awards: p.awards.map((it) =>
+                    it.id === item.id ? { ...it, ...patchObj } : it,
+                  ),
+                }));
+              return (
+                <TextField
+                  label="表彰・実績"
+                  value={item.title}
+                  onChange={(v) => patch({ title: v })}
+                  placeholder="例：全国大会3位 / 学内ビジネスコンテスト優勝 / 社内MVP"
+                />
+              );
+            }}
           />
         </SectionCard>
 

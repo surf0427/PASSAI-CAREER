@@ -37,6 +37,7 @@
     "qa:careerMatchingEsBody": "npx tsx scripts/career-matching-es-body-qa.ts",
     "qa:careerInterviewEsRender": "npx tsx scripts/career-interview-es-render-golden-qa.ts",
     "qa:careerEsCrossFeatureCloseout": "npx tsx scripts/career-es-cross-feature-closeout-qa.ts",
+    "qa:careerEsMaterialSelection": "npx tsx scripts/career-es-material-selection-qa.ts",
     "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "qa:careerPresentationOrchestratorParity": "npx tsx scripts/career-presentation-orchestrator-parity-qa.ts",
@@ -129,6 +130,8 @@
     "qa:careerSourceReadTimeout": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-source-read-timeout-qa.ts",
     "qa:careerJobPathDataSpine": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-job-path-data-spine-qa.ts",
     "qa:careerSelfAnalysisOutputBudget": "npx tsx scripts/career-self-analysis-output-budget-qa.ts",
+    "qa:careerSelfAnalysisRevision": "npx tsx scripts/career-self-analysis-revision-qa.ts",
+    "qa:careerActivityMultiEntry": "npx tsx scripts/career-activity-multi-entry-qa.ts",
     "qa:careerContextCore": "npm run qa:careerPersonaSpotcheck && npm run qa:careerMemoryPromptGolden && npm run qa:careerMemoryMatching && npm run qa:careerMatchingEsRender && npm run qa:careerMatchingEsBody",
     "qa:careerMemoryAll": "npm run qa:careerContextCore && npm run qa:careerMemoryPresentation && npm run qa:careerMemoryInterview && npm run qa:careerMemoryConsultation && npm run qa:careerInterviewEsRender && npm run qa:careerPresentationEsRender && npm run qa:careerPresentationEsBody && npm run qa:careerEsCrossFeatureCloseout",
     "test:realtimeToken": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/realtime-token.test.ts"

@@ -86,6 +86,14 @@ export interface SelfAnalysisIdempotencyInput {
   promptRevision: string;
   outputSchemaRevision: string;
   model: string;
+  /**
+   * 「過去の結果を更新する」生成でのみ渡す（ベース結果 + 備考 + revision 番号）。
+   * これを key に含めないと、同じ profile/activity/values/conversation で行う 2 回目以降の
+   * 更新が ALREADY_COMPLETED で前回結果を返してしまう。
+   * ★ 未指定（null / undefined）のときは key の材料列が従来と完全に同一になり、
+   *   既存の新規生成 flow の idempotency key は 1 bit も変わらない。
+   */
+  revisionOf?: unknown;
 }
 
 /**
@@ -102,27 +110,34 @@ export function buildSelfAnalysisIdentity(
     normalizeConversationForRevision(input.conversation),
   );
 
+  // 更新生成のときだけ材料に加わる revision（新規生成では null＝材料列に現れない）。
+  const revisionOfRev = input.revisionOf ? computeRevision(input.revisionOf) : null;
+
   // 保存用の統合 input revision（raw は含まない）。
   const inputRevision = sha256Hex(
-    stableStringify({ profileRev, activityRev, valuesRev, conversationRev }),
+    stableStringify(
+      revisionOfRev
+        ? { profileRev, activityRev, valuesRev, conversationRev, revisionOfRev }
+        : { profileRev, activityRev, valuesRev, conversationRev },
+    ),
   );
 
   // 正式 idempotency key（user 所有 + 全 revision を反映）。
-  const idempotencyKey = sha256Hex(
-    stableStringify([
-      'career-generation-job/v1',
-      input.userId,
-      input.feature,
-      input.operation,
-      profileRev,
-      activityRev,
-      valuesRev,
-      conversationRev,
-      input.promptRevision,
-      input.model,
-      input.outputSchemaRevision,
-    ]),
-  );
+  const keyParts: unknown[] = [
+    'career-generation-job/v1',
+    input.userId,
+    input.feature,
+    input.operation,
+    profileRev,
+    activityRev,
+    valuesRev,
+    conversationRev,
+    input.promptRevision,
+    input.model,
+    input.outputSchemaRevision,
+  ];
+  if (revisionOfRev) keyParts.push(revisionOfRev);
+  const idempotencyKey = sha256Hex(stableStringify(keyParts));
 
   return {
     idempotencyKey,

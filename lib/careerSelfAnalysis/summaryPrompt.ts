@@ -183,6 +183,92 @@ export function hasMeaningfulResult(result: CareerSelfAnalysisResult): boolean {
   return result.careerDirection.trim() !== '';
 }
 
+// ── 更新（revision）生成の入力 ─────────────────────────────────────
+// 「過去の結果を更新する」導線でのみ渡す。未指定（null）のときは prompt も idempotency も
+// 従来と byte 一致で、新規自己分析の挙動は一切変わらない。
+
+export interface SelfAnalysisRevisionInput {
+  /** 更新対象 lineage の起点ログ id。 */
+  rootId: string;
+  /** これから作る revision 番号（2 以上）。 */
+  revision: number;
+  /** ベースになる既存結果の生成日時（ISO）。 */
+  baseCreatedAt: string;
+  /** ベースになる既存結果（直前 revision の全文）。 */
+  base: CareerSelfAnalysisResult;
+  /** ユーザーが入力した「追加したいこと・修正したいこと」。 */
+  note: string;
+}
+
+/** API body から受け取った更新入力を防御的に正規化する（不正なら null＝新規生成扱い）。 */
+export function normalizeRevisionInput(value: unknown): SelfAnalysisRevisionInput | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const rootId = str(v.rootId);
+  const note = typeof v.note === 'string' ? v.note.trim() : '';
+  const revisionRaw = typeof v.revision === 'number' ? v.revision : Number(v.revision);
+  const revision = Number.isSafeInteger(revisionRaw) && revisionRaw >= 2 ? revisionRaw : 0;
+  if (!rootId || !revision) return null;
+  const base = normalizeResult(v.base);
+  // ベース結果が空同然なら「更新の土台」が無い＝新規生成として扱う。
+  if (!hasMeaningfulResult(base)) return null;
+  return { rootId, revision, baseCreatedAt: str(v.baseCreatedAt), base, note };
+}
+
+// ベース結果を prompt 用の可読ブロックへ整形する。全文を渡す（truncate しない）のは
+// 「既存結果をベースに修正・追加する」ためにモデルが元の記述を保持する必要があるため。
+function renderRevisionBaseFields(base: CareerSelfAnalysisResult): string[] {
+  const lines: string[] = [];
+  const push = (label: string, value: string) => {
+    if (value) lines.push(`- ${label}: ${value}`);
+  };
+  const pushList = (label: string, items: string[]) => {
+    if (items.length) lines.push(`- ${label}: ${items.join(' / ')}`);
+  };
+  push('全体所感(summary)', base.summary);
+  push('キャリアの方向性(careerDirection)', base.careerDirection);
+  pushList('強み(strengths)', base.strengths);
+  pushList('弱み(weaknesses)', base.weaknesses);
+  pushList('ガクチカ候補(gakuchikaIdeas)', base.gakuchikaIdeas);
+  pushList('自己PR候補(selfPrIdeas)', base.selfPrIdeas);
+  pushList('ES切り口(esAngles)', base.esAngles);
+  pushList('想定質問(interviewQuestions)', base.interviewQuestions);
+  pushList('次アクション(nextActions)', base.nextActions);
+  pushList('向く業界(recommendedIndustries)', base.recommendedIndustries);
+  pushList('向く職種(recommendedJobs)', base.recommendedJobs);
+  pushList('向く環境(suitableEnvironment)', base.suitableEnvironment);
+  pushList('価値観キーワード(valueKeywords)', base.valueKeywords);
+  pushList('強みキーワード(strengthKeywords)', base.strengthKeywords);
+  pushList('モチベーション源(motivationSources)', base.motivationSources);
+  pushList('ストレス要因(stressFactors)', base.stressFactors);
+  pushList('企業選びの条件(companySelectionCriteria)', base.companySelectionCriteria);
+  pushList('伸ばすべき点(developmentPoints)', base.developmentPoints);
+  return lines;
+}
+
+/** 更新生成の指示ブロック。更新でなければ null（＝system prompt は従来と byte 一致）。 */
+export function renderRevisionInstruction(
+  revisionOf: SelfAnalysisRevisionInput | null | undefined,
+): string | null {
+  if (!revisionOf) return null;
+  const dated = revisionOf.baseCreatedAt.slice(0, 10);
+  return [
+    '# 今回のタスク: 既存の自己分析の「更新」',
+    `今回はゼロから別の自己分析を作り直すのではなく、下記の既存の自己分析（版 ${revisionOf.revision - 1}${dated ? ` / ${dated} 生成` : ''}）を`,
+    `ベースに、本人が入力した「追加したいこと・修正したいこと」を反映した **版 ${revisionOf.revision}** を作成します。`,
+    '- 既存結果の内容・方向性を土台として引き継ぐ。備考に関係しない項目は既存の記述を維持するか、表現を整える程度にとどめる。',
+    '- 備考で追加・修正が求められた点は、該当箇所を書き換える、または新しい項目として反映する。',
+    '- 既存の結論と異なる結論に変えてよいのは、備考の内容に根拠がある場合だけ。理由なく方向性を変えない。',
+    '- 出力は差分ではなく、更新後の自己分析の **全文** を同じ JSON 形式で返す（省略・「変更なし」といった記述は禁止）。',
+    '',
+    '## ベースになる既存の自己分析',
+    ...renderRevisionBaseFields(revisionOf.base),
+    '',
+    '## 本人が入力した「追加したいこと・修正したいこと」',
+    revisionOf.note || '（具体的な指定なし。既存結果を最新の入力データに照らして精緻化してください。）',
+  ].join('\n');
+}
+
 /** まとめ生成の入力（legacy と job attempt で共有）。 */
 export interface SelfAnalysisSummaryInput {
   profile: CareerProfileInput | null;
@@ -191,6 +277,8 @@ export interface SelfAnalysisSummaryInput {
   userInput: string;
   conversation: CareerSelfAnalysisTurn[];
   pastSummaries: SelfAnalysisPastSummary[];
+  /** 「過去の結果を更新する」導線でのみ指定。未指定なら新規自己分析（従来挙動）。 */
+  revisionOf?: SelfAnalysisRevisionInput | null;
 }
 
 /** 少なくとも基本情報か活動があるか（材料の有無）。 */
@@ -223,12 +311,15 @@ export function buildSelfAnalysisMessages(
   );
   const pastBlock = formatPastSummariesForPrompt(input.pastSummaries);
   const conversationBlock = renderConversation(input.conversation);
+  // 更新でなければ null → filter で落ちるため、新規生成の prompt は従来と byte 一致。
+  const revisionBlock = renderRevisionInstruction(input.revisionOf ?? null);
 
   const system = [
     orchestrated.systemPrompt,
     coverageBlock,
     conversationBlock,
     pastBlock,
+    revisionBlock,
     GENERATION_GUIDANCE,
     OUTPUT_FORMAT_INSTRUCTION,
   ]

@@ -3,6 +3,7 @@ import type {
   CareerEsResult,
   CareerEsSelectionType,
 } from '@/types/careerEs';
+import { normalizeSelectedMaterials } from '@/lib/careerEs/materialCandidates';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 
 // SSR / 旧 runtime fallback 付き UUID（run 画面と同方針）。
@@ -136,7 +137,13 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
     const memo = Array.isArray(d.memo)
       ? d.memo.filter((m): m is string => typeof m === 'string')
       : undefined;
-    log.deepDive = memo ? { turns, memo } : { turns };
+    // 選択材料（V1 で追加・optional）。旧ログには存在しないため欠損のままにする。
+    const materials = normalizeSelectedMaterials(d.materials);
+    log.deepDive = {
+      turns,
+      ...(memo ? { memo } : {}),
+      ...(materials.length > 0 ? { materials } : {}),
+    };
   }
   if (typeof r.sourceLogId === 'string') log.sourceLogId = r.sourceLogId;
   if (r.sourceType === 'generated' || r.sourceType === 'review_rewrite') {

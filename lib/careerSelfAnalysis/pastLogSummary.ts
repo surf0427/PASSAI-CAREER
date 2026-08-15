@@ -17,6 +17,9 @@ import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import type { CareerActivityInput, CareerValuesInput } from '@/lib/careerAi';
 // P4-B: str / truncate / strList / repeatedItems を共通 util へ集約（出力は従来と byte 一致）。
 import { str, truncate, strList, repeatedItems } from '@/lib/careerMemory/summaryUtils';
+// 更新（revision）で追記されたログは「同じ自己分析の新しい版」なので、
+// 過去ログ一覧としては lineage ごとに最新 revision だけを数える。
+import { collapseSelfAnalysisRevisions } from './revisionLineage';
 
 // 件数上限（過去ログ最新 N 件）。トークン肥大を避けるため 3 件まで。
 export const SELF_ANALYSIS_PAST_LIMIT = 3;
@@ -44,7 +47,8 @@ export function buildSelfAnalysisPastSummaries(
   limit = SELF_ANALYSIS_PAST_LIMIT,
 ): SelfAnalysisPastSummary[] {
   if (!logs || logs.length === 0) return [];
-  return logs
+  // revision を持たないデータでは入力配列がそのまま返るため、既存出力は byte 一致。
+  return collapseSelfAnalysisRevisions(logs)
     .slice(0, Math.max(1, limit))
     .map((log) => {
       const r = log?.result;
@@ -151,6 +155,19 @@ function objHasValue(obj: unknown): boolean {
   return Object.values(obj as Record<string, unknown>).some((v) => nonEmpty(v));
 }
 
+// カード配列（趣味・特技 等）に中身があるか。id しか無い空カードは「無し」とみなす。
+// 旧スキーマの単一テキスト（string）でも判定できるようにしておく（read-time 互換）。
+function cardListHasValue(value: unknown): boolean {
+  if (typeof value === 'string') return nonEmpty(value);
+  if (!Array.isArray(value)) return false;
+  return value.some((item) => {
+    if (!item || typeof item !== 'object') return nonEmpty(item);
+    return Object.entries(item as Record<string, unknown>).some(
+      ([key, v]) => key !== 'id' && nonEmpty(v),
+    );
+  });
+}
+
 // 経験リストの先頭要素から短い識別名を拾う（無ければ件数のみ）。
 function listLabel(
   base: string,
@@ -212,7 +229,7 @@ export function buildCoverageInventory(
   if (portfolio) activities.push(portfolio);
   if (Array.isArray(a.certifications) && a.certifications.length > 0) activities.push('資格');
   if (objHasValue(a.lifeExperiences)) activities.push('人生経験（挫折・転機・成長 等）');
-  if (nonEmpty(a.hobbies)) activities.push('趣味・特技');
+  if (cardListHasValue(a.hobbies)) activities.push('趣味・特技');
 
   const valueAxes: string[] = [];
   const v = (values ?? {}) as Record<string, unknown>;

@@ -18,7 +18,7 @@
 | ④ | 改善する | Do | `/career/es/history` → `/career/es/[id]`（改善ボタンで次版） |
 
 - ①②: Step1（`/career/es/new`）で 設問・文字数・企業名・業界・職種 を入力 → **作成中ドラフト**（`careerEsDrafts`）を作成 → `/career/es/draft/[draftId]` エディタへ。正式ログ（`careerEsLogs`）はまだ作らない。
-- ① deep は draft エディタで先に深掘りQ&A（`EsDeepDivePanel`）→ 材料整理メモを保存 → 本文入力へ。進捗は draft へ autosave され、途中離脱・リロードから再開できる。
+- ① deep は draft エディタで **材料選択（`EsMaterialPickerPanel`）→ 深掘りQ&A（`EsDeepDivePanel`）→ 材料整理メモ → 本文入力**。進捗は draft へ autosave され、途中離脱・リロードから再開できる。
 - draft エディタ「AI添削する」= **保存を確定**。添削成功時に初めて `careerEsLog(v1)`（body + review + deepDive）を作成し、draft を削除して `[id]` へ遷移する。添削失敗時は log を作らず draft を残す。
 - `[id]` エディタ（保存済みログ専用）: 上=設問 / 左=整理メモ（deep）または前回添削（改善時） / 中央=本文 → AI添削（再添削）→ 版に保存。
 - ④: `[id]` の「改善する」で同グループの次版（v+1）を作成。前版本文を初期表示・前回添削を左に表示・再添削で点数推移。
@@ -34,8 +34,9 @@
 | route | 役割 | 本文生成 |
 |---|---|---|
 | `POST /api/career/es-review` | 添削（6軸スコア＋良かった点＋改善点＋不足要素＋採用担当視点コメント） | **しない**（完成例 rewriteExample は廃止） |
-| `POST /api/career/es/deep` | 深掘り質問（設問種別で質問数レンジを変える） | しない |
-| `POST /api/career/es/organize` | Q&A→材料整理メモ | しない |
+| `POST /api/career/es/deep` | 深掘り質問（設問種別で質問数レンジを変える／既知情報があればそれを除いて質問） | しない |
+| `POST /api/career/es/organize` | Q&A（＋選択材料）→材料整理メモ | しない |
+| `POST /api/career/es/materials` | 設問に関連する既存 Career Data 候補の**順位付けのみ** | しない |
 
 設問種別と質問数上限（`lib/careerEs/deepDivePrompt.ts` `esQuestionTurnCap`）:
 ガクチカ 7 / 志望動機 5 / 自己PR 6 / 研究 7 / その他 5（設問文から `classifyEsQuestionType` で推定）。
@@ -78,6 +79,17 @@
 | `careerEsLogs` | JSON（`CareerEsLog[]`） | 正本（完成・保存確定ログ）。新フローは body/review/version 付きで追記。旧生成ログ（result 系のみ）は破壊せず保持 |
 | `careerEsDrafts` | JSON（`CareerEsDraft[]`） | 作成中の未完成ドラフト（owner 単位・schemaVersion 付き）。正式ログとは分離。横断機能・履歴には出さない |
 
+材料選択で追加した保存項目（**新 key は作らない**・すべて optional・後方互換）:
+
+| 場所 | 項目 | 内容 |
+|---|---|---|
+| `CareerEsDraft.materials` | `{ decided, coverage, selected[] }` | 選択フェーズの結果。`decided` が無い旧 draft は「未実施」扱い（深掘り進行中なら選択画面へ戻さない） |
+| `CareerEsLog.deepDive.materials` | `CareerEsSelectedMaterial[]` | 確定版がどの既存材料を前提に書かれたかの traceability |
+
+`CareerEsSelectedMaterial` は選択時点の **スナップショット**（`id` / `sourceKind` / `label` / `facts` / `factKinds`）。
+候補元（活動整理のエントリ等）が後から編集・削除されても作成中の ES が壊れないよう、id での再解決に依存しない。
+`ES_DRAFT_SCHEMA_VERSION` は **1 のまま据え置き**（上げると作成中の下書きが全破棄されるため）。
+
 ## 横断機能との互換
 
 `CareerEsLog` は横断メモリ（matching / presentation / consultation / mypage / personal-memory / Supabase mirror）が参照する。
@@ -102,14 +114,50 @@
 - `scripts/career-es-orchestrator-parity-qa.ts` ＋ golden（生成 prompt の parity QA。生成撤去で dead）
 - `CareerEsReview.rewriteExample`（AIが書いた完成本文）
 
+## 材料選択フェーズ（deep モードの深掘り前・V1）
+
+深掘りを「毎回0から」ではなく「既存 Career Data の続き」から始めるためのフェーズ。
+
+```text
+設問（Step1）
+  ↓
+候補列挙  buildEsMaterialCandidates()          … client 純関数・localStorage canonical のみ
+  ↓       activity / values / profile / 最新の有効な自己分析（revision collapse 済み）
+prefilter prefilterEsMaterialCandidates()      … 設問種別で重み付け・最大 24 件
+  ↓
+関連判定  POST /api/career/es/materials        … AI は id+label だけ見て relevance/reason を返す
+  ↓       未知 id は破棄（幻覚した候補を出さない）
+coverage  deriveEsMaterialCoverage()           … full / partial / none を **コードが決定論で導出**
+  ↓
+ユーザーが複数選択（AI のおすすめは初期チェック。強制しない・全部外せる）
+  ↓
+knownFacts / missingAxes（buildEsKnownFacts / buildEsMissingAxisKeys）
+  ↓
+既存の深掘りQ&A → 既存の organize → 既存の本文執筆 → 既存の添削・保存
+```
+
+- **観点（軸）は既存の `AXES_BY_TYPE` を key 付きに整理した `ES_AXIS_DEFS` が正本**。新しい設問分類は作っていない。
+  各観点の `satisfiedBy`（materialFactKind）と選択材料の `factKinds` を照合して known / missing を決める。
+  `satisfiedBy: []`（企業固有の「なぜ他社でなくこの会社か」・「強みの再現性」等）は既存データでは埋まらず常に質問する。
+- 質問数上限は `esQuestionTurnCap(type, satisfiedAxisCount)`＝既知の観点だけ減らす。**下限 `ES_MIN_TURN_CAP`(3) は割らない**（質問数削減より材料が揃うことを優先）。
+- `none`（関連情報なし）は候補リストを表示せず、**同じ `EsDeepDivePanel` のまま** 1 から深掘りする（`knownFacts=[]` / `missingAxes=[]`＝現行と byte 一致の prompt）。
+- **Data Spine へは書き戻さない**。深掘りで得た情報の保存先は ES ローカル（`careerEsDrafts` → `CareerEsLog.deepDive`）のみ。
+  `careerActivityData` / `careerSelfAnalysisLogs` / `careerValues` への write は行わない（V1 の明示スコープ）。
+- server は Layer 1 を読まない。既知情報は request body 経由（詳細は `docs/career/data_spine/DATA_SPINE_STATE.md` §5.1.1）。
+
 ## 責務マップ（追補: 下書き・横断互換）
 
 | 層 | ファイル | 責務 |
 |---|---|---|
 | storage | [`app/career/es/esDraftStorage.ts`](../../app/career/es/esDraftStorage.ts) | 作成中ドラフト（`careerEsDrafts`）の I/O・owner 絞り込み・schemaVersion 破棄・fail-safe normalize・LRU |
 | UI | [`app/career/es/draft/[draftId]/page.tsx`](../../app/career/es/draft/%5BdraftId%5D/page.tsx) | draft エディタ（深掘りQ&A autosave・本文執筆・AI添削で正式ログ化） |
-| UI 部品 | [`app/career/es/components/EsDeepDivePanel.tsx`](../../app/career/es/components/EsDeepDivePanel.tsx) | 深掘りQ&A（`initialTurns` から resume・`onTurns` で進捗 autosave・`onOrganized` で整理完了） |
+| UI 部品 | [`app/career/es/components/EsDeepDivePanel.tsx`](../../app/career/es/components/EsDeepDivePanel.tsx) | 深掘りQ&A（`initialTurns` から resume・`onTurns` で進捗 autosave・`onOrganized` で整理完了・`knownFacts`/`missingAxes` を route へ中継） |
+| lib | [`lib/careerEs/materialCandidates.ts`](../../lib/careerEs/materialCandidates.ts) | 候補列挙・prefilter・coverage 判定・knownFacts/missingAxes 生成・保存材料の正規化（すべて純関数） |
+| lib | [`lib/careerEs/materialPrompt.ts`](../../lib/careerEs/materialPrompt.ts) | 関連判定 prompt と AI 出力の検証（未知 id 破棄・relevance clamp・並び） |
+| API | [`app/api/career/es/materials/route.ts`](../../app/api/career/es/materials/route.ts) | 関連度の順位付け（ステートレス・候補 0 件なら AI を呼ばない） |
+| UI 部品 | [`app/career/es/components/EsMaterialPickerPanel.tsx`](../../app/career/es/components/EsMaterialPickerPanel.tsx) | 材料候補の複数選択・NONE 分岐・不足観点の提示・escape hatch |
 | QA | `scripts/career-es-body-summary-qa.ts` / `scripts/career-es-draft-storage-qa.ts` | body 投影・フォールバック / draft の owner・schema・fail-safe・分離の決定論検証 |
+| QA | `scripts/career-es-material-selection-qa.ts`（`npm run qa:careerEsMaterialSelection`） | 候補生成・coverage・軸カバレッジ・knownFacts・draft 互換・prompt byte parity |
 
 ## 未対応 / 今後
 

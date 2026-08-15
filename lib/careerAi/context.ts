@@ -93,6 +93,22 @@ function labeledLines(pairs: Array<[label: string, value: unknown]>): string[] {
     .map(([label, value]) => `${label}: ${value}`);
 }
 
+// 1 フィールドだけのカード配列（⑬ 趣味・特技 / ⑭ 表彰・実績）を「1 カード = 1 行」に正規化する。
+// 後方互換: 旧スキーマの単一テキスト（string）は 1 行として読む。空の値は落とす。
+// 注: サーバ側の Data Spine（lib/careerSourceData/rowMappers.ts）は career_activities.data の
+//     jsonb を正規化せずそのまま渡すため、read-time の互換境界はここになる。
+function singleFieldLines(value: unknown, key: string): string[] {
+  if (typeof value === 'string') return str(value) !== '' ? [str(value)] : [];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) =>
+      item && typeof item === 'object'
+        ? str((item as Record<string, unknown>)[key])
+        : str(item),
+    )
+    .filter((line) => line !== '');
+}
+
 // CareerActivity（就活版「活動整理」の 18 セクション）を、就活 AI 向けの可読な
 // string[] 群に正規化する。各セクションは「全フィールド空なら空配列」になり、
 // renderActivity 側で空セクションは出力されない（未入力ユーザーへの影響なし）。
@@ -117,6 +133,8 @@ export function normalizeCareerActivityContext(
 
   // ② 学業・学生時代の活動（授業・ゼミ・研究・専攻）。
   // 旧「力を入れたこと」(focusedEffort) は ②' focusedActivities カードへ分離済み。
+  // 旧「成績・受賞歴」(academicAwards) は UI から削除済み（→ ⑭ 表彰・実績）。既存ユーザーの
+  // 入力を prompt から消さないよう、保存済みの値はこれまで通り読み出す（legacy 読み取り互換）。
   const ac = a.academics ?? {};
   const academics = labeledLines([
     ['ゼミ・研究', (ac as Record<string, unknown>).seminar],
@@ -260,9 +278,10 @@ export function normalizeCareerActivityContext(
       return level !== '' ? `${lang}（${level}）` : lang;
     });
 
-  // ⑬⑭⑱ 自由記述（単一テキスト → 1 行 or 空）
-  const hobbies = str(a.hobbies) !== '' ? [str(a.hobbies)] : [];
-  const awards = str(a.awards) !== '' ? [str(a.awards)] : [];
+  // ⑬⑭ 趣味・特技 / 表彰・実績（1 カード = 1 行）。旧単一テキストは 1 行として読む。
+  const hobbies = singleFieldLines(a.hobbies, 'name');
+  const awards = singleFieldLines(a.awards, 'title');
+  // ⑱ 自由記述（単一テキスト → 1 行 or 空）
   const others = str(a.freeNote) !== '' ? [str(a.freeNote)] : [];
 
   // ⑮ SNS・情報発信（複数登録）— 発信内容・継続性・得意分野・マーケ/発信力の根拠を渡す。

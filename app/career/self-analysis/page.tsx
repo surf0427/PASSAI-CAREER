@@ -4,29 +4,33 @@ import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { loadAnalyzeState } from './selfAnalysisStorage';
-import { loadSelfPRs } from './selfAnalysisStorage';
 import { loadSelfAnalysisLogs } from './selfAnalysisStorage';
-import type { AnalyzeStep } from '@/types/analysis';
+import { collapseSelfAnalysisRevisions } from '@/lib/careerSelfAnalysis/revisionLineage';
 
 // マウント前 false / マウント後 true。受験版 app/self-analysis/page.tsx と同形パターン。
-// SSR では localStorage を読まず status=null（4 stat を `—`）にし、hydration 後に再 render。
+// SSR では localStorage を読まず status=null（stat を `—`）にし、hydration 後に再 render。
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
 type Status = {
-  resumeStep: AnalyzeStep | null;
-  summaryReady: boolean;
-  prCount: number;
-  selfAnalysisLogCount: number;
+  /** 保存済みの自己分析の件数（更新した分は 1 件として数える）。 */
+  analysisCount: number;
+  /** 更新も含めた保存回数（履歴の総数）。 */
+  savedCount: number;
+  /** 最新の生成・更新日時（ISO）。 */
+  latestAt: string | null;
 };
 
-// 就活版 Phase: AI壁打ち（run/resume）は受験版 API（/api/summarize・/api/analysis/additional）に
-// 強く依存し、受験版プロンプト・受験版 usage/課金・DB ログへ書き込むため、本フェーズでは
-// API 接続を行わず「準備中」とする（画面コピーを優先）。自己PR（/self-pr）・過去結果
-// （/self-analysis/result）もまだ就活版へコピーしていないため準備中。
-// → ハブの 4 つのアクションカードと「次におすすめ」CTA はすべて disabled で表示する。
+// 就活版 自己分析ハブ。ユーザーがここで選ぶのは 3 つだけ:
+//   ① 新しく自己分析する（新規フロー = /run）
+//   ② 過去の結果を見る（閲覧専用 = /result）
+//   ③ 過去の結果を更新する（既存結果に追記して再生成 = /update）
+// ★「前回の続きからやる」は使わない。③ は途中保存の resume ではなく
+//   「完了済みの結果に情報を足して版を上げる」機能であり、誤解を避けるため名称を分けている。
+// ★「0から自己PRを書く」「全文を自力で書く」は就活版に対応する route / API / DB が存在せず
+//   （受験版 app/self-pr/* 専用の導線）、ここでは常時 disabled の飾りだったため入口ごと削除した。
+//   受験版の機能自体には手を触れていない。
 export default function SelfAnalysisEntryPage() {
   const isMounted = useSyncExternalStore(
     subscribeMount,
@@ -36,16 +40,15 @@ export default function SelfAnalysisEntryPage() {
 
   const status = useMemo<Status | null>(() => {
     if (!isMounted) return null;
-    const state = loadAnalyzeState();
+    const logs = loadSelfAnalysisLogs();
     return {
-      resumeStep: state?.step ?? null,
-      summaryReady: !!state?.summary,
-      prCount: loadSelfPRs().length,
-      selfAnalysisLogCount: loadSelfAnalysisLogs().length,
+      analysisCount: collapseSelfAnalysisRevisions(logs).length,
+      savedCount: logs.length,
+      latestAt: logs.length > 0 ? (logs[0]?.createdAt ?? null) : null,
     };
   }, [isMounted]);
 
-  const suggestion = useMemo(() => pickSelfAnalysisSuggestion(status), [status]);
+  const hasLogs = !!status && status.savedCount > 0;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -59,45 +62,40 @@ export default function SelfAnalysisEntryPage() {
           現在地
         </p>
         <div className="grid grid-cols-2 gap-y-3 gap-x-4">
-          <StatusItem label="進捗" value={displayProgress(status)} />
-          <StatusItem label="活動まとめ" value={displaySummary(status)} />
-          <StatusItem label="自己PR添削" value={displayPrCount(status)} />
-          <StatusItem label="結果ログ" value={displayResultLog(status)} />
+          <StatusItem label="保存済みの自己分析" value={displayCount(status)} />
+          <StatusItem label="最終更新" value={displayLatestAt(status)} />
         </div>
       </Card>
 
-      <SuggestionCard suggestion={suggestion} />
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:gap-4">
         <ModeCard
-          title="0から自己PRを書く"
-          description="活動整理から始めて、本文作成・添削まで進めます。"
-          disabled
-          badge="準備中"
+          title="新しく自己分析する"
+          description="活動整理から始めて、あなたの経験を深掘りします。"
+          href="/career/self-analysis/run"
+          primary
         />
-        <ModeCard
-          title="全文を自力で書く"
-          description="活動整理を使わずに、自分で自己PR本文を書いて添削します。"
-          disabled
-          badge="準備中"
-        />
-        <ModeCard
-          title="前回の続きからやる"
-          description="過去の自己分析ログを選んで、もう一度深掘り質問から始めます。"
-          disabled
-          badge="準備中"
-        />
-        <ModeCard
-          title="過去の結果を見る"
-          description="自己分析AIの生成結果（最新）を確認できます。"
-          href="/career/self-analysis/result"
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <ModeCard
+            title="過去の結果を見る"
+            description="これまでに作成した自己分析を確認します。"
+            href="/career/self-analysis/result"
+            disabled={status !== null && !hasLogs}
+            badge={status !== null && !hasLogs ? 'まだありません' : undefined}
+          />
+          <ModeCard
+            title="過去の結果を更新する"
+            description="以前の自己分析に情報を追加して、内容をアップデートします。"
+            href="/career/self-analysis/update"
+            disabled={status !== null && !hasLogs}
+            badge={status !== null && !hasLogs ? 'まだありません' : undefined}
+          />
+        </div>
       </div>
 
       <p className="mt-6 text-xs text-slate-500 leading-relaxed">
-        まずは「自己分析を始める」から、基本情報・活動整理をもとに就活向けの自己分析を生成できます。
-        自己分析は1回で完成させるものではありません。使うたびに別の観点から活動・価値観を深掘りし、
-        ES・面接・企業選びに使える自己理解を育てていきます。
+        自己分析は1回で完成させるものではありません。新しく自己分析を行うか、過去の結果に情報を足して
+        更新することで、別の観点から活動・価値観を深掘りし、ES・面接・企業選びに使える自己理解を
+        育てていきます。更新しても、過去の結果は履歴として残ります。
       </p>
 
       {/* ホームへの戻り導線。受験版は /home だが就活版は /career/home。 */}
@@ -113,105 +111,21 @@ export default function SelfAnalysisEntryPage() {
   );
 }
 
-// ── 次におすすめ（受験版踏襲）─────────────────────
-// status から「次にやること」を 1 つ選ぶ。null 分岐は first-time 用 fallback も兼ねる。
-// 就活版では遷移先（run/self-pr/result）がまだ準備中のため、CTA は disabled で表示する。
-
-type Suggestion =
-  | {
-      kind: 'start';
-      title: string;
-      description: string;
-      cta: string;
-    }
-  | {
-      kind: 'link';
-      title: string;
-      description: string;
-      href: string;
-      cta: string;
-    };
-
-const SELF_ANALYSIS_SUGGESTION_START: Suggestion = {
-  kind: 'start',
-  title: 'まず自己分析を始める',
-  description: '活動整理から深掘り・まとめまで、一連の流れで進めます。',
-  cta: '自己分析を始める →',
-};
-
-const SELF_ANALYSIS_SUGGESTION_PR: Suggestion = {
-  kind: 'link',
-  title: '自己PRを書いてみる',
-  description: '自己分析の結果をもとに、自己PR本文を作って添削できます。',
-  href: '/self-pr',
-  cta: '自己PRに進む →',
-};
-
-const SELF_ANALYSIS_SUGGESTION_RESULT: Suggestion = {
-  kind: 'link',
-  title: '過去の結果を見直す',
-  description: 'まとめログと自己PR履歴をまとめて確認できます。',
-  href: '/self-analysis/result',
-  cta: '結果を見る →',
-};
-
-function pickSelfAnalysisSuggestion(status: Status | null): Suggestion {
-  if (status === null) return SELF_ANALYSIS_SUGGESTION_START;
-  if (status.prCount > 0) return SELF_ANALYSIS_SUGGESTION_RESULT;
-  if (status.summaryReady || status.selfAnalysisLogCount > 0) {
-    return SELF_ANALYSIS_SUGGESTION_PR;
-  }
-  return SELF_ANALYSIS_SUGGESTION_START;
-}
-
-function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
-  return (
-    <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-      <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
-        次におすすめ
-      </p>
-      <p className="text-sm font-bold text-slate-800 mb-1">{suggestion.title}</p>
-      <p className="text-xs text-slate-500 leading-relaxed mb-3">
-        {suggestion.description}
-      </p>
-      {/* 最小版の主要導線は「自己分析AIを実行」に集約する（run 画面へ）。 */}
-      <Link
-        href="/career/self-analysis/run"
-        className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
-      >
-        {suggestion.cta}
-      </Link>
-    </Card>
-  );
-}
-
 const EM_DASH = '—';
 
-function displayProgress(status: Status | null): string {
-  if (!status || status.resumeStep === null) return EM_DASH;
-  switch (status.resumeStep) {
-    case 'confirm':
-      return '活動確認';
-    case 'answering':
-      return '深掘り中';
-    case 'summary':
-      return 'まとめ済';
-  }
+function displayCount(status: Status | null): string {
+  if (!status || status.analysisCount === 0) return EM_DASH;
+  // 更新で版が増えている場合だけ総保存件数も併記する。
+  const suffix =
+    status.savedCount > status.analysisCount ? `（履歴 ${status.savedCount}件）` : '';
+  return `${status.analysisCount}件${suffix}`;
 }
 
-function displaySummary(status: Status | null): string {
-  if (!status) return EM_DASH;
-  return status.summaryReady ? 'あり' : EM_DASH;
-}
-
-function displayPrCount(status: Status | null): string {
-  if (!status || status.prCount === 0) return EM_DASH;
-  return `${status.prCount}件`;
-}
-
-function displayResultLog(status: Status | null): string {
-  if (!status || status.selfAnalysisLogCount === 0) return EM_DASH;
-  return `${status.selfAnalysisLogCount}件`;
+function displayLatestAt(status: Status | null): string {
+  if (!status || !status.latestAt) return EM_DASH;
+  const d = new Date(status.latestAt);
+  if (Number.isNaN(d.getTime())) return EM_DASH;
+  return d.toLocaleDateString('ja-JP');
 }
 
 function StatusItem({ label, value }: { label: string; value: string }) {
@@ -226,20 +140,22 @@ function StatusItem({ label, value }: { label: string; value: string }) {
 const CARD_BASE =
   'block w-full text-left rounded-2xl bg-white ring-1 ring-slate-200 shadow-card transition-all p-4 sm:p-5 min-h-[120px]';
 const CARD_ACTIVE = 'hover:shadow-md active:bg-slate-50';
+const CARD_PRIMARY = 'ring-2 ring-blue-600 hover:shadow-md active:bg-blue-50/40';
 const CARD_DISABLED = 'opacity-60 pointer-events-none';
 
 type ModeCardProps = {
   title: string;
   description: string;
   href?: string;
-  onClick?: () => void;
   disabled?: boolean;
   badge?: string;
+  /** primary 導線（新しく自己分析する）だけ枠線を強調する。 */
+  primary?: boolean;
 };
 
 // 「使えない」より「まだ今ではない」空気感を出すため、disabled でも
 // ring/shadow/レイアウトは維持し、テキスト彩度だけ下げる（受験版と同じ思想）。
-function ModeCard({ title, description, href, onClick, disabled, badge }: ModeCardProps) {
+function ModeCard({ title, description, href, disabled, badge, primary }: ModeCardProps) {
   const titleClass = `text-sm sm:text-base font-bold mb-1.5 leading-snug ${
     disabled ? 'text-slate-400' : 'text-slate-900'
   }`;
@@ -261,7 +177,7 @@ function ModeCard({ title, description, href, onClick, disabled, badge }: ModeCa
     </>
   );
 
-  if (disabled) {
+  if (disabled || !href) {
     return (
       <div aria-disabled="true" className={`${CARD_BASE} ${CARD_DISABLED}`}>
         {inner}
@@ -269,17 +185,9 @@ function ModeCard({ title, description, href, onClick, disabled, badge }: ModeCa
     );
   }
 
-  if (href) {
-    return (
-      <Link href={href} className={`${CARD_BASE} ${CARD_ACTIVE}`}>
-        {inner}
-      </Link>
-    );
-  }
-
   return (
-    <button type="button" onClick={onClick} className={`${CARD_BASE} ${CARD_ACTIVE}`}>
+    <Link href={href} className={`${CARD_BASE} ${primary ? CARD_PRIMARY : CARD_ACTIVE}`}>
       {inner}
-    </button>
+    </Link>
   );
 }

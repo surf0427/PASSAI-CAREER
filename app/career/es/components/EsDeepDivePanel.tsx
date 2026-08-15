@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
-import { esQuestionTurnCap, type EsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
+import { esTurnCapForContext, type EsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
 
 type Props = {
   question: string;
@@ -22,6 +22,12 @@ type Props = {
   onTurns: (turns: EsTurn[]) => void;
   // 整理完了（または「メモなしで本文へ」）時に呼ぶ。organized へ遷移させる。
   onOrganized: (turns: EsTurn[], memo: string[]) => void;
+  // 材料選択フェーズで選ばれた既存 Career Data から作った既知事実（V1・任意）。
+  //   - 未指定 / 空なら従来どおり「1 から深掘り」（プロンプトも上限も現行と同じ）。
+  //   - 指定時は AI が同じ事実を聞き返さず、不足観点だけを質問する。
+  knownFacts?: string[];
+  // まだ埋まっていない観点の key（ES_AXIS_DEFS の key。任意）。
+  missingAxes?: string[];
 };
 
 export function EsDeepDivePanel({
@@ -30,8 +36,12 @@ export function EsDeepDivePanel({
   initialTurns,
   onTurns,
   onOrganized,
+  knownFacts,
+  missingAxes,
 }: Props) {
-  const cap = esQuestionTurnCap(questionType);
+  // 既知の観点の分だけ質問数上限を下げる（server と同じ純関数・同じ入力で一致する）。
+  const cap = esTurnCapForContext(questionType, { knownFacts, missingAxes });
+  const hasKnownFacts = (knownFacts?.length ?? 0) > 0;
 
   const [turns, setTurns] = useState<EsTurn[]>(initialTurns);
   const [answer, setAnswer] = useState('');
@@ -60,7 +70,7 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/deep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, questionType }),
+        body: JSON.stringify({ question, questionType, knownFacts, missingAxes }),
       });
       const data = (await res.json()) as { question?: string; detail?: string };
       if (!res.ok || !data.question) throw new Error(data.detail ?? '深掘りの開始に失敗しました。');
@@ -79,7 +89,7 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/organize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, turns: finalTurns }),
+        body: JSON.stringify({ question, turns: finalTurns, knownFacts }),
       });
       const data = (await res.json()) as { memo?: string[]; detail?: string };
       if (!res.ok) throw new Error(data.detail ?? '材料整理に失敗しました。');
@@ -105,7 +115,7 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/deep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, questionType, turns, answer: a }),
+        body: JSON.stringify({ question, questionType, turns, answer: a, knownFacts, missingAxes }),
       });
       const data = (await res.json()) as {
         reaction?: string;
@@ -140,7 +150,9 @@ export function EsDeepDivePanel({
           この設問に答える材料を、AIとの対話で整理します。
         </p>
         <p className="text-xs text-slate-500 leading-relaxed mb-4">
-          AIが質問します（{cap}問程度）。あなたの回答をもとに整理メモを作り、そのメモを見ながら本文は自分で書きます。AIは本文を書きません。
+          {hasKnownFacts
+            ? `選んだ材料はAIが把握済みです。同じことは聞かず、足りない部分だけを質問します（${cap}問程度）。整理メモを見ながら本文は自分で書きます。AIは本文を書きません。`
+            : `AIが質問します（${cap}問程度）。あなたの回答をもとに整理メモを作り、そのメモを見ながら本文は自分で書きます。AIは本文を書きません。`}
         </p>
         {error && <p className="mb-3 text-sm text-red-600" role="alert">{error}</p>}
         <Button variant="primary" size="md" onClick={fetchSeed} disabled={loading}>

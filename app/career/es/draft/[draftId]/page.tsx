@@ -2,12 +2,17 @@
 
 // PASSAI 就活版 — ES 作成中ドラフト エディタ（/career/es/draft/[draftId]）
 //
-// 未完成の作成状態（深掘りQ&A・整理メモ・執筆中本文）を careerEsDrafts に autosave し、
+// 未完成の作成状態（材料選択・深掘りQ&A・整理メモ・執筆中本文）を careerEsDrafts に autosave し、
 // 途中離脱・リロードから再開できるようにする。正式ログ（careerEsLogs）へは書かない。
-//   - deep: 深掘りQ&A（EsDeepDivePanel）→ 整理メモ → 本文執筆
+//   - deep: 材料選択（EsMaterialPickerPanel）→ 深掘りQ&A（EsDeepDivePanel）→ 整理メモ → 本文執筆
 //   - write: 本文執筆のみ
 //   - 「AI添削する」= 保存を確定 = 添削成功時に careerEsLog(v1) を作成し、draft を削除して [id] へ。
 //     添削失敗時は log を作らず draft を残す（進捗は失われない）。
+//
+// 材料選択フェーズ（V1）:
+//   設問に使えそうな既存 Career Data（活動整理・就活軸・基本情報・最新の自己分析）を
+//   client の純関数で列挙し、ユーザーが選んだものだけを knownFacts / missingAxes として
+//   深掘りへ渡す。**Career Data へは書き戻さない**（ES ローカルにのみ保存する）。
 // AI は本文を書かない。DB / 課金 / usage には接続しない（localStorage / Supabase mirror は best-effort）。
 
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -20,13 +25,30 @@ import { Textarea } from '@/components/ui/Textarea';
 import { loadEsDraft, saveEsDraft, deleteEsDraft } from '../../esDraftStorage';
 import { appendEsLog, createEsWorkspaceLog, loadEsLogById } from '../../esStorage';
 import { EsDeepDivePanel } from '../../components/EsDeepDivePanel';
+import { EsMaterialPickerPanel } from '../../components/EsMaterialPickerPanel';
 import { classifyEsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
+import {
+  buildEsKnownFacts,
+  buildEsMaterialCandidates,
+  buildEsMissingAxisKeys,
+  prefilterEsMaterialCandidates,
+} from '@/lib/careerEs/materialCandidates';
+// 材料候補の canonical source（localStorage）。読むだけで書き戻さない。
+import { loadActivityData } from '@/app/career/activity/activityStorage';
+import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
+import { loadBasicInfo } from '@/app/career/profile/profileStorage';
+import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/components/AuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 // P17-M1: ES 正式ログ化（新規作成）確定後の Personal Memory shadow-write（flag OFF/canary deny では no-op）。
 import { shadowWriteEsMemory } from '@/app/career/personalMemoryShadowWrite';
-import type { CareerEsDraft, CareerEsLog, CareerEsReview } from '@/types/careerEs';
+import type {
+  CareerEsDraft,
+  CareerEsDraftMaterials,
+  CareerEsLog,
+  CareerEsReview,
+} from '@/types/careerEs';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -96,11 +118,57 @@ export default function CareerEsDraftEditorPage() {
     if (draft) saveEsDraft(draft);
   }, [draft]);
 
+  // 材料選択: 決定を draft へ即時保存（none で通過した場合も decided:true で記録する）。
+  const handleMaterialsDecided = useCallback(
+    (materials: CareerEsDraftMaterials) => applyDraft({ materials }),
+    [applyDraft],
+  );
+
   // 深掘りQ&A: 進捗 autosave / 整理完了。
   const handleDeepTurns = useCallback((turns: EsTurn[]) => applyDraft({ deepTurns: turns }), [applyDraft]);
   const handleOrganized = useCallback(
     (turns: EsTurn[], memo: string[]) => applyDraft({ deepTurns: turns, memo, organized: true }),
     [applyDraft],
+  );
+
+  // ── 材料選択フェーズの導出（hooks はすべて early return より前で呼ぶ）──
+  const questionType = classifyEsQuestionType(draft?.question ?? '');
+  // 材料選択を出すのは deep モードで、まだ決めておらず、深掘りも始まっていないときだけ。
+  //   ★ materials を持たない旧 draft でも、深掘りが進行中なら選択画面へ戻さない（後方互換）。
+  const materialsPending =
+    !!draft &&
+    draft.mode === 'deep' &&
+    !draft.organized &&
+    !draft.materials?.decided &&
+    (draft.deepTurns?.length ?? 0) === 0;
+
+  // 候補の列挙は localStorage canonical から決定論で行う（読むだけ・書き戻さない）。
+  // 選択フェーズを表示するときだけ読む（不要な localStorage read をしない）。
+  const draftQuestion = draft?.question ?? '';
+  const materialCandidates = useMemo(
+    () =>
+      isMounted && materialsPending
+        ? prefilterEsMaterialCandidates(
+            buildEsMaterialCandidates({
+              activity: loadActivityData(),
+              values: loadCareerValues(),
+              profile: loadBasicInfo(),
+              selfAnalysisLogs: loadSelfAnalysisLogs(),
+            }),
+            classifyEsQuestionType(draftQuestion),
+          )
+        : [],
+    [isMounted, materialsPending, draftQuestion],
+  );
+
+  // 選択された材料 → 深掘りへ渡す既知事実・不足観点（選択していない候補は入らない）。
+  const selectedMaterials = draft?.materials?.selected;
+  const knownFacts = useMemo(() => buildEsKnownFacts(selectedMaterials), [selectedMaterials]);
+  const missingAxes = useMemo(
+    () => (selectedMaterials && selectedMaterials.length > 0
+      ? buildEsMissingAxisKeys(questionType, selectedMaterials)
+      : []),
+    [questionType, selectedMaterials],
   );
 
   // 破棄: draft を削除して ES トップへ（明示破棄のみ削除）。
@@ -142,7 +210,13 @@ export default function CareerEsDraftEditorPage() {
       const { review } = (await res.json()) as { review: CareerEsReview };
 
       // 添削成功 → ここで初めて正式ログ化する（保存確定）。
-      const hasDeep = (draft.deepTurns && draft.deepTurns.length > 0) || (draft.memo && draft.memo.length > 0);
+      // 選択材料（materials）も deepDive の一部として残す（この版がどの既存材料を前提に
+      // 書かれたかの traceability）。Career Data 側へは書き戻さない。
+      const selected = draft.materials?.selected ?? [];
+      const hasDeep =
+        (draft.deepTurns && draft.deepTurns.length > 0) ||
+        (draft.memo && draft.memo.length > 0) ||
+        selected.length > 0;
       const log: CareerEsLog = {
         ...createEsWorkspaceLog({
           mode: draft.mode,
@@ -153,7 +227,13 @@ export default function CareerEsDraftEditorPage() {
           jobType: draft.jobType,
           selectionType: draft.selectionType ?? null,
           body: draft.body ?? '',
-          deepDive: hasDeep ? { turns: draft.deepTurns ?? [], memo: draft.memo } : undefined,
+          deepDive: hasDeep
+            ? {
+                turns: draft.deepTurns ?? [],
+                memo: draft.memo,
+                ...(selected.length > 0 ? { materials: selected } : {}),
+              }
+            : undefined,
         }),
         review,
       };
@@ -217,8 +297,8 @@ export default function CareerEsDraftEditorPage() {
   }
 
   const isDeep = draft.mode === 'deep';
-  const deepPending = isDeep && !draft.organized;
-  const questionType = classifyEsQuestionType(draft.question);
+  // 材料選択 → 深掘りQ&A → 本文執筆 の 3 段（write モードは本文執筆のみ）。
+  const deepPending = isDeep && !draft.organized && !materialsPending;
   const body = draft.body ?? '';
   const overLimit = !!draft.charLimit && body.length > draft.charLimit;
 
@@ -245,14 +325,40 @@ export default function CareerEsDraftEditorPage() {
         </div>
       </Card>
 
-      {deepPending ? (
-        <EsDeepDivePanel
+      {materialsPending ? (
+        <EsMaterialPickerPanel
           question={draft.question}
           questionType={questionType}
-          initialTurns={draft.deepTurns ?? []}
-          onTurns={handleDeepTurns}
-          onOrganized={handleOrganized}
+          candidates={materialCandidates}
+          onDecided={handleMaterialsDecided}
         />
+      ) : deepPending ? (
+        <>
+          {/* 選択した材料（深掘り中も見えるようにする。AIはこれを既知として扱う）。 */}
+          {selectedMaterials && selectedMaterials.length > 0 && (
+            <Card variant="soft" padding="md" className="mb-4">
+              <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+                今回使う材料（AIは把握済み）
+              </p>
+              <ul className="list-disc pl-4 space-y-1">
+                {selectedMaterials.map((m) => (
+                  <li key={m.id} className="text-sm text-slate-700 leading-relaxed break-words">
+                    {m.label}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          <EsDeepDivePanel
+            question={draft.question}
+            questionType={questionType}
+            initialTurns={draft.deepTurns ?? []}
+            onTurns={handleDeepTurns}
+            onOrganized={handleOrganized}
+            knownFacts={knownFacts}
+            missingAxes={missingAxes}
+          />
+        </>
       ) : (
         <div
           className={

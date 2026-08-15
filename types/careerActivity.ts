@@ -127,6 +127,20 @@ export type PortfolioEntry = {
   learning: string; // 学んだこと
 };
 
+// ⑬ 趣味・特技（複数登録可能。1 項目 = 1 カード）
+// 「写真」「マラソン」「料理」のように独立した項目として持たせ、AI が 1 件ずつ扱えるようにする。
+export type HobbyEntry = {
+  id: string;
+  name: string; // 趣味・特技
+};
+
+// ⑭ 表彰・実績（複数登録可能。1 項目 = 1 カード）
+// 「全国大会3位」「学内ビジネスコンテスト優勝」のように 1 実績 = 1 カードで持たせる。
+export type AwardEntry = {
+  id: string;
+  title: string; // 表彰・実績
+};
+
 // ⑫ 語学
 export type LanguageLevel =
   | ''
@@ -166,7 +180,11 @@ export type AcademicsSection = {
   thesis: string; // 卒業研究・卒論（任意）
   memorableClass: string; // 印象に残った授業
   gpa: string; // GPA（任意）
-  academicAwards: string; // 成績・受賞歴（任意）
+  // 【旧】成績・受賞歴（任意）。⑭ awards（表彰・実績）と責務が重複するため UI からは削除した。
+  // ただし「GPA / 成績上位」と「表彰」が混在しうる自由記述のため awards へ機械変換はしない。
+  // 既存ユーザーのデータを失わせないよう保存・読み取り・AI コンテキストではそのまま維持する
+  // （legacy 読み取り互換。新規入力は ⑭ awards へ）。
+  academicAwards: string;
 };
 
 // ②' 学生時代に力を入れたこと（いわゆる「ガクチカ」。複数登録可能なカード）
@@ -234,8 +252,8 @@ export type CareerActivity = {
   certifications: CertificationEntry[]; // ⑩
   itSkills: ItSkillEntry[]; // ⑪
   languages: LanguageEntry[]; // ⑫
-  hobbies: string; // ⑬ 趣味・特技
-  awards: string; // ⑭ 表彰・実績
+  hobbies: HobbyEntry[]; // ⑬ 趣味・特技（複数登録可）
+  awards: AwardEntry[]; // ⑭ 表彰・実績（複数登録可）
   snsActivities: SnsEntry[]; // ⑮ SNS・情報発信経験（複数登録可）
   portfolios: PortfolioEntry[]; // ⑯ ポートフォリオ・制作物（複数登録可）
   lifeExperiences: LifeExperiencesSection; // ⑰
@@ -351,6 +369,14 @@ export function newLanguageEntry(): LanguageEntry {
   return { id: newActivityId(), language: '', level: '' };
 }
 
+export function newHobbyEntry(): HobbyEntry {
+  return { id: newActivityId(), name: '' };
+}
+
+export function newAwardEntry(): AwardEntry {
+  return { id: newActivityId(), title: '' };
+}
+
 export function newSnsEntry(): SnsEntry {
   return {
     id: newActivityId(),
@@ -413,8 +439,8 @@ export function emptyCareerActivity(): CareerActivity {
     certifications: [],
     itSkills: [],
     languages: [],
-    hobbies: '',
-    awards: '',
+    hobbies: [],
+    awards: [],
     snsActivities: [],
     portfolios: [],
     lifeExperiences: {
@@ -454,9 +480,9 @@ export function isCareerActivityEmpty(activity: CareerActivity): boolean {
   if (activity.languages.length > 0) return false;
   if (activity.snsActivities.length > 0) return false;
   if (activity.portfolios.length > 0) return false;
+  if (activity.hobbies.length > 0) return false;
+  if (activity.awards.length > 0) return false;
 
-  if (activity.hobbies.trim() !== '') return false;
-  if (activity.awards.trim() !== '') return false;
   if (activity.freeNote.trim() !== '') return false;
 
   return true;

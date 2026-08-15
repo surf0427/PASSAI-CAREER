@@ -154,9 +154,31 @@ canary 期間中は fallback safety のため bridge payload が残り続ける�
 
 ### INTENTIONALLY_CONTEXT_FREE な live route（purpose を持たない）
 
-`es/deep` / `es/organize` / `es-review` / GD 系 route / `self-analysis/job` は
-**career context を一切使わない**のが現在の product contract（静的 system prompt + その場の入力のみ）。
+`es/deep` / `es/organize` / `es/materials` / `es-review` / GD 系 route / `self-analysis/job` は
+**server 側で career context を組み立てない**のが現在の product contract。
 purpose enum を持たないため上表には現れない。
+
+★ ES 材料選択（V1・2026-08-15）による限定的な変更:
+`es/deep` / `es/organize` は、**ユーザーが画面で明示的に選択した既存 Career Data**を
+`knownFacts`（'ラベル: 値' の行）/ `missingAxes`（観点 key）として **request body から**受け取る。
+
+```text
+client（localStorage canonical）
+  → buildEsMaterialCandidates（純関数・決定論）
+  → ユーザーが選択
+  → knownFacts / missingAxes を request body へ
+  → es/deep・es/organize（bounded・normalize 済み）
+```
+
+したがって次はいずれも **変化していない**:
+
+- server の Layer 1 read: **なし**（`loadPurposeServerContext` を呼ばない）
+- purpose enum / registry / orchestrator: **不変**（`es_deep_dive` purpose は作っていない）
+- Source-Sync / canary gate: **対象外**（server が mirror を読まないため veto の必要がない）
+- 未指定時の prompt: **byte 一致**（`scripts/career-es-material-selection-qa.ts` の golden が固定）
+
+`es/materials`（関連度の順位付け）も同様に body の候補ラベルのみを見る。
+将来 server 側で Layer 1 を読む設計へ移す場合は、purpose 追加を伴う別 slice として Human decision を要する。
 
 ## 5.1.2 Source authority matrix
 
