@@ -22,6 +22,7 @@
  *   8. idempotency — revisionOf 無しは key 不変 / 更新ごとに key が分かれる
  *   9. mirror 往復 — row mapper と Source-Sync revision が lineage を保持する
  *  10. 過去 revision は Layer 1 に残り続ける（collapse は削除ではない）
+ *  11. ユーザー向け履歴モデル（自己分析ログ = lineage 1 件。revision は数えない）
  *
  * 使い方: npx tsx scripts/career-self-analysis-revision-qa.ts
  * 終了コード: 全 PASS → 0 / 1 件でも FAIL → 1。
@@ -36,6 +37,11 @@ import {
   parseSelfAnalysisLogId,
   selectSelfAnalysisLineage,
 } from '../lib/careerSelfAnalysis/revisionLineage';
+import {
+  buildSelfAnalysisEntries,
+  entrySummaryLabel,
+  findSelfAnalysisEntry,
+} from '../app/career/self-analysis/logEntries';
 import { buildSelfAnalysisPastSummaries } from '../lib/careerSelfAnalysis/pastLogSummary';
 import { buildSelfAnalysisMemorySection } from '../lib/careerMemory/persistence/rebuild';
 import { buildSelfAnalysisHistory } from '../lib/careerConsultation/historySnapshots';
@@ -423,6 +429,66 @@ check(
 check(
   '10b 更新は同じ client_id を上書きしない（別レコードとして insert される）',
   new Set(WITH_REVISIONS.map((l) => l.id)).size === WITH_REVISIONS.length,
+);
+
+// ── 11. ユーザー向け履歴モデル（自己分析ログ = lineage 1 件） ──────────
+// revision は「自己分析ログ」として数えず、各ログは current result のみを見せる。
+// UI（hub の件数 / ログ一覧 / 結果画面）はすべてこの派生を通る。
+const entriesNoRevision = buildSelfAnalysisEntries(NO_REVISION);
+const entriesWithRevisions = buildSelfAnalysisEntries(WITH_REVISIONS);
+
+check('11a A — 初回生成のみなら 1 件（1 lineage = 1 ログ）', buildSelfAnalysisEntries([log(ROOT_A, '2026-08-01T00:00:00.000Z', 'A1')]).length === 1);
+check(
+  '11b B — 情報を追加して更新しても件数は 1 件のまま',
+  buildSelfAnalysisEntries(
+    selectSelfAnalysisLineage(WITH_REVISIONS, ROOT_A),
+  ).length === 1,
+);
+check(
+  '11c F — もう一度新しく自己分析すると 2 件になる',
+  entriesWithRevisions.length === 2 && entriesNoRevision.length === 2,
+);
+check(
+  '11d D/G — 各ログの current は最新 revision の結果',
+  entriesWithRevisions[0].current.result.summary === 'A3 の全体所感' &&
+    entriesWithRevisions[1].current.result.summary === 'B1 の全体所感',
+);
+check(
+  '11e 作成日時は初回生成（revision 1）の時刻',
+  entriesWithRevisions[0].createdAt === '2026-08-01T00:00:00.000Z',
+);
+check(
+  '11f 最終更新日時は最新 revision の時刻（更新済みのときだけ）',
+  entriesWithRevisions[0].updatedAt === '2026-08-04T00:00:00.000Z' &&
+    entriesWithRevisions[1].updatedAt === null,
+);
+check(
+  '11g 更新前の結果はユーザー向け一覧に別ログとして現れない',
+  !entriesWithRevisions.some((e) =>
+    ['A1 の全体所感', 'A2 の全体所感'].includes(e.current.result.summary),
+  ),
+);
+check(
+  '11h rootId で 1 件を選べる（一覧 → 結果画面の受け渡し）',
+  findSelfAnalysisEntry(entriesWithRevisions, ROOT_A)?.current.result.summary ===
+    'A3 の全体所感' &&
+    findSelfAnalysisEntry(entriesWithRevisions, 'unknown') === null &&
+    findSelfAnalysisEntry(entriesWithRevisions, null) === null,
+);
+check(
+  '11i H — 派生は非破壊（内部 revision lineage は 4 件のまま辿れる）',
+  WITH_REVISIONS.length === 4 && selectSelfAnalysisLineage(WITH_REVISIONS, ROOT_A).length === 3,
+);
+check('11j 空 / null でも落ちない', (() => {
+  return buildSelfAnalysisEntries([]).length === 0 && buildSelfAnalysisEntries(null).length === 0;
+})());
+check(
+  '11k 一覧の識別ラベルは要約（空なら fallback 表示）',
+  entrySummaryLabel(entriesWithRevisions[0]) === 'A3 の全体所感' &&
+    entrySummaryLabel({
+      ...entriesWithRevisions[0],
+      current: { ...entriesWithRevisions[0].current, result: { ...result('X'), summary: '  ' } },
+    }) === '（要約なし）',
 );
 
 console.log(`\n結果: PASS ${passes} / FAIL ${failures}`);

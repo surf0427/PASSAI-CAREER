@@ -9,6 +9,7 @@ import { LinkButton } from '@/components/ui/LinkButton';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import type { CareerProfile } from '@/types/careerProfile';
+import { isCareerCompanyMatchingUiEnabled } from '@/lib/careerMatchingGate/flag';
 
 // ── 機能カードの定義 ──────────────────────────────────────────────
 // 受験版 app/home/page.tsx の FEATURES をそのまま踏襲（title / description）。
@@ -71,6 +72,35 @@ const FEATURES = [
   },
 ] as const;
 
+// ── おすすめの進め方 ─────────────────────────────────────────────
+// Home 上部に固定表示する推奨順。順番そのものが情報なので並び替えないこと。
+// href は上記 FEATURES と同じ既存ページのみを参照する（新規 route は作らない）。
+const RECOMMENDED_STEPS = [
+  { key: 'activity',         label: '活動整理',   href: '/career/activity' },
+  { key: 'values',           label: '就活軸整理', href: '/career/values' },
+  { key: 'self-analysis',    label: '自己分析',   href: '/career/self-analysis' },
+  { key: 'company-matching', label: '企業マッチング', href: '/career/matching' },
+  { key: 'company-research', label: '企業研究',   href: '/career/company-research' },
+  { key: 'es',               label: 'ES',         href: '/career/es' },
+  { key: 'interview',        label: '面接',       href: '/career/interview' },
+  { key: 'presentation',     label: 'プレゼン',   href: '/career/presentation' },
+  { key: 'gd',               label: 'GD',         href: '/career/gd' },
+] as const;
+
+// ── 企業マッチング公開ゲート ──────────────────────────────────────
+// 初回リリースでは企業マッチングを出さない（flag OFF が既定）。
+// 「準備中」バッジや Coming Soon は出さず、**定義ごと配列から落として存在しない機能として見せる**。
+// 番号付き RECOMMENDED_STEPS は filter 後の index で採番されるため連番が飛ばず、
+// FEATURES は grid なので 1 枚減ってもレイアウトは崩れない。
+// build-time env なので module scope で 1 回だけ評価する（描画ごとの再計算は不要）。
+const MATCHING_UI_ENABLED = isCareerCompanyMatchingUiEnabled();
+const VISIBLE_FEATURES = FEATURES.filter(
+  (f) => MATCHING_UI_ENABLED || f.key !== 'company-matching',
+);
+const VISIBLE_RECOMMENDED_STEPS = RECOMMENDED_STEPS.filter(
+  (s) => MATCHING_UI_ENABLED || s.key !== 'company-matching',
+);
+
 // ── ページ本体 ───────────────────────────────────────────────────
 
 // SSR-stable mount flag（受験版 app/home/page.tsx と同形パターン）。
@@ -131,132 +161,35 @@ export default function CareerHomePage() {
         </Link>
       </div>
 
-      {/* 就活の司令塔AI（最上位導線）。入力済みデータを横断し、現在地と次アクションを提案する。
-          STEP-CONSULT-05: 相談AIをホーム上部へ昇格。深リンク（?starter=）で相談テーマも渡す。 */}
-      <Card
-        variant="default"
-        padding="md"
-        className="mb-8 ring-1 ring-blue-100 bg-blue-50/40"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-brand-600 mb-1">就活の司令塔AI</p>
-            <h2 className="text-lg font-bold text-gray-800 mb-1.5">迷ったら、まずここで相談</h2>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              自己分析・ES・面接・GD・企業研究・マッチングを横断して、今の現在地と次にやることを整理します。
-              入力済みのデータをもとに、あなたに合った相談テーマも提案します。
-            </p>
-          </div>
-          <div className="shrink-0 sm:self-center">
-            <LinkButton href="/career/consultation" variant="primary" size="md">
-              相談する →
-            </LinkButton>
-          </div>
-        </div>
-        {/* データ状態に沿った入口（深リンク）。押すと相談テーマがプリフィルされる。 */}
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            { label: '何から始めるか整理', starter: 'priority' },
-            { label: '就活軸と企業のズレ確認', starter: 'axis' },
-            { label: '受ける企業の優先順位', starter: 'matching' },
-          ].map((chip) => (
-            <Link
-              key={chip.starter}
-              href={`/career/consultation?starter=${chip.starter}`}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-50 transition-colors"
-            >
-              {chip.label}
-            </Link>
-          ))}
-        </div>
-      </Card>
-
-      {/* 内定獲得までの進捗 — 就活フロー全体の道筋を示すステップカード（固定表示）。
-          既存の Card / 配色トークンに合わせ、横並び（wrap）のステッパーで表示する。 */}
+      {/* おすすめの進め方 — 旧「内定獲得までの進捗」ステッパーを置き換えたセクション。
+          初めて使うユーザーが「何からやればいいのか」を一目で把握できるよう、
+          RECOMMENDED_STEPS の順番どおりに番号付きで並べる。
+          レイアウト: mobile 1 列 → sm 2 列 → lg 3 列（9 項目を 3 段に折り返す）。 */}
       <Card variant="soft" padding="md" className="mb-8">
-        <p className="text-xs font-semibold text-brand-600 mb-3">内定獲得までの進捗</p>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-          {['プロフィール', '活動整理', '就活軸整理', '自己分析', 'ES', '面接', '内定'].map(
-            (step, i, arr) => (
-              <span key={step} className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-full px-3 py-1">
-                  {step}
-                </span>
-                {i < arr.length - 1 && <span className="text-gray-400 text-sm">→</span>}
-              </span>
-            ),
-          )}
-        </div>
-      </Card>
-
-      {/* AIからの分析コメント（就活版・固定文）＋ 自己分析への CTA。
-          受験版の診断フィードバックは参照せず、就活版の固定メッセージを表示する。 */}
-      <Card variant="default" padding="md" className="mb-8">
-        <p className="text-xs font-semibold text-brand-600 mb-2">AIからの分析コメント</p>
-        <div className="space-y-3 text-sm text-gray-700 leading-relaxed mb-4">
-          <p>
-            今回の内容からは、<br />
-            主体的に行動し経験から学びを得るタイプという特徴が見えます。
-          </p>
-          <p>
-            これまでの活動経験は、<br />
-            ESや面接で活用できる強みになる可能性があります。
-          </p>
-          <p>
-            今後は自己分析や就活軸整理を進めることで、<br />
-            企業選びや志望動機の精度をさらに高められます。
-          </p>
-        </div>
-        <LinkButton href="/career/self-analysis" variant="primary" size="md">
-          自己分析を始める →
-        </LinkButton>
-      </Card>
-
-      {/* キャリア適性診断。強み・価値観から向いている業界・職種の傾向を分析する導線。
-          既存の企業マッチング（/career/matching）へ接続する。 */}
-      <Card variant="soft" padding="md" className="mb-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-gray-800 mb-1.5">キャリア適性診断</h2>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              あなたの強みや価値観から、向いている業界・職種の傾向を分析します。
-            </p>
-          </div>
-          <div className="shrink-0 sm:self-center">
-            <LinkButton href="/career/matching" variant="primary" size="md">
-              キャリア適性診断を受ける
-            </LinkButton>
-          </div>
-        </div>
-      </Card>
-
-      {/* 今日やるべきこと（就活版）。各ステップを既存の機能ページへの導線として固定表示する。 */}
-      <Card variant="soft" padding="md" className="mb-8">
-        <p className="text-xs font-semibold text-brand-600 mb-2">今日やるべきこと</p>
-        <ul className="space-y-2">
-          {[
-            { label: '基本情報を入力する', href: '/career/profile' },
-            { label: '活動整理を完了する', href: '/career/activity' },
-            { label: '就活軸を整理する', href: '/career/values' },
-            { label: '自己分析を実施する', href: '/career/self-analysis' },
-            { label: 'おすすめ企業を確認する', href: '/career/matching' },
-          ].map((task) => (
-            <li key={task.label}>
+        <p className="text-xs font-semibold text-brand-600 mb-1">おすすめの進め方</p>
+        <p className="text-sm text-gray-600 leading-relaxed mb-4">
+          この順番で進めるのがおすすめです。
+        </p>
+        <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {VISIBLE_RECOMMENDED_STEPS.map((step, i) => (
+            <li key={step.key}>
               <Link
-                href={task.href}
-                className="flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 transition-colors"
+                href={step.href}
+                className="flex items-center gap-3 rounded-xl border border-blue-100 bg-white px-3 py-2.5 hover:border-brand-200 hover:bg-blue-50/60 transition-colors"
               >
-                <span className="text-gray-400">□</span>
-                {task.label}
+                <span className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold">
+                  {i + 1}
+                </span>
+                <span className="text-sm font-medium text-gray-800">{step.label}</span>
               </Link>
             </li>
           ))}
-        </ul>
+        </ol>
       </Card>
 
       {/* 機能カード一覧（受験版のメイン機能をそのまま並べる。Phase2 では全て準備中） */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {FEATURES.map((feature) => {
+        {VISIBLE_FEATURES.map((feature) => {
           // 就活版で実ページが存在する機能だけ href を持つ。href があれば遷移可能カード、
           // 無ければ「準備中（disabled）」のまま表示する。
           const href = 'href' in feature ? feature.href : undefined;

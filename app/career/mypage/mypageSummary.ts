@@ -38,6 +38,21 @@ import {
 } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
+import { isCareerCompanyMatchingUiEnabled } from '@/lib/careerMatchingGate/flag';
+
+// ── 企業マッチング公開ゲート ──────────────────────────────────────────
+// 初回リリースでは企業マッチングを出さない（flag OFF が既定）。
+//
+// ★ データは消さない。`loadMatchingLogs()` はこれまでどおり読み、過去に企業マッチングを
+//   実行済みのユーザーの localStorage / Supabase 上の結果は一切書き換えない。
+//   OFF の間ゲートするのは「/career/matching へ遷移させる導線」だけ:
+//     1. 進捗サマリー行（件数 + link）
+//     2. 最近のアウトプット（href が matching route）
+//     3. 次アクション CTA「企業マッチングを試す」（＝新規実行への誘導）
+//   achievements.matching は tile として描画されていない集計値なので実数のまま残す
+//   （導線を持たず露出もしないため、flag ON 復帰時に数字が飛ばない）。
+//   isEmpty も実データ基準のまま（履歴を持つユーザーを空扱いに退行させない）。
+const MATCHING_UI_ENABLED = isCareerCompanyMatchingUiEnabled();
 
 // ── 公開型 ───────────────────────────────────────────────────────────
 
@@ -209,14 +224,19 @@ export function buildMypageSummary(): MypageSummary {
       latestOf(selfAnalysisLogs.map((l) => l.createdAt)),
       false,
     ),
-    logItem(
-      'matching',
-      '企業マッチング',
-      '/career/matching',
-      matchingLogs.length,
-      latestOf(matchingLogs.map((l) => l.createdAt)),
-      false,
-    ),
+    // 企業マッチング: flag OFF の間は行ごと出さない（0 件表示でも link が残るため）。
+    ...(MATCHING_UI_ENABLED
+      ? [
+          logItem(
+            'matching',
+            '企業マッチング',
+            '/career/matching',
+            matchingLogs.length,
+            latestOf(matchingLogs.map((l) => l.createdAt)),
+            false,
+          ),
+        ]
+      : []),
     logItem(
       'es',
       'ES作成',
@@ -399,14 +419,18 @@ export function buildMypageSummary(): MypageSummary {
       href: '/career/self-analysis',
       description: snippet(l.result.careerDirection || l.result.summary),
     })),
-    ...matchingLogs.map((l) => ({
-      id: `matching-${l.id}`,
-      title: '企業マッチング結果',
-      type: 'マッチング',
-      date: l.createdAt,
-      href: '/career/matching',
-      description: snippet(l.userInput),
-    })),
+    // 企業マッチング結果: href が matching route なので flag OFF の間は履歴に出さない
+    //（保存済みデータ自体は残る。flag ON で従来どおり再表示される）。
+    ...(MATCHING_UI_ENABLED
+      ? matchingLogs.map((l) => ({
+          id: `matching-${l.id}`,
+          title: '企業マッチング結果',
+          type: 'マッチング',
+          date: l.createdAt,
+          href: '/career/matching',
+          description: snippet(l.userInput),
+        }))
+      : []),
     ...consultationThreads
       .filter((t) => t.messages.length > 0)
       .map((t) => ({
@@ -431,6 +455,7 @@ export function buildMypageSummary(): MypageSummary {
     valuesFilled,
     selfAnalysis: selfAnalysisLogs.length,
     matching: matchingLogs.length,
+    matchingEnabled: MATCHING_UI_ENABLED,
     companyResearch: companyResearchLogs.length,
     es: esLogs.length,
     interview: interviewResults.length,
@@ -511,6 +536,8 @@ type NextActionCtx = {
   valuesFilled: boolean;
   selfAnalysis: number;
   matching: number;
+  /** 企業マッチング導線の公開可否。false なら matching CTA を候補に入れない。 */
+  matchingEnabled: boolean;
   companyResearch: number;
   es: number;
   interview: number;
@@ -563,17 +590,24 @@ function buildNextActions(ctx: NextActionCtx): NextAction[] {
         cta: '自己分析へ',
       },
     },
-    {
-      done: ctx.matching > 0,
-      action: {
-        key: 'matching',
-        title: '企業マッチングを試す',
-        description:
-          'これまでの入力をもとに、相性の良い企業の傾向を確認できます。',
-        href: '/career/matching',
-        cta: 'マッチングへ',
-      },
-    },
+    // 企業マッチングは初回リリース対象外。OFF の間は候補ごと外す。
+    // ★ done:false のまま残すと「未達」として CTA が前面に出てしまうため、
+    //   件数ではなく flag で候補から除外するのが正しい（done:true 扱いにもしない）。
+    ...(ctx.matchingEnabled
+      ? [
+          {
+            done: ctx.matching > 0,
+            action: {
+              key: 'matching' as const,
+              title: '企業マッチングを試す',
+              description:
+                'これまでの入力をもとに、相性の良い企業の傾向を確認できます。',
+              href: '/career/matching',
+              cta: 'マッチングへ',
+            },
+          },
+        ]
+      : []),
     {
       done: ctx.companyResearch > 0,
       action: {

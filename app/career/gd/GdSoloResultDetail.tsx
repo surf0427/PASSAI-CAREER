@@ -8,6 +8,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Card } from '@/components/ui/Card';
+import { isCareerCompanyMatchingUiEnabled } from '@/lib/careerMatchingGate/flag';
 import {
   GD_ROLE_LABELS,
   GD_FORMAT_LABELS,
@@ -86,12 +87,17 @@ export function GdSoloResultDetail({
         >
           この結果を就活相談AIで相談する →
         </Link>
-        <Link
-          href={`/career/matching?gdResultId=${encodeURIComponent(result.id)}`}
-          className="inline-flex flex-1 items-center justify-center gap-1 text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 ring-1 ring-indigo-200 rounded-lg px-4 py-2 transition-colors"
-        >
-          この結果をマッチングに活かす →
-        </Link>
+        {/* 企業マッチングは初回リリース対象外（flag OFF が既定）。OFF の間は CTA ごと出さない。
+            相談AI 導線は flex-1 なので、1 本になっても行幅いっぱいに収まりレイアウトは崩れない。
+            GD 本体の結果表示・保存・お気に入りには一切影響しない。 */}
+        {isCareerCompanyMatchingUiEnabled() && (
+          <Link
+            href={`/career/matching?gdResultId=${encodeURIComponent(result.id)}`}
+            className="inline-flex flex-1 items-center justify-center gap-1 text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 ring-1 ring-indigo-200 rounded-lg px-4 py-2 transition-colors"
+          >
+            この結果をマッチングに活かす →
+          </Link>
+        )}
       </div>
 
       <Section title="テーマ">

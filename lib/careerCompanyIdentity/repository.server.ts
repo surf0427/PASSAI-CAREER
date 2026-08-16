@@ -18,7 +18,14 @@ import 'server-only';
 import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 import { normalizeCompanyName } from '@/lib/careerCompanyKnowledge/identity';
+import {
+  decideRegistration,
+  selectAttachableAliases,
+  type AliasOccupancy,
+  type CompanyIdentityMatch,
+} from './registration';
 import { CAREER_COMPANY_IDENTITY_TABLES } from '@/types/careerCompanyIdentity';
+import type { CompanyRegisterResult } from '@/types/careerCompanyIdentity';
 import type { CompanyMasterRecord } from '@/types/careerCompanyKnowledge';
 import { devWarn } from '@/lib/devLog';
 
@@ -176,30 +183,165 @@ export async function findCompanyById(companyId: string): Promise<CompanyMasterR
   }
 }
 
-/** 同一 normalized name の既存企業を service_role で探す（登録の重複防止に使う）。 */
-async function findExactByNormalizedName(
+/**
+ * normalized token に **完全一致**する企業を集める（登録の重複防止の中核）。
+ *
+ * ★ Phase 1: `master.normalized_name` **だけでなく** `aliases.normalized_alias` も見る。
+ *   これが無いと `任天堂`（既存）に対して `Nintendo` が別企業として作られる。
+ *
+ * 戻り値 null = 取得失敗（呼び出し側は「登録しない」へ倒す。重複を作るより何もしない方が安全）。
+ */
+async function findMatchesByNormalizedToken(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: any,
-  normalizedName: string,
-): Promise<{ company_id: string; display_name: string | null } | null> {
-  const { data, error } = await admin
-    .from(MASTER)
-    .select('company_id, display_name')
-    .eq('normalized_name', normalizedName)
-    .limit(1);
-  if (error) {
-    devWarn('[companyIdentity] exact lookup error', error);
+  token: string,
+): Promise<CompanyIdentityMatch[] | null> {
+  const [byName, byAlias] = await Promise.all([
+    admin.from(MASTER).select('company_id, display_name').eq('normalized_name', token),
+    admin.from(ALIASES).select('company_id').eq('normalized_alias', token),
+  ]);
+
+  if (byName.error) {
+    devWarn('[companyIdentity] exact lookup error', byName.error);
     return null;
   }
-  const rows = (data ?? []) as Array<{ company_id: string; display_name: string | null }>;
-  return rows[0] ?? null;
+  // ★ alias 側が引けなかったら「重複なし」と誤判定しうるため、失敗は失敗として扱う。
+  if (byAlias.error) {
+    devWarn('[companyIdentity] alias lookup error', byAlias.error);
+    return null;
+  }
+
+  const matches = new Map<string, CompanyIdentityMatch>();
+  for (const row of (byName.data ?? []) as Array<{
+    company_id: string;
+    display_name: string | null;
+  }>) {
+    if (typeof row?.company_id !== 'string') continue;
+    matches.set(row.company_id, {
+      companyId: row.company_id,
+      displayName: typeof row.display_name === 'string' ? row.display_name : '',
+    });
+  }
+
+  // alias 経由でだけ当たった企業は表示名を持たないので、まとめて引き直す。
+  const aliasOnlyIds = Array.from(
+    new Set(
+      ((byAlias.data ?? []) as Array<{ company_id: string }>)
+        .map((r) => r?.company_id)
+        .filter((id): id is string => typeof id === 'string' && !matches.has(id)),
+    ),
+  );
+  if (aliasOnlyIds.length > 0) {
+    const { data, error } = await admin
+      .from(MASTER)
+      .select('company_id, display_name')
+      .in('company_id', aliasOnlyIds);
+    if (error) {
+      devWarn('[companyIdentity] alias owner lookup error', error);
+      return null;
+    }
+    for (const row of (data ?? []) as Array<{ company_id: string; display_name: string | null }>) {
+      if (typeof row?.company_id !== 'string') continue;
+      matches.set(row.company_id, {
+        companyId: row.company_id,
+        displayName: typeof row.display_name === 'string' ? row.display_name : '',
+      });
+    }
+  }
+
+  return Array.from(matches.values());
 }
 
-export type RegisterCompanyResult = {
-  companyId: string;
-  displayName: string;
-  created: boolean;
-};
+/**
+ * 指定 token 群を既に占有している企業を引く（alias 保存前の衝突判定用）。
+ *
+ * master.normalized_name と aliases.normalized_alias の **両方**を見る。
+ * 失敗時は null（呼び出し側は alias を保存しない＝安全側）。
+ */
+async function loadAliasOccupancy(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  tokens: readonly string[],
+): Promise<AliasOccupancy | null> {
+  if (tokens.length === 0) return new Map<string, string>();
+  const list = tokens as string[];
+
+  const [byName, byAlias] = await Promise.all([
+    admin.from(MASTER).select('company_id, normalized_name').in('normalized_name', list),
+    admin.from(ALIASES).select('company_id, normalized_alias').in('normalized_alias', list),
+  ]);
+  if (byName.error || byAlias.error) {
+    devWarn('[companyIdentity] occupancy lookup error', byName.error ?? byAlias.error);
+    return null;
+  }
+
+  const occupancy = new Map<string, string>();
+  for (const row of (byName.data ?? []) as Array<{
+    company_id: string;
+    normalized_name: string | null;
+  }>) {
+    if (typeof row?.normalized_name === 'string' && typeof row.company_id === 'string') {
+      if (!occupancy.has(row.normalized_name)) occupancy.set(row.normalized_name, row.company_id);
+    }
+  }
+  for (const row of (byAlias.data ?? []) as Array<{
+    company_id: string;
+    normalized_alias: string | null;
+  }>) {
+    if (typeof row?.normalized_alias === 'string' && typeof row.company_id === 'string') {
+      if (!occupancy.has(row.normalized_alias)) occupancy.set(row.normalized_alias, row.company_id);
+    }
+  }
+  return occupancy;
+}
+
+/**
+ * 別表記を company へ保存する（best-effort）。
+ *
+ * ★ 他社が占有している token は **黙って落とす**（奪わない・merge しない・登録自体は成功させる）。
+ * ★ alias は補助情報なので、保存に失敗しても企業登録の成否には影響させない。
+ */
+async function attachAliases(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  companyId: string,
+  ownNormalizedName: string,
+  rawAliases: readonly string[],
+): Promise<void> {
+  if (!Array.isArray(rawAliases) || rawAliases.length === 0) return;
+
+  // 衝突判定に使う token を先に作る（server 側で正規化。client 申告は使わない）。
+  const tokens = Array.from(
+    new Set(
+      rawAliases
+        .filter((a): a is string => typeof a === 'string')
+        .map((a) => normalizeCompanyName(a))
+        .filter((t) => t !== ''),
+    ),
+  );
+  if (tokens.length === 0) return;
+
+  const occupancy = await loadAliasOccupancy(admin, tokens);
+  if (occupancy === null) return; // 判定できないなら保存しない（安全側）。
+
+  const attachable = selectAttachableAliases({
+    companyId,
+    ownNormalizedName,
+    rawAliases,
+    occupancy,
+  });
+  if (attachable.length === 0) return;
+
+  const { error } = await admin.from(ALIASES).insert(
+    attachable.map((a) => ({
+      company_id: companyId,
+      alias: a.alias,
+      normalized_alias: a.normalizedAlias,
+      alias_kind: 'alias',
+    })),
+  );
+  if (error) devWarn('[companyIdentity] alias insert error', error);
+}
 
 /**
  * 企業を登録する（server-only / service_role）。
@@ -212,7 +354,7 @@ export type RegisterCompanyResult = {
 export async function registerCompany(
   displayName: string,
   aliases: readonly string[] = [],
-): Promise<RegisterCompanyResult | null> {
+): Promise<CompanyRegisterResult | null> {
   const name = typeof displayName === 'string' ? displayName.trim() : '';
   if (name === '') return null;
   const normalizedName = normalizeCompanyName(name);
@@ -221,18 +363,29 @@ export async function registerCompany(
   try {
     const admin = getCareerServiceRoleSupabaseClient();
 
-    const existing = await findExactByNormalizedName(admin, normalizedName);
-    if (existing) {
+    // ── 既存判定（★ alias 込み）───────────────────────────────────
+    const matches = await findMatchesByNormalizedToken(admin, normalizedName);
+    if (matches === null) return null; // 判定できない → 何もしない（重複を作らない）。
+
+    const decision = decideRegistration(matches);
+
+    // ★ 複数社に一致 → 確定しない。ユーザーへ候補を返す（自動 merge / 自動選択の禁止）。
+    if (decision.kind === 'ambiguous') {
+      return { status: 'ambiguous', candidates: decision.candidates };
+    }
+
+    // 既存企業に寄せる（新規作成しない）。入力された別表記は、衝突しなければ追加する。
+    if (decision.kind === 'existing') {
+      await attachAliases(admin, decision.companyId, normalizedName, aliases);
       return {
-        companyId: existing.company_id,
-        displayName:
-          typeof existing.display_name === 'string' && existing.display_name !== ''
-            ? existing.display_name
-            : name,
+        status: 'registered',
+        companyId: decision.companyId,
+        displayName: decision.displayName !== '' ? decision.displayName : name,
         created: false,
       };
     }
 
+    // ── 新規作成 ─────────────────────────────────────────────────
     const companyId = `cmp_${crypto.randomUUID()}`;
     const { error } = await admin.from(MASTER).insert({
       company_id: companyId,
@@ -240,42 +393,28 @@ export async function registerCompany(
       normalized_name: normalizedName,
     });
     if (error) {
-      // 競合（同時登録）は既存を引き直して返す。二重作成しない。
-      const retry = await findExactByNormalizedName(admin, normalizedName);
-      if (retry) {
-        return {
-          companyId: retry.company_id,
-          displayName:
-            typeof retry.display_name === 'string' && retry.display_name !== ''
-              ? retry.display_name
-              : name,
-          created: false,
-        };
+      // 競合（同時登録）は既存を引き直して返す。★ 二重作成へは絶対に倒さない。
+      const retry = await findMatchesByNormalizedToken(admin, normalizedName);
+      if (retry !== null) {
+        const retryDecision = decideRegistration(retry);
+        if (retryDecision.kind === 'ambiguous') {
+          return { status: 'ambiguous', candidates: retryDecision.candidates };
+        }
+        if (retryDecision.kind === 'existing') {
+          return {
+            status: 'registered',
+            companyId: retryDecision.companyId,
+            displayName: retryDecision.displayName !== '' ? retryDecision.displayName : name,
+            created: false,
+          };
+        }
       }
       devWarn('[companyIdentity] insert error', error);
       return null;
     }
 
-    const aliasRows = Array.from(
-      new Map(
-        aliases
-          .filter((a): a is string => typeof a === 'string' && a.trim() !== '')
-          .map((a) => [normalizeCompanyName(a), a.trim()] as const)
-          .filter(([norm]) => norm !== '' && norm !== normalizedName),
-      ),
-    ).map(([norm, alias]) => ({
-      company_id: companyId,
-      alias,
-      normalized_alias: norm,
-      alias_kind: 'alias',
-    }));
-    if (aliasRows.length > 0) {
-      const { error: aliasError } = await admin.from(ALIASES).insert(aliasRows);
-      // alias は補助情報。失敗しても企業登録自体は成立させる。
-      if (aliasError) devWarn('[companyIdentity] alias insert error', aliasError);
-    }
-
-    return { companyId, displayName: name, created: true };
+    await attachAliases(admin, companyId, normalizedName, aliases);
+    return { status: 'registered', companyId, displayName: name, created: true };
   } catch (err) {
     devWarn('[companyIdentity] register threw', err);
     return null;

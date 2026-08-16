@@ -48,7 +48,15 @@ export async function resolveCompanyByName(
   return postJson<CompanyResolveResult>('/api/career/company/resolve', { name: trimmed });
 }
 
-/** 企業を登録する。既存企業があれば created:false で既存 ID が返る。 */
+/**
+ * 企業を登録する。
+ *
+ * - 既存企業（**別表記 alias 経由の一致を含む**）があれば `created:false` で既存 ID が返る。
+ * - 複数社に一致した場合は `status:'ambiguous'`。★ 呼び出し側は候補を提示すること
+ *   （勝手に 1 社目を選んだら invariant 違反）。
+ *
+ * `aliases` は任意。未指定でも従来どおり動く（free-text fallback を壊さない）。
+ */
 export async function registerCompanyByName(
   displayName: string,
   aliases: readonly string[] = [],
@@ -58,7 +66,8 @@ export async function registerCompanyByName(
     aliases,
   });
   // 登録直後は必ず表示キャッシュへ反映（詳細ページで名前が出るように）。
-  if (result.available && result.data) {
+  // ★ ambiguous は「まだどの企業か決まっていない」ので**キャッシュへ書かない**。
+  if (result.available && result.data?.status === 'registered') {
     touchCompanyInDirectory(result.data.companyId, result.data.displayName);
   }
   return result;

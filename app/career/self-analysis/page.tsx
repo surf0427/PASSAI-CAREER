@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { loadSelfAnalysisLogs } from './selfAnalysisStorage';
-import { collapseSelfAnalysisRevisions } from '@/lib/careerSelfAnalysis/revisionLineage';
+import { buildSelfAnalysisEntries } from './logEntries';
 
 // マウント前 false / マウント後 true。受験版 app/self-analysis/page.tsx と同形パターン。
 // SSR では localStorage を読まず status=null（stat を `—`）にし、hydration 後に再 render。
@@ -14,11 +14,9 @@ const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
 type Status = {
-  /** 保存済みの自己分析の件数（更新した分は 1 件として数える）。 */
+  /** 保存済みの自己分析ログ数。更新（revision）は件数に数えない。 */
   analysisCount: number;
-  /** 更新も含めた保存回数（履歴の総数）。 */
-  savedCount: number;
-  /** 最新の生成・更新日時（ISO）。 */
+  /** 最新ログの current result の生成・更新日時（ISO）。 */
   latestAt: string | null;
 };
 
@@ -40,15 +38,16 @@ export default function SelfAnalysisEntryPage() {
 
   const status = useMemo<Status | null>(() => {
     if (!isMounted) return null;
-    const logs = loadSelfAnalysisLogs();
+    // entries は「ユーザーから見える自己分析ログ」単位（更新分は 1 件にまとまる）。
+    const entries = buildSelfAnalysisEntries(loadSelfAnalysisLogs());
     return {
-      analysisCount: collapseSelfAnalysisRevisions(logs).length,
-      savedCount: logs.length,
-      latestAt: logs.length > 0 ? (logs[0]?.createdAt ?? null) : null,
+      analysisCount: entries.length,
+      // 先頭 = 最新ログ。その current result の日時（更新していれば更新日時）。
+      latestAt: entries[0]?.current.createdAt ?? null,
     };
   }, [isMounted]);
 
-  const hasLogs = !!status && status.savedCount > 0;
+  const hasLogs = !!status && status.analysisCount > 0;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -77,8 +76,8 @@ export default function SelfAnalysisEntryPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <ModeCard
             title="過去の結果を見る"
-            description="これまでに作成した自己分析を確認します。"
-            href="/career/self-analysis/result"
+            description="これまでに作成した自己分析を一覧から選んで確認します。"
+            href="/career/self-analysis/logs"
             disabled={status !== null && !hasLogs}
             badge={status !== null && !hasLogs ? 'まだありません' : undefined}
           />
@@ -95,7 +94,7 @@ export default function SelfAnalysisEntryPage() {
       <p className="mt-6 text-xs text-slate-500 leading-relaxed">
         自己分析は1回で完成させるものではありません。新しく自己分析を行うか、過去の結果に情報を足して
         更新することで、別の観点から活動・価値観を深掘りし、ES・面接・企業選びに使える自己理解を
-        育てていきます。更新しても、過去の結果は履歴として残ります。
+        育てていきます。更新した場合、その自己分析の結果は最新の内容に置き換わります。
       </p>
 
       {/* ホームへの戻り導線。受験版は /home だが就活版は /career/home。 */}
@@ -113,12 +112,10 @@ export default function SelfAnalysisEntryPage() {
 
 const EM_DASH = '—';
 
+// 数えるのは自己分析ログの件数のみ。更新（revision）は件数に含めない。
 function displayCount(status: Status | null): string {
   if (!status || status.analysisCount === 0) return EM_DASH;
-  // 更新で版が増えている場合だけ総保存件数も併記する。
-  const suffix =
-    status.savedCount > status.analysisCount ? `（履歴 ${status.savedCount}件）` : '';
-  return `${status.analysisCount}件${suffix}`;
+  return `${status.analysisCount}件`;
 }
 
 function displayLatestAt(status: Status | null): string {

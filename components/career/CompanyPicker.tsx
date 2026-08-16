@@ -17,6 +17,14 @@
  *   4. free-text を編集したら companyId を **外す**（ID と名前の乖離を作らない）。
  *
  * ★ 企業判定ロジックは持たない（server の Resolver → 既存 identity.ts へ委譲）。
+ *
+ * ── 初回リリース（Company Identity 延期中）──────────────────────────────
+ * server flag `CAREER_COMPANY_IDENTITY_ENABLED` は OFF 固定のため、resolve / register /
+ * lookup は常に `available:false` を返す。その状態で「登録済み企業とひも付ける」ボタンを
+ * 出しても、押した先で「利用できません」と言うだけの行き止まりになる。
+ * そこで本 component は `IDENTITY_UI_ENABLED`（下記）で Identity 系 UI を静的に伏せ、
+ * ユーザーには **企業名を入力するだけの普通のフォーム**として見せる。
+ * 実装・props・handler は削除せず温存してあり、再開は定数 1 つの切り替えで済む。
  */
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
@@ -51,6 +59,24 @@ type Props = {
   /** 入力欄の下に出す補足文（機能ごとの文言）。 */
   hint?: string;
 };
+
+/**
+ * Company Identity 系 UI（ひも付け CTA / 候補選択 / 企業登録 / 最近使った企業 /
+ * 「利用できません」文言）を表示してよいか。
+ *
+ * ★ 初回リリースは **false 固定**。理由:
+ *   - 権限を持つのは server flag `CAREER_COMPANY_IDENTITY_ENABLED`（server-only）であり、
+ *     client からは読めない。UI 都合だけで `NEXT_PUBLIC_*` を増やすと flag が二重管理になり、
+ *     「UI だけ ON / server は OFF」という行き止まり状態を作れてしまう。
+ *   - 初回リリースでは OFF 固定と決まっているため、build 時定数で十分（env を増やさない）。
+ *
+ * 再開手順: 本定数を true にし、あわせて server の `CAREER_COMPANY_IDENTITY_ENABLED=true` を
+ * 設定する。**server 側が最終権限**なので、ここだけ true にしても登録・解決は成立しない
+ * （その場合は従来どおり `unavailable` 表示に落ちるだけで、free-text は壊れない）。
+ *
+ * boolean 注釈は意図的: リテラル型に潰さず、伏せてある分岐も型検査の対象に保つ。
+ */
+const IDENTITY_UI_ENABLED: boolean = false;
 
 // マウント前 false / マウント後 true（他ページと同じ SSR 安全パターン）。
 const subscribeMount = () => () => {};
@@ -146,6 +172,11 @@ export function CompanyPicker({
       setSearch({ kind: 'unavailable' });
       return;
     }
+    // ★ 登録時にも複数社へ一致しうる（別表記 alias の衝突）。自動確定せず候補を出す。
+    if (res.data.status === 'ambiguous') {
+      setSearch({ kind: 'ambiguous', candidates: res.data.candidates });
+      return;
+    }
     selectCompany(res.data.companyId, res.data.displayName);
   }
 
@@ -155,7 +186,10 @@ export function CompanyPicker({
         {label} {required && <span className="text-rose-500">*</span>}
       </label>
 
-      {linked ? (
+      {/* 「登録済み企業」バッジは Identity UX そのものなので初回リリースでは出さない。
+          ★ value.companyId は落とさない（過去データはそのまま親 state に残り、ユーザーが
+            企業名を編集しない限り従来どおり保存される）。表示だけを free-text に寄せる。 */}
+      {linked && IDENTITY_UI_ENABLED ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl bg-blue-50 ring-1 ring-blue-200 px-3 py-2.5">
           <span className="text-sm font-semibold text-blue-900 break-words">
             {value.companyName}
@@ -172,7 +206,9 @@ export function CompanyPicker({
         </div>
       ) : (
         <>
-          {/* ★ free-text fallback。どんな状況でもここから入力できる。 */}
+          {/* ★ free-text fallback。どんな状況でもここから入力できる。
+              初回リリースではこれが唯一の入力手段になる（IME 中に resolve / normalize /
+              API request が走る経路は下記が伏せられている間そもそも存在しない）。 */}
           <Input
             value={value.companyName}
             onChange={(e) => handleFreeTextChange(e.target.value)}
@@ -180,70 +216,53 @@ export function CompanyPicker({
             disabled={disabled}
           />
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSearch}
-              disabled={disabled || value.companyName.trim() === '' || search.kind === 'searching'}
-              className="text-xs font-semibold text-blue-700 ring-1 ring-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 transition-colors"
-            >
-              {search.kind === 'searching' ? '検索中…' : '登録済み企業とひも付ける'}
-            </button>
-            <span className="text-[11px] text-slate-400">
-              ひも付けなくてもこのまま進めます
-            </span>
-          </div>
-
-          {recent.length > 0 && (
-            <div className="mt-2.5">
-              <p className="text-[11px] font-bold text-slate-500 tracking-wide mb-1.5">
-                最近使った企業
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {recent.map((e) => (
-                  <button
-                    key={e.companyId}
-                    type="button"
-                    onClick={() => selectCompany(e.companyId, e.displayName)}
-                    disabled={disabled || e.displayName.trim() === ''}
-                    className="rounded-full bg-white ring-1 ring-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
-                  >
-                    {e.displayName || '（名称不明）'}
-                  </button>
-                ))}
+          {/* ── ここから下は Company Identity 専用 UI（初回リリースでは非表示）──────
+              ひも付け CTA / 最近使った企業 / 候補選択 / 企業登録 / 利用不可メッセージ。
+              削除せず定数で伏せるだけに留める（再開時にそのまま復帰させるため）。 */}
+          {IDENTITY_UI_ENABLED && (
+            <>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSearch}
+                  disabled={disabled || value.companyName.trim() === '' || search.kind === 'searching'}
+                  className="text-xs font-semibold text-blue-700 ring-1 ring-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 transition-colors"
+                >
+                  {search.kind === 'searching' ? '検索中…' : '登録済み企業とひも付ける'}
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  ひも付けなくてもこのまま進めます
+                </span>
               </div>
-            </div>
-          )}
 
-          {search.kind === 'ambiguous' && (
-            <div className="mt-2.5 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3 py-2.5">
-              <p className="text-xs font-bold text-amber-900 mb-2">
-                候補が複数あります。どれか選んでください。
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {search.candidates.map((c) => (
-                  <button
-                    key={c.companyId}
-                    type="button"
-                    onClick={() => selectCompany(c.companyId, c.displayName)}
-                    className="text-left text-sm text-slate-800 rounded-lg bg-white ring-1 ring-slate-200 px-3 py-1.5 hover:bg-slate-50 transition-colors"
-                  >
-                    {c.displayName}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {search.kind === 'unresolved' && (
-            <div className="mt-2.5 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5">
-              {search.suggestions.length > 0 && (
-                <>
-                  <p className="text-xs font-bold text-slate-700 mb-2">
-                    近い企業が見つかりました（違う場合は下から登録できます）
+              {recent.length > 0 && (
+                <div className="mt-2.5">
+                  <p className="text-[11px] font-bold text-slate-500 tracking-wide mb-1.5">
+                    最近使った企業
                   </p>
-                  <div className="flex flex-col gap-1.5 mb-2.5">
-                    {search.suggestions.map((c) => (
+                  <div className="flex flex-wrap gap-1.5">
+                    {recent.map((e) => (
+                      <button
+                        key={e.companyId}
+                        type="button"
+                        onClick={() => selectCompany(e.companyId, e.displayName)}
+                        disabled={disabled || e.displayName.trim() === ''}
+                        className="rounded-full bg-white ring-1 ring-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+                      >
+                        {e.displayName || '（名称不明）'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {search.kind === 'ambiguous' && (
+                <div className="mt-2.5 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3 py-2.5">
+                  <p className="text-xs font-bold text-amber-900 mb-2">
+                    候補が複数あります。どれか選んでください。
+                  </p>
+                  <div className="flex flex-col gap-1.5">
+                    {search.candidates.map((c) => (
                       <button
                         key={c.companyId}
                         type="button"
@@ -254,24 +273,48 @@ export function CompanyPicker({
                       </button>
                     ))}
                   </div>
-                </>
+                </div>
               )}
-              <button
-                type="button"
-                onClick={() => handleRegister(search.name)}
-                disabled={registering}
-                className="text-xs font-semibold text-white bg-blue-600 rounded-lg px-3 py-1.5 hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {registering ? '登録中…' : `「${search.name}」として登録する`}
-              </button>
-            </div>
-          )}
 
-          {search.kind === 'unavailable' && (
-            <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
-              企業の登録機能は現在利用できません（ログインが必要な場合があります）。
-              このまま企業名を入力して進められます。
-            </p>
+              {search.kind === 'unresolved' && (
+                <div className="mt-2.5 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5">
+                  {search.suggestions.length > 0 && (
+                    <>
+                      <p className="text-xs font-bold text-slate-700 mb-2">
+                        近い企業が見つかりました（違う場合は下から登録できます）
+                      </p>
+                      <div className="flex flex-col gap-1.5 mb-2.5">
+                        {search.suggestions.map((c) => (
+                          <button
+                            key={c.companyId}
+                            type="button"
+                            onClick={() => selectCompany(c.companyId, c.displayName)}
+                            className="text-left text-sm text-slate-800 rounded-lg bg-white ring-1 ring-slate-200 px-3 py-1.5 hover:bg-slate-50 transition-colors"
+                          >
+                            {c.displayName}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleRegister(search.name)}
+                    disabled={registering}
+                    className="text-xs font-semibold text-white bg-blue-600 rounded-lg px-3 py-1.5 hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {registering ? '登録中…' : `「${search.name}」として登録する`}
+                  </button>
+                </div>
+              )}
+
+              {search.kind === 'unavailable' && (
+                <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
+                  企業の登録機能は現在利用できません（ログインが必要な場合があります）。
+                  このまま企業名を入力して進められます。
+                </p>
+              )}
+            </>
           )}
         </>
       )}

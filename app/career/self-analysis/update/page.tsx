@@ -27,10 +27,10 @@ import { loadSelfAnalysisLogs } from '../selfAnalysisStorage';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import {
-  collapseSelfAnalysisRevisions,
   latestSelfAnalysisRevision,
   parseSelfAnalysisLogId,
 } from '@/lib/careerSelfAnalysis/revisionLineage';
+import { buildSelfAnalysisEntries, entrySummaryLabel } from '../logEntries';
 import { saveCompletedSelfAnalysis } from '../finalizeSummary';
 import { useSelfAnalysisGeneration } from '../useSelfAnalysisGeneration';
 import {
@@ -140,11 +140,9 @@ export default function CareerSelfAnalysisUpdatePage() {
     [isMounted],
   );
 
-  // 更新できるのは各 lineage の最新版（古い版を分岐させない＝履歴が枝分かれしない）。
-  const entries = useMemo(
-    () => (logs ? collapseSelfAnalysisRevisions(logs) : []),
-    [logs],
-  );
+  // 更新対象は「自己分析ログ」単位。更新すると常にその current result（最新版）を土台にする
+  // （古い版を分岐させない＝履歴が枝分かれしない）。
+  const entries = useMemo(() => buildSelfAnalysisEntries(logs), [logs]);
 
   // member のみ draft を持つ（anonymous は同期経路で resume が無いため不要）。
   const draftScope = userId ? `${userId}${PENDING_SCOPE}` : '';
@@ -158,16 +156,15 @@ export default function CareerSelfAnalysisUpdatePage() {
   );
   const draftEntryId = useMemo(() => {
     if (!draft) return null;
-    return (
-      entries.find((log) => parseSelfAnalysisLogId(log.id).rootId === draft.rootId)?.id ?? null
-    );
+    return entries.find((entry) => entry.rootId === draft.rootId)?.current.id ?? null;
   }, [entries, draft]);
 
   const selectedId = selectedIdInput ?? draftEntryId;
   const note = noteInput ?? draft?.note ?? '';
 
+  // 以降の処理（revisionOf / 保存 / prompt）は従来どおり「更新の土台になるログ」を扱う。
   const selected = useMemo(
-    () => entries.find((log) => log.id === selectedId) ?? null,
+    () => entries.find((entry) => entry.current.id === selectedId)?.current ?? null,
     [entries, selectedId],
   );
 
@@ -294,9 +291,9 @@ export default function CareerSelfAnalysisUpdatePage() {
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-xs text-slate-600 leading-relaxed">
-          選んだ自己分析を土台に、追加・修正したい内容を反映した新しい版を作成します。
+          選んだ自己分析を土台に、追加・修正したい内容を反映して結果を更新します。
           ゼロから作り直すのではなく、既存の結論を引き継いで更新します。
-          更新前の結果は履歴として残るので、後から見返すことができます。
+          更新すると、その自己分析の結果は最新の内容に置き換わります（新しい自己分析は増えません）。
         </p>
       </Card>
 
@@ -324,14 +321,13 @@ export default function CareerSelfAnalysisUpdatePage() {
               更新する自己分析を選ぶ
             </p>
             <ul className="space-y-2">
-              {entries.map((log) => {
-                const { revision } = parseSelfAnalysisLogId(log.id);
-                const active = log.id === selectedId;
+              {entries.map((entry) => {
+                const active = entry.current.id === selectedId;
                 return (
-                  <li key={log.id}>
+                  <li key={entry.rootId}>
                     <button
                       type="button"
-                      onClick={() => setSelectedId(log.id)}
+                      onClick={() => setSelectedId(entry.current.id)}
                       disabled={busy}
                       aria-pressed={active}
                       className={`block w-full text-left rounded-xl border px-3 py-2 transition-colors disabled:opacity-60 ${
@@ -340,18 +336,12 @@ export default function CareerSelfAnalysisUpdatePage() {
                           : 'border-slate-200 bg-white hover:bg-slate-50'
                       }`}
                     >
-                      <span className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-semibold text-slate-700">
-                          {formatDate(log.createdAt)}
-                        </span>
-                        {revision > 1 && (
-                          <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold tracking-wider text-blue-700">
-                            版{revision}
-                          </span>
-                        )}
+                      <span className="block text-xs font-semibold text-slate-700 mb-0.5">
+                        作成日時: {formatDate(entry.createdAt)}
+                        {entry.updatedAt && `　/　最終更新: ${formatDate(entry.updatedAt)}`}
                       </span>
                       <span className="block text-xs text-slate-500 line-clamp-2">
-                        {str(log.result?.summary) || '（要約なし）'}
+                        {entrySummaryLabel(entry)}
                       </span>
                     </button>
                   </li>
@@ -427,7 +417,7 @@ export default function CareerSelfAnalysisUpdatePage() {
                   disabled={!canRun || busy || trimmedNote === ''}
                   className="w-full sm:w-auto"
                 >
-                  {busy ? '更新中…' : `更新して版${nextRevision}を作成する →`}
+                  {busy ? '更新中…' : '更新する →'}
                 </Button>
               </div>
             </Card>

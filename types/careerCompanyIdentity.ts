@@ -98,12 +98,26 @@ export type CompanyIdentityEnvelope<T> =
   | { available: true; data: T }
   | { available: false; reason: CompanyIdentityDisabledReason };
 
-/** 登録結果。同一 normalized 企業が既にあれば `created:false` で既存 ID を返す。 */
-export type CompanyRegisterResult = {
-  companyId: CompanyCanonicalId;
-  displayName: string;
-  created: boolean;
-};
+/**
+ * 登録結果（Phase 1 で union 化）。
+ *
+ * - `registered` : 新規作成（`created:true`）または既存企業へ寄せた（`created:false`）。
+ *   同一 normalized 企業が既にあれば **新規作成せず** `created:false` で既存 ID を返す。
+ *   ★ この「既存」判定は `normalized_name` だけでなく **alias も含む**（Phase 1）。
+ * - `ambiguous`  : 入力名（または別表記）が **複数社**に一致した。★ 勝手に確定しない。
+ *   UI は候補を提示してユーザーに選ばせること（自動選択したら invariant 違反）。
+ *
+ * `ambiguous` は「同じ alias を持つ別法人」が存在しうるため必要になる
+ * （例: ブランド名・グループ名・地域法人。DB 制約で一律禁止すると誤 merge 相当になる）。
+ */
+export type CompanyRegisterResult =
+  | {
+      status: 'registered';
+      companyId: CompanyCanonicalId;
+      displayName: string;
+      created: boolean;
+    }
+  | { status: 'ambiguous'; candidates: readonly CompanyResolveCandidate[] };
 
 // ── ローカル表示キャッシュ ───────────────────────────────────────────
 /**

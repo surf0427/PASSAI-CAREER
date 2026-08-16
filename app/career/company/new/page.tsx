@@ -69,6 +69,11 @@ export default function CareerCompanyNewPage() {
       setPhase({ kind: 'unavailable' });
       return;
     }
+    // ★ 登録時にも複数社へ一致しうる（別表記 alias の衝突）。自動確定せず候補を出す。
+    if (res.data.status === 'ambiguous') {
+      setPhase({ kind: 'ambiguous', candidates: res.data.candidates });
+      return;
+    }
     router.push(`/career/company/${encodeURIComponent(res.data.companyId)}`);
   }
 

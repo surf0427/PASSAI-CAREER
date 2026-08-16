@@ -50,6 +50,7 @@ import {
 } from '@/lib/careerGd/context';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal, isAbortError } from '@/lib/aiTimeout';
+import { isCareerCompanyMatchingEnabled } from '@/lib/careerMatchingGate/flags.server';
 // P7-B: matching-only ES latest summary。ES block の型・truncate・render を matching-local に集約。
 import { renderMatchingEsSummary, type MatchingEsSummary } from '@/lib/careerMemory/matchingEs';
 
@@ -254,6 +255,16 @@ function normalizeCompany(raw: RawAiCompany, measuredReadiness: ScoreSignal[]): 
 }
 
 export async function POST(req: Request) {
+  // ── 公開ゲート（最上流）─────────────────────────────────────────────
+  // 企業マッチングは初回リリース対象外。server flag OFF（既定）ならここで打ち切る。
+  // ★ body parse すら行わない位置に置くこと。以降には Claude 呼び出し・prompt 構築・
+  //   context 組み立てが続くため、この return が AI コストを 0 に保つ唯一の砦になる。
+  //   （本 route は DB / Supabase / Stripe 非接続なので、write 副作用も元より発生しない。）
+  //   404 は page 側 notFound() と揃えた「存在しない」表明。OFF 中は error 文言も出さない。
+  if (!isCareerCompanyMatchingEnabled()) {
+    return Response.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   let body: unknown;
   try {
     body = await req.json();
