@@ -319,6 +319,10 @@ function CompanyResearchDoInner() {
         ),
         body: JSON.stringify({
           companyName: companyName.trim(),
+          // Company Data Spine の公式情報を引くための **hint**（server は権威情報として
+          //   信用せず、見つからなければ企業名から自前で resolve する）。
+          //   Identity UI は伏せたままなので通常は undefined（欠損が正常）。
+          companyId,
           industry: industry.trim(),
           interestLevel,
           verifiedResearchText: verifiedResearchText.trim(),

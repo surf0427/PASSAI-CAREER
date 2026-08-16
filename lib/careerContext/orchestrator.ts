@@ -42,6 +42,13 @@ import {
 //   （Orchestrator は純関数のまま・DB read を内部に持ち込まない）。section 無しなら出力は従来と完全互換。
 import { renderPersonalMemoryForPurpose } from '@/lib/careerMemory/personalMemoryPromptContext';
 import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
+// Company Prefetch: Company Data Spine の **公式情報**（出典 URL + 取得日付き）を
+//   purpose 別に render する純関数。read（I/O）は route 側の server loader が担い、
+//   本層へは読み出し結果（optional）だけを渡す（Orchestrator は純関数のまま）。
+//   ★ ユーザー本人の企業研究メモ・AI 派生要約とは **別 block**（renderer 側で分離を担保）。
+//   未指定 / data 無しなら出力は '' ＝ 従来 prompt と byte 互換。
+import { renderCompanyOfficialForPurpose } from '@/lib/careerContextRenderers/companyOfficialContext';
+import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 
 // P6-C: profile:minimal 通電時に prompt から落とす構造化 PII フィールド（自由記述内の
 //   PII pattern（notes 等）は対象外＝baseline のまま。P6-C pilot は matching のみ minimal）。
@@ -66,6 +73,15 @@ export type CareerContextExtras = {
   //   purpose 別に本層が選択・render・budget enforce する。未指定 / 空なら personalMemoryContext は ''（従来互換）。
   //   ★ ユーザー由来の参考情報であり信頼済み instruction ではない（renderer が injection 境界を付ける）。
   personalMemory?: readonly CareerPersonalMemorySection[];
+  /**
+   * Company Prefetch: Company Data Spine の公式情報（read 済み結果）。
+   *
+   * ★ これは **企業の一次情報**であり、ユーザー由来の参考情報ではない
+   *   （personalMemory / crossFeature とは扱いが違う。renderer が別 block に分ける）。
+   * 未指定 / unavailable / disabled のときは companyOfficialContext が '' になり、
+   * prompt は従来と byte 互換になる。
+   */
+  company?: CompanyOfficialReadResult;
 };
 
 export type CareerPurposeContext = {
@@ -82,6 +98,14 @@ export type CareerPurposeContext = {
   //   extras.personalMemory が無い / 空 / 対象外 purpose では ''（Memory 無しの prompt を従来と完全互換に保つ）。
   //   route は base / crossFeature とは別に、低優先の参考情報としてこの block を prompt へ結合する。
   personalMemoryContext: string;
+  /**
+   * Company Data Spine 由来の **公式情報** block（出典 URL + 取得日付き）。
+   *
+   * extras.company が無い / data を持たない status のときは ''（従来 prompt と byte 互換）。
+   * route は base / crossFeature / personalMemory とは **別ブロック**として結合すること
+   * （公式事実・本人メモ・AI 派生を混ぜないため）。
+   */
+  companyOfficialContext: string;
   // 適用された purpose policy（宣言。実際の section 削減は P3-C 以降）。
   policy: CareerContextPolicy;
   // 観測用: base context の概算文字数。
@@ -150,6 +174,10 @@ export function buildCareerContextForPurpose(
     extras?.personalMemory ?? null,
   ).block;
 
+  // Company Prefetch: 公式情報 block（purpose allowlist は renderer 側が持つ）。
+  //   extras.company 未指定 / unavailable / disabled では '' ＝ 従来 byte 互換。
+  const companyOfficialContext = renderCompanyOfficialForPurpose(purpose, extras?.company).text;
+
   const estimatedChars = systemPrompt.length;
   const isOverPolicyBudget = estimatedChars > policy.maxContextChars;
   return {
@@ -157,6 +185,7 @@ export function buildCareerContextForPurpose(
     systemPrompt,
     crossFeatureContext,
     personalMemoryContext,
+    companyOfficialContext,
     policy,
     estimatedChars,
     isOverPolicyBudget,

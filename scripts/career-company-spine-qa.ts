@@ -639,7 +639,14 @@ void (async () => {
   );
 
   // ══════════════════════════════════════════════════════════════════
-  console.log('[G] Scope guard（R7〜R9 未実装）');
+  // [G] contract guard（旧「R7〜R9 を実装していないこと」の absence guard を **意図的に反転**）
+  //
+  // ★ 反転の理由（削除ではない）:
+  //   G-1〜G-4 は Company Prefetch を実装するまで「まだ作っていないこと」を固定していた。
+  //   Company Prefetch の実装により前提が満たされたため、同じ番号を
+  //   **「作ったものが契約どおりであること」**の guard へ書き換える。
+  //   guard を消すと、実装が規約から外れたときに気づけなくなる。
+  console.log('[G] Contract guard（Company Prefetch 実装後の契約固定）');
 
   const spineFiles = [
     ...walk(join(ROOT, 'lib/careerCompanyIdentity')),
@@ -649,43 +656,129 @@ void (async () => {
   ];
   const spineSrc = spineFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
 
-  check(
-    'G-1 Official Sourced Facts の table / 型を実装していない（R7 scope 外）',
-    !spineSrc.includes('career_company_official_facts') &&
-      !spineSrc.includes('OfficialSourcedFact') &&
-      !existsSync(join(ROOT, 'types/careerCompanyOfficial.ts')),
-  );
+  // ── G-1（旧: Official Facts を実装していない）→ 実装が契約どおりか ──
   {
-    // R7 の本体リスクは「server が任意の外部 URL を取りに行く」こと。
-    // server 側（route handler / *.server.ts）に outbound fetch が無いことを固定する。
-    // ★ client の companyClient.ts が自前 API を fetch するのは対象外（外部取得ではない）。
-    const serverSide = [
-      ...walk(join(ROOT, 'app/api/career/company')),
-      ...walk(join(ROOT, 'lib/careerCompanyIdentity')),
-    ].filter((f) => f.endsWith('route.ts') || f.endsWith('.server.ts'));
-    const fetchers = serverSide.filter((f) => /\bfetch\s*\(/.test(readFileSync(f, 'utf8')));
+    const types = read(join(ROOT, 'types/careerCompanyOfficial.ts'));
     check(
-      'G-2a server 側に outbound fetch が無い（URL 取得は R7 scope 外）',
-      fetchers.length === 0,
-      fetchers.map((f) => f.replace(ROOT + '/', '')).join(', '),
+      'G-1a Official Fact の型契約が存在する（予約済みの命名を使用）',
+      existsSync(join(ROOT, 'types/careerCompanyOfficial.ts')) &&
+        types.includes('OfficialCompanyFact') &&
+        types.includes('OfficialCompanySource') &&
+        types.includes('CompanyFactGroup'),
     );
     check(
-      'G-2b HTML→text 変換を実装していない（R7 scope 外）',
-      !spineSrc.includes('htmlToText') && !spineSrc.includes('stripHtml'),
+      'G-1b DDL が存在し、fact.source_id が NOT NULL（出典なき事実を作れない）',
+      (() => {
+        const sql = read(join(ROOT, 'supabase/career_company_official_facts_apply.sql'));
+        return (
+          sql.includes('CREATE TABLE IF NOT EXISTS public.career_company_official_facts') &&
+          /source_id\s+uuid\s+NOT NULL/.test(sql)
+        );
+      })(),
+    );
+    check(
+      'G-1c AI 生成物は facts と別 table（career_company_derived）',
+      read(join(ROOT, 'supabase/career_company_official_facts_apply.sql')).includes(
+        'CREATE TABLE IF NOT EXISTS public.career_company_derived',
+      ),
+    );
+    check(
+      'G-1d Identity の spine コードは facts table を直接触らない（読み書きは専用 module 経由）',
+      !spineSrc.includes("from('career_company_official_facts')"),
     );
   }
-  check(
-    'G-3 Company Context の prompt injection を実装していない（R8/R9 scope 外）',
-    !existsSync(join(ROOT, 'lib/careerCompanySelector')) &&
-      !existsSync(join(ROOT, 'lib/careerContextRenderers/companyOfficialContext.ts')),
-  );
-  check(
-    'G-4 Orchestrator に company extras を足していない（R8/R9 scope 外）',
-    !/company\??:/.test(
-      read(join(ROOT, 'lib/careerContext/orchestrator.ts')).split('CareerContextExtras')[1]?.slice(0, 900) ??
-        '',
-    ),
-  );
+
+  // ── G-2（旧: outbound fetch が無い）→ **safeFetch 以外の outbound が無い** ──
+  {
+    // 企業 enrichment に関わる全 server code。
+    const enrichmentFiles = [
+      ...walk(join(ROOT, 'lib/careerCompanyPrefetch')),
+      ...walk(join(ROOT, 'lib/careerCompanyOfficial')),
+      ...walk(join(ROOT, 'app/api/career/company')),
+      ...walk(join(ROOT, 'lib/careerCompanyIdentity')),
+    ].filter((f) => f.endsWith('.ts'));
+
+    // safeFetch 本体だけが素の fetch( を書いてよい。
+    const guardFile = join(ROOT, 'lib/careerCompanyFetch/safeFetch.server.ts');
+    const offenders = enrichmentFiles.filter((f) => {
+      if (f === guardFile) return false;
+      const src = readFileSync(f, 'utf8');
+      // `fetchImpl` / `deps.fetchImpl` / `safeFetch(` は許可。素の `fetch(` のみ検出する。
+      return /(^|[^.\w])fetch\s*\(/.test(
+        src
+          .split('\n')
+          // 型注釈（typeof fetch）と JSDoc は対象外。
+          .filter((line) => !line.trim().startsWith('*') && !line.includes('typeof fetch'))
+          .join('\n'),
+      );
+    });
+    check(
+      'G-2a 企業 enrichment の outbound は safeFetch のみ（素の fetch を書かない）',
+      offenders.length === 0,
+      offenders.map((f) => f.replace(ROOT + '/', '')).join(', '),
+    );
+    check(
+      'G-2b safeFetch が SSRF guard の必須要素を備える',
+      (() => {
+        const src = read(guardFile);
+        return (
+          src.includes('guardUrl') &&
+          src.includes('assertPublicHost') &&
+          src.includes("redirect: 'manual'") &&
+          src.includes('isAllowedContentType') &&
+          src.includes('readCappedText') &&
+          src.includes('AbortSignal.timeout')
+        );
+      })(),
+    );
+    check(
+      'G-2c HTML→text は専用 pure module に閉じている',
+      existsSync(join(ROOT, 'lib/careerCompanyPrefetch/htmlText.ts')) &&
+        !spineSrc.includes('htmlToText'),
+    );
+  }
+
+  // ── G-3（旧: prompt injection を実装していない）→ renderer が分離契約を守るか ──
+  {
+    const rendererPath = join(ROOT, 'lib/careerContextRenderers/companyOfficialContext.ts');
+    const renderer = read(rendererPath);
+    check(
+      'G-3a Company Official renderer が存在する（予約済みの命名を使用）',
+      existsSync(rendererPath) && renderer.includes('renderCompanyOfficialForPurpose'),
+    );
+    check(
+      'G-3b renderer は公式情報を「公式」と明示し、出典 URL と取得日を必ず載せる',
+      renderer.includes('【公式情報') && renderer.includes('出典:') && renderer.includes('toDateLabel'),
+    );
+    check(
+      'G-3c renderer は data を持たない status で必ず空（負の証拠を prompt に書かない）',
+      renderer.includes('hasCompanyOfficialData') && renderer.includes('return EMPTY'),
+    );
+    check(
+      'G-3d renderer は purpose allowlist を持つ（他 purpose へ投入しない）',
+      renderer.includes('COMPANY_OFFICIAL_PURPOSES'),
+    );
+  }
+
+  // ── G-4（旧: orchestrator に company extras が無い）→ 追加が契約どおりか ──
+  {
+    const orchestrator = read(join(ROOT, 'lib/careerContext/orchestrator.ts'));
+    const extrasBlock = orchestrator.split('export type CareerContextExtras')[1]?.slice(0, 1600) ?? '';
+    check(
+      'G-4a Orchestrator の extras に company が入っている',
+      /company\?:\s*CompanyOfficialReadResult/.test(extrasBlock),
+    );
+    check(
+      'G-4b Orchestrator は companyOfficialContext を **別 field** で返す（他 block と混ぜない）',
+      orchestrator.includes('companyOfficialContext') &&
+        orchestrator.includes('renderCompanyOfficialForPurpose'),
+    );
+    check(
+      'G-4c Orchestrator は純関数のまま（read / I/O を内部に持ち込んでいない）',
+      !orchestrator.includes('loadCompanyOfficialContext') &&
+        !orchestrator.includes("from '@/lib/careerCompanyOfficial/readRepository.server'"),
+    );
+  }
   check(
     'G-5 ES の CONTEXT_FREE 契約を壊していない（company を材料候補へ足していない）',
     !read(join(ROOT, 'lib/careerEs/materialCandidates.ts')).includes('companyId') &&

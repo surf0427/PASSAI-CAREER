@@ -50,6 +50,10 @@ import {
   normalizeSyncOutcome,
 } from '@/lib/careerDataSpineCanary/observation';
 import { recordCanaryObservation } from '@/lib/careerDataSpineCanary/counters.server';
+// Company Prefetch: Company Data Spine の公式情報を読む（flag OFF / 未 provision では I/O ゼロ・fail-open）。
+import { loadCompanyOfficialContext } from '@/lib/careerCompanyOfficial/readRepository.server';
+// T1 trigger: 企業名が server まで届くこの地点で prefetch を起動する（client 変更ゼロ・fire & forget）。
+import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
 
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -254,6 +258,9 @@ export async function POST(req: Request) {
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     companyName?: string;
+    // ★ client 申告の companyId は **権威情報として信用しない**。読み出しの hint として
+    //   のみ使い、見つからなければ企業名から server が resolve する。
+    companyId?: string;
     industry?: string;
     interestLevel?: unknown;
     verifiedResearchText?: string;
@@ -282,6 +289,21 @@ export async function POST(req: Request) {
   const industry = str(b.industry);
   const interest = interestLabel(b.interestLevel);
   const sources = str(b.sources);
+
+  // ── Company Data Spine（公式情報）───────────────────────────────────
+  // Phase 2: 「企業研究を開いた時に既にある情報から始める」経路。
+  //   flag OFF / DDL 未適用 / 未ログイン / 企業未解決 では data を持たない status が返り、
+  //   下の prompt 結合で '' になる（＝ 従来 prompt と byte 互換・fail-open）。
+  const companyOfficial = await loadCompanyOfficialContext({
+    companyId: str(b.companyId) || null,
+    companyName,
+    nowIso: new Date().toISOString(),
+  });
+
+  // T1 trigger: 企業名は既に server へ来ている。次回以降のために prefetch を起動しておく
+  //   （after() 登録のみ・本 request の応答時間に影響しない・失敗しても添削は続行）。
+  //   同一企業への重複 trigger は company-scoped idempotency が畳む。
+  triggerCompanyPrefetch(companyName, req);
 
   // Batch 2（`D-S6`）: base に加えて selfAnalysis / matching も kind 単位で server / bridge を選ぶ。
   //   これで本 route の request-body bridge は **すべて** server 化候補になった。
@@ -334,12 +356,19 @@ export async function POST(req: Request) {
   //   委譲のため出力は現行と同一。添削対象の verifiedResearchText 等は user メッセージ側で不変。
   const orchestrated = buildCareerContextForPurpose('company_research_review', context, {
     personalMemory,
+    company: companyOfficial,
   });
 
   const systemPrompt = [
     RESEARCHER_PERSONA,
     // P3-C: 同一 system 内の feature instruction 二重 append を削除（純粋な重複除去）。
     orchestrated.systemPrompt,
+    // Company Prefetch: Company Data Spine 由来の **公式情報**（出典 URL + 取得日付き）。
+    //   ★ 下の「ユーザー自身の企業研究テキスト」（user message 側）とも、
+    //     Personal Memory（ユーザー由来の参考情報）とも **別ブロック**にする。
+    //     公式事実 / 本人メモ / AI 派生を混ぜないことが本機能の中核契約。
+    //   data が無い（flag OFF / 未 provision / 企業未解決）ときは '' ＝ 従来 prompt と byte 一致。
+    orchestrated.companyOfficialContext,
     selfAnalysisBlock ? `# 直近の自己分析結果\n${selfAnalysisBlock}` : '',
     matchingBlock ? `# 直近の企業マッチング結果\n${matchingBlock}` : '',
     // P17-M1: Personal Memory 参考 block（低優先・ユーザー由来の参考情報）。空なら filter で除去＝従来互換。

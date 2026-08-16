@@ -34,6 +34,7 @@ import {
   touchCompanyInDirectory,
 } from '@/app/career/company/companyDirectory';
 import {
+  notifyCompanyIntent,
   registerCompanyByName,
   resolveCompanyByName,
 } from '@/app/career/company/companyClient';
@@ -140,6 +141,25 @@ export function CompanyPicker({
     onChange({ companyName: next });
   }
 
+  /**
+   * Company Prefetch の内部 trigger（**UI は何も変わらない**）。
+   *
+   * なぜ onChange ではなく onBlur か:
+   *   - onChange（keystroke）で発火すると IME 変換中の中間文字列（「そに」「ソニ」）が
+   *     server の企業照合へ流れ、全ユーザー共有の企業マスタを汚す。
+   *   - onBlur は IME 確定後に必ず 1 回だけ来るため、「入力し終えた」最も早い確実な signal。
+   *
+   * 契約:
+   *   - fire & forget（await しない・結果を見ない・state を変えない）。
+   *   - 失敗しても何も起きない（free-text 保存フローに影響させない）。
+   *   - 同一企業への重複 trigger は server 側の company-scoped idempotency が畳む。
+   *     よって「保存時にも送る」経路と二重に走っても外部取得は 1 回に収束する。
+   */
+  function handleFreeTextBlur() {
+    if (disabled) return;
+    notifyCompanyIntent(value.companyName);
+  }
+
   async function handleSearch() {
     const name = value.companyName.trim();
     if (name === '' || disabled) return;
@@ -212,6 +232,7 @@ export function CompanyPicker({
           <Input
             value={value.companyName}
             onChange={(e) => handleFreeTextChange(e.target.value)}
+            onBlur={handleFreeTextBlur}
             placeholder={placeholder}
             disabled={disabled}
           />

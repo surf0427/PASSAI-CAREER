@@ -73,6 +73,41 @@ export async function registerCompanyByName(
   return result;
 }
 
+/**
+ * Company Prefetch — 志望企業 intent を server へ通知する（**fire & forget**）。
+ *
+ * 目的:
+ *   ユーザーが企業名を入力し終えた時点で、server 側に「この企業を調べておいて」と伝える。
+ *   ユーザーが企業研究を開くまでの時間差を使って Company Data Spine を先に埋める。
+ *
+ * 契約（Requirement A: 入力をブロックしない）:
+ *   - **await しても意味のある値は返らない**（常に void）。呼び出し側は結果を見ない。
+ *   - 失敗・タイムアウト・オフライン・flag OFF のいずれでも **何も起きない**。
+ *     企業名の free-text 保存フローは一切影響を受けない。
+ *   - spinner を出さない。UI 状態を変えない。
+ *
+ * ★ `companyId` を client から送らない。canonical company id は server が決める
+ *   （client 申告の id を権威情報として扱わない）。
+ */
+export function notifyCompanyIntent(companyName: string): void {
+  const name = typeof companyName === 'string' ? companyName.trim() : '';
+  // 1 文字の入力で外部照合を起こさない（IME 確定直後の取りこぼしを拾うための最小長）。
+  if (name.length < 2) return;
+  try {
+    void fetch('/api/career/company/intent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyName: name }),
+      // タブを閉じても送信を完了させる（trigger は「入力し終えた瞬間」なので離脱と重なりやすい）。
+      keepalive: true,
+    }).catch(() => {
+      /* prefetch の失敗はユーザーに見せない・何も起きない */
+    });
+  } catch {
+    /* fetch が使えない環境でも保存フローを壊さない */
+  }
+}
+
 export type CompanyLookupData = { companyId: string; displayName: string } | null;
 
 /** companyId から企業を引く（見つからなければ data:null）。 */
