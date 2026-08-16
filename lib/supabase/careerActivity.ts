@@ -13,7 +13,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import {
   enqueueLatestMirrorWrite,
   mirrorWriteKey,
@@ -39,7 +39,7 @@ export async function loadCareerActivityFromSupabase(
   userId: string,
 ): Promise<LoadCareerActivityResult> {
   if (!userId) return { kind: "no-env" };
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return { kind: "no-env" };
 
   try {
@@ -69,7 +69,7 @@ export async function saveCareerActivityToSupabase(
   activity: CareerActivity,
 ): Promise<void> {
   if (!userId) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   // D-S3: 同一 user の write を直列化し、遅延応答による mirror 巻き戻り（W4）を防ぐ。

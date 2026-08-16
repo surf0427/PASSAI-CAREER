@@ -42,8 +42,16 @@ for (const f of readdirSync(join(ROOT, 'lib/careerSupabase')).filter((f) => f.en
   }
 }
 
-console.log('[3] production shared-fallback ban 維持（誤接続防止・login 復旧の前提不変）');
-check(/NODE_ENV\s*!==\s*'production'/.test(env), 'shared fallback は NODE_ENV !== production に限定（production 禁止）');
+console.log('[3] Project A fallback ban（全環境・Project B 完全分離後の契約）');
+// Project B 完全分離により、旧「development / test に限り受験版 env へ fallback」は **削除**された。
+// fallback が残っていると CAREER env の設定漏れが Project A 接続で隠れ、split-brain を生む。
+// → NODE_ENV による環境分岐そのものが存在しないことを契約として固定する。
+check(!/NODE_ENV/.test(env), 'env.ts に NODE_ENV 分岐が無い（環境別 fallback を持たない）');
+// ★ CAREER_SUPABASE_SERVICE_ROLE_KEY は SUPABASE_SERVICE_ROLE_KEY を部分文字列として含むため、
+//   直前に CAREER_ が付かないものだけを Project A 参照として検出する。
+check(!/(?<!CAREER_)NEXT_PUBLIC_SUPABASE_URL/.test(env), 'env.ts が Project A の URL env を参照しない');
+check(!/(?<!CAREER_)NEXT_PUBLIC_SUPABASE_ANON_KEY/.test(env), 'env.ts が Project A の anon key env を参照しない');
+check(!/(?<!CAREER_)SUPABASE_SERVICE_ROLE_KEY/.test(env), 'env.ts が Project A の service role key env を参照しない');
 check(/if\s*\(\s*!url\s*\|\|\s*!anonKey\s*\)\s*return null/.test(env), 'url または anonKey 欠落で null（→ client null → no-env）ロジック維持');
 
 console.log('[4] safe presence probe（値非表示・現 dev 環境の boolean のみ・assert しない）');

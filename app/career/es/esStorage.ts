@@ -37,6 +37,8 @@ export function createEsWorkspaceLog(params: {
   question?: string;
   charLimit?: number;
   companyName?: string;
+  // Company Data Spine の canonical key（Phase A / R4・optional）。
+  companyId?: string;
   industry?: string;
   jobType?: string;
   selectionType?: CareerEsSelectionType | null;
@@ -63,6 +65,7 @@ export function createEsWorkspaceLog(params: {
     log.charLimit = Math.floor(params.charLimit);
   }
   if (params.companyName?.trim()) log.companyName = params.companyName.trim();
+  if (params.companyId?.trim()) log.companyId = params.companyId.trim();
   if (params.industry?.trim()) log.industry = params.industry.trim();
   if (params.jobType?.trim()) log.jobType = params.jobType.trim();
   if (params.selectionType === 'main' || params.selectionType === 'internship') {
@@ -97,6 +100,10 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
     result: r.result as CareerEsLog['result'],
   };
   if (typeof r.companyName === 'string') log.companyName = r.companyName;
+  // Company Identity（Phase A / R4）: optional・欠損が正常（旧ログは常に欠損）。
+  if (typeof r.companyId === 'string' && r.companyId.trim() !== '') {
+    log.companyId = r.companyId.trim();
+  }
   if (typeof r.question === 'string') log.question = r.question;
   if (typeof r.charLimit === 'number') log.charLimit = r.charLimit;
   if (r.selectionType === 'main' || r.selectionType === 'internship') {

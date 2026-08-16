@@ -74,7 +74,7 @@ import {
   newHobbyEntry,
   newAwardEntry,
 } from '@/types/careerActivity';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
   loadCareerActivityFromSupabase,
   saveCareerActivityToSupabase,

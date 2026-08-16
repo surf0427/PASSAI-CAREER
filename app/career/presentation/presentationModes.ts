@@ -569,6 +569,10 @@ export function normalizePresentationTarget(raw: unknown): CareerPresentationTar
 
   const companyName = trimStr(r.companyName);
   if (companyName) target.companyName = companyName;
+  // Company Identity（R6）: companyName が無い企業に companyId だけ残さない
+  // （ID と表示名の乖離を作らない）。
+  const companyId = trimStr(r.companyId);
+  if (companyId && companyName) target.companyId = companyId;
   const industry = trimStr(r.industry);
   if (industry) target.industry = industry;
   const jobType = trimStr(r.jobType);
@@ -610,6 +614,8 @@ export function presentationConfigFromTarget(
   if (!target) return cfg;
   if (target.scenario) cfg.scenario = target.scenario;
   if (target.companyName) cfg.companyName = target.companyName;
+  // Company Identity（R6）: companyName と一緒に写す（片方だけ残さない）。
+  if (target.companyId) cfg.companyId = target.companyId;
   if (target.industry) cfg.industry = target.industry;
   if (target.jobType) cfg.jobType = target.jobType;
   if (target.format) cfg.format = target.format;

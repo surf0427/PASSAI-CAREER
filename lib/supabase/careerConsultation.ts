@@ -11,7 +11,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type {
   CareerConsultationMessage,
   CareerConsultationThread,
@@ -33,7 +33,7 @@ export async function upsertCareerConsultationThreadsToSupabase(
   threads: CareerConsultationThread[],
 ): Promise<void> {
   if (!userId || threads.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = threads.map((t) => ({
@@ -65,7 +65,7 @@ export async function deleteCareerConsultationThreadFromSupabase(
   clientId: string,
 ): Promise<void> {
   if (!userId || !clientId) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   try {
@@ -85,7 +85,7 @@ export async function listCareerConsultationThreadsFromSupabase(
   userId: string,
 ): Promise<CareerConsultationThread[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

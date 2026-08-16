@@ -27,7 +27,7 @@ import {
   isCareerValuesEmpty,
 } from '@/app/career/values/careerValuesStorage';
 import { loadSelfAnalysisLogs } from '../selfAnalysisStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import { saveCompletedSelfAnalysis } from '../finalizeSummary';
 import { useSelfAnalysisGeneration } from '../useSelfAnalysisGeneration';

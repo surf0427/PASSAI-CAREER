@@ -11,7 +11,7 @@
 
 import 'server-only';
 
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import { mapOwnedJobToStatusResponse } from '@/lib/careerSelfAnalysis/summaryJobStatus';
 
 export const runtime = 'nodejs';
@@ -41,7 +41,7 @@ export async function GET(req: Request) {
   // auth 解決（infra 失敗 と 未ログイン を分離）。
   let client;
   try {
-    client = await getServerSupabaseClient();
+    client = await getCareerServerSupabaseClient();
   } catch {
     client = null;
   }

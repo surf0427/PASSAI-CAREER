@@ -9,7 +9,7 @@
  *   - 別デバイス・別ブラウザでも履歴を見られるよう、GD履歴ページ表示時に自分の結果を取得して merge する。
  *
  * データ取得:
- *   - getBrowserSupabaseClient()（anon key + ユーザーセッション = authenticated ロール）で **RLS 経由**取得。
+ *   - getCareerBrowserSupabaseClient()（anon key + ユーザーセッション = authenticated ロール）で **RLS 経由**取得。
  *     service_role は使わない。user_id = auth.uid() の行だけが RLS で返る（deny-by-default 前提）。
  *   - ⚠ 前提: career_gd_room_results に「owner select」RLS policy（auth.uid() = user_id）が必要。
  *     未適用（deny-by-default のまま）だと 0 行が返るだけで、localStorage 表示は継続する（never throw / 破綻しない）。
@@ -21,7 +21,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import { normalizeGdRoomLog } from "@/app/career/gd/gdRoomLogStorage";
 import type { CareerGdRoomLog } from "@/types/careerGd";
 
@@ -62,7 +62,7 @@ export async function listCareerGdRoomResultsFromSupabase(
   userId: string,
 ): Promise<CareerGdRoomLog[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

@@ -5,10 +5,12 @@
 
 import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
 
-// 選考種別（応募する選考の種類）。
+// 選考種別（応募する選考の種類）。UI では「インターン応募 / 本選考」の 2 種類のみ提示する。
 //   - 'main'       : 本選考（入社を前提とした選考）
 //   - 'internship' : インターン応募
-// 未指定（undefined）は「選考種別の指定なし」を表す。後方互換のため optional 運用。
+// 新規作成では必須（app/career/es/new + lib/careerEs/esSettings の validateEsSettings で確定させる）。
+// 型は optional のまま維持する: 旧 draft / 旧ログには「指定なし」（= undefined）が存在するため、
+// 必須化しても過去データを読めなくしない（読み込み時は欠損を許容し、勝手に本選考へ変換しない）。
 export type CareerEsSelectionType = 'main' | 'internship';
 
 // 就活版 ES作成AI が返す JSON 構造。
@@ -166,6 +168,12 @@ export type CareerEsDraft = {
   question: string;
   charLimit?: number;
   companyName?: string;
+  // Company Data Spine の canonical key（Phase A / R4・optional・後方互換）。
+  //   - 登録済み企業を選んだときだけ入る。欠損（未登録・free-text）が正常。
+  //   - companyName の置換ではなく **追加情報**。
+  //   - ★ ES の AI route（es/deep / es/organize / es/materials）へは渡さない。
+  //     ES は CONTEXT_FREE 契約（client が選んだ材料だけを body で渡す）を維持する。
+  companyId?: string;
   industry?: string;
   jobType?: string;
   selectionType?: CareerEsSelectionType;
@@ -205,6 +213,9 @@ export type CareerEsLog = {
   //
   // 対象企業名（企業別の一覧・絞り込みに使う）。
   companyName?: string;
+  // Company Data Spine の canonical key（Phase A / R4・optional・後方互換）。
+  // 既存ログには存在しないため defensive に扱うこと。prompt には入れない。
+  companyId?: string;
   // 生成に使った ES 設問文（設問モードのときに保存）。
   question?: string;
   // 生成に使った文字数指定。

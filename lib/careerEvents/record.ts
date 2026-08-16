@@ -4,7 +4,7 @@
  * recordCareerEvent — career_user_events への fire-and-forget 記録（STEP-CAREER-EVENTLOG-P1）。
  *
  *   - 既存 mirror helper（lib/supabase/career*.ts）と同じ boundary 設計:
- *       * getBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
+ *       * getCareerBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
  *       * never throw（best-effort）。userId が空（guest）/ env 未設定なら no-op。
  *       * 呼び出し側は `void recordCareerEvent(...)` で await しない。
  *   - Event Log は本文を持たない。metadata / ラベルは sanitize で allowlist 通過分のみ保存する。
@@ -12,7 +12,7 @@
  */
 
 import { devWarn } from '@/lib/devLog';
-import { getBrowserSupabaseClient } from '@/lib/supabase/browserClient';
+import { getCareerBrowserSupabaseClient } from '@/lib/careerSupabase/browserClient';
 import {
   CAREER_EVENT_TYPES,
   CAREER_EVENT_FEATURES,
@@ -96,7 +96,7 @@ export function buildCareerEventInsertRow(
 
 // 既定の insert adapter（browser Supabase client 経由）。env 未設定なら no-op。
 async function insertViaBrowserClient(row: CareerEventInsertRow): Promise<void> {
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return; // env 未設定 = mirror 無効 = no-op
   const { error } = await supabase.from(TABLE).insert(row);
   if (error) devWarn('[careerEvents] insert error', error);

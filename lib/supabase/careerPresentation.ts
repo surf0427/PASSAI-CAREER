@@ -12,7 +12,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type {
   CareerPresentationFinalResult,
   CareerPresentationMode,
@@ -46,7 +46,7 @@ export async function upsertCareerPresentationSessionsToSupabase(
   sessions: CareerPresentationSession[],
 ): Promise<void> {
   if (!userId || sessions.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = sessions.map((s) => ({
@@ -78,7 +78,7 @@ export async function listCareerPresentationSessionsFromSupabase(
   userId: string,
 ): Promise<CareerPresentationSession[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {
@@ -132,7 +132,7 @@ export async function upsertCareerPresentationResultsToSupabase(
   results: CareerPresentationResult[],
 ): Promise<void> {
   if (!userId || results.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = results.map((r) => ({
@@ -164,7 +164,7 @@ export async function listCareerPresentationResultsFromSupabase(
   userId: string,
 ): Promise<CareerPresentationResult[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

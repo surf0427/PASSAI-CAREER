@@ -3,9 +3,11 @@
 // PASSAI 就活版 — ES作成 Step1（設問メタ入力 + 下書き再開）
 //
 // ① 深掘りしながら書く（?mode=deep）/ ② 自力で書く（?mode=write）共通の入口。
-// 設問・文字数・企業名・業界・職種を入力し、作成中ドラフト（careerEsDrafts）を作って
+// 設問・文字数・企業名・業界・職種・選考種別を入力し、作成中ドラフト（careerEsDrafts）を作って
 // エディタ /career/es/draft/[draftId] へ遷移する。正式ログ（careerEsLogs）はまだ作らない。
 //   - 同モードの未完成ドラフトがあれば「続きから再開」を上部に表示する（勝手に上書きしない）。
+//   - 6 項目はすべて**新規作成時のみ**必須（validateEsSettings）。最終 AI 添削の
+//     コンテキストとして使うため、ここで欠落させない。旧 draft / 旧ログの欠損は許容する。
 // AI は本文を書かない。DB / 課金 / usage には接続しない（localStorage のみ）。
 
 import { Suspense, useMemo, useState, useSyncExternalStore } from 'react';
@@ -19,7 +21,13 @@ import { Input } from '@/components/ui/Input';
 import { loadEsDrafts, saveEsDraft } from '../esDraftStorage';
 import { newEsId } from '../esStorage';
 import { classifyEsQuestionType } from '@/lib/careerEs/deepDivePrompt';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import {
+  ES_SELECTION_TYPE_OPTIONS,
+  validateEsSettings,
+  type EsSettingsFieldKey,
+} from '@/lib/careerEs/esSettings';
+import { CompanyPicker } from '@/components/career/CompanyPicker';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import {
   ES_DRAFT_SCHEMA_VERSION,
@@ -70,22 +78,43 @@ function CareerEsNewInner() {
   const [question, setQuestion] = useState('');
   const [charLimitInput, setCharLimitInput] = useState('');
   const [companyName, setCompanyName] = useState('');
+  // Company Data Spine の canonical key（Phase A / R4）。登録済み企業を選んだときだけ入る。
+  //   - 必須ではない（未登録・free-text 入力のままでも ES は作成できる）。
+  //   - ★ 必須判定は従来どおり companyName のみ（validateEsSettings は companyId を見ない）。
+  //     したがって「companyName 空 + companyId あり」で validation を突破する経路は存在しない。
+  const [companyId, setCompanyId] = useState<string | undefined>(undefined);
   const [industry, setIndustry] = useState('');
   const [jobType, setJobType] = useState('');
+  // 選考種別は初期値を持たない（ユーザーが 2 種類のどちらかを明示的に選ぶ）。
   const [selectionType, setSelectionType] = useState<CareerEsSelectionType | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 一度「開始」を押したか。押すまではエラーを出さず、押した後は入力に追従して消える。
+  const [attempted, setAttempted] = useState(false);
 
-  const canStart = question.trim().length > 0 && !submitting;
+  // 必須チェックは required 属性任せにせず、開始処理側で確定させる。
+  // 6 項目すべてが揃わない限り draft を作らない（＝最終添削のコンテキストを欠落させない）。
+  const validation = useMemo(
+    () =>
+      validateEsSettings({ question, charLimitInput, companyName, industry, jobType, selectionType }),
+    [question, charLimitInput, companyName, industry, jobType, selectionType],
+  );
+  const errors: Partial<Record<EsSettingsFieldKey, string>> = attempted ? validation.errors : {};
 
   function handleStart() {
-    if (!canStart) return;
+    if (submitting) return;
+    if (!validation.ok || !validation.normalized) {
+      setAttempted(true);
+      return;
+    }
     setSubmitting(true);
-    const parsedLimit = Number.parseInt(charLimitInput, 10);
-    const charLimit =
-      Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+    const settings = validation.normalized;
     const now = new Date().toISOString();
     const id = newEsId();
+    // Company Identity（R4）: 登録済み企業を選んだときだけ付く **追加情報**。
+    // companyName は settings 側で非空が保証済みなので、ID と表示名が乖離しない。
+    const linkedCompanyId = companyId?.trim();
 
+    // 6 項目はすべて確定値（optional 型のままだが新規作成では必ず埋まる）。
     const draft: CareerEsDraft = {
       id,
       schemaVersion: ES_DRAFT_SCHEMA_VERSION,
@@ -93,14 +122,16 @@ function CareerEsNewInner() {
       mode,
       createdAt: now,
       updatedAt: now,
-      question: question.trim(),
-      questionType: classifyEsQuestionType(question.trim()),
+      question: settings.question,
+      questionType: classifyEsQuestionType(settings.question),
+      charLimit: settings.charLimit,
+      companyName: settings.companyName,
+      // 未紐付けなら field ごと作らない（旧 draft と同じ形を保つ）。
+      ...(linkedCompanyId ? { companyId: linkedCompanyId } : {}),
+      industry: settings.industry,
+      jobType: settings.jobType,
+      selectionType: settings.selectionType,
     };
-    if (charLimit) draft.charLimit = charLimit;
-    if (companyName.trim()) draft.companyName = companyName.trim();
-    if (industry.trim()) draft.industry = industry.trim();
-    if (jobType.trim()) draft.jobType = jobType.trim();
-    if (selectionType) draft.selectionType = selectionType;
     saveEsDraft(draft);
 
     // Event Log（本文なし・fire-and-forget / member のみ）。設問本文は渡さない。
@@ -109,13 +140,16 @@ function CareerEsNewInner() {
       eventType: 'feature_started',
       completionStatus: 'in_progress',
       clientEventId: draft.id,
-      industry: industry.trim() || null,
-      jobType: jobType.trim() || null,
-      metadata: { mode, ...(selectionType ? { selectionType } : {}) },
+      industry: settings.industry,
+      jobType: settings.jobType,
+      metadata: { mode, selectionType: settings.selectionType },
     });
 
     router.push(`/career/es/draft/${encodeURIComponent(draft.id)}`);
   }
+
+  // 未入力のまま開始したときに、原因をまとめて 1 行で示す（alert は出さない）。
+  const errorCount = Object.keys(errors).length;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -165,11 +199,12 @@ function CareerEsNewInner() {
           placeholder="例: 学生時代に最も力を入れたことを教えてください。"
           rows={3}
           disabled={submitting}
-          className="mb-4"
+          className={errors.question ? '' : 'mb-4'}
         />
+        {errors.question && <FieldError message={errors.question} />}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="文字数（任意）">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4${errors.question ? ' mt-4' : ''}`}>
+          <Field label="文字数" error={errors.charLimit}>
             <Input
               type="number"
               inputMode="numeric"
@@ -180,15 +215,26 @@ function CareerEsNewInner() {
               disabled={submitting}
             />
           </Field>
-          <Field label="企業名（任意）">
-            <Input
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="例: 〇〇株式会社"
+          {/* 企業名: 登録済み企業の選択 or 従来どおりの直接入力（free-text fallback は常に残る）。
+              CompanyPicker が Field と同じラベル体裁（太字 + 必須の * ）を描くため、
+              ここでは Field で包まず、エラーだけ既存の FieldError で揃える。 */}
+          <div>
+            <CompanyPicker
+              value={{ companyId, companyName }}
+              onChange={(next) => {
+                // 登録済み企業を選ぶと companyId と companyName が必ず同時に入る。
+                // free-text を編集すると CompanyPicker 側が companyId を外す（乖離を作らない）。
+                setCompanyId(next.companyId);
+                setCompanyName(next.companyName);
+              }}
+              label="企業名"
+              required
               disabled={submitting}
+              placeholder="例: 〇〇株式会社"
             />
-          </Field>
-          <Field label="志望業界（任意）">
+            {errors.companyName && <FieldError message={errors.companyName} />}
+          </div>
+          <Field label="志望業界" error={errors.industry}>
             <Input
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
@@ -196,7 +242,7 @@ function CareerEsNewInner() {
               disabled={submitting}
             />
           </Field>
-          <Field label="志望職種（任意）">
+          <Field label="志望職種" error={errors.jobType}>
             <Input
               value={jobType}
               onChange={(e) => setJobType(e.target.value)}
@@ -206,16 +252,31 @@ function CareerEsNewInner() {
           </Field>
         </div>
 
-        <label className="block text-sm font-bold text-slate-800 mt-4 mb-2">選考種別（任意）</label>
+        <label className="block text-sm font-bold text-slate-800 mt-4 mb-2">
+          選考種別 <span className="text-rose-500">*</span>
+        </label>
         <div className="flex flex-wrap gap-2">
-          <SelectionTypeButton label="指定なし" active={selectionType === null} onClick={() => setSelectionType(null)} disabled={submitting} />
-          <SelectionTypeButton label="本選考" active={selectionType === 'main'} onClick={() => setSelectionType('main')} disabled={submitting} />
-          <SelectionTypeButton label="インターン応募" active={selectionType === 'internship'} onClick={() => setSelectionType('internship')} disabled={submitting} />
+          {ES_SELECTION_TYPE_OPTIONS.map((option) => (
+            <SelectionTypeButton
+              key={option.value}
+              label={option.label}
+              active={selectionType === option.value}
+              onClick={() => setSelectionType(option.value)}
+              disabled={submitting}
+            />
+          ))}
         </div>
+        {errors.selectionType && <FieldError message={errors.selectionType} />}
       </Card>
 
+      {errorCount > 0 && (
+        <p className="mb-4 text-sm text-red-600" role="alert">
+          未入力の項目が {errorCount} 件あります。すべて入力するとES作成を始められます。
+        </p>
+      )}
+
       <div className="flex flex-col sm:flex-row gap-3">
-        <Button variant="primary" size="md" onClick={handleStart} disabled={!canStart} className="w-full sm:w-auto">
+        <Button variant="primary" size="md" onClick={handleStart} disabled={submitting} className="w-full sm:w-auto">
           {submitting ? '準備中…' : mode === 'deep' ? '深掘りを始める →' : '本文を書き始める →'}
         </Button>
         <Link
@@ -249,12 +310,33 @@ function resumeStatusLabel(d: CareerEsDraft): string {
   return d.mode === 'deep' ? '整理済み・本文未着手' : '本文未着手';
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// 必須フィールド（ラベルに * を付ける。設問欄の既存表記と同じデザイン規約）。
+function Field({
+  label,
+  error,
+  children,
+}: {
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <label className="block text-sm font-bold text-slate-800 mb-2">{label}</label>
+      <label className="block text-sm font-bold text-slate-800 mb-2">
+        {label} <span className="text-rose-500">*</span>
+      </label>
       {children}
+      {error && <FieldError message={error} />}
     </div>
+  );
+}
+
+// フィールド直下のエラー表示（alert は使わず、原因の項目だけを指す）。
+function FieldError({ message }: { message: string }) {
+  return (
+    <p className="mt-1.5 text-xs text-rose-600" role="alert">
+      {message}
+    </p>
   );
 }
 

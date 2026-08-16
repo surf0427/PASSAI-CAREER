@@ -23,6 +23,8 @@ import {
   clearPresentationTargetDraft,
 } from '../presentationStorage';
 import { normalizePresentationTarget } from '../presentationModes';
+import { CompanyPicker } from '@/components/career/CompanyPicker';
+import { loadCompanyApplicationDefaults } from '@/app/career/company/applicationStorage';
 import {
   CAREER_PRESENTATION_SCENARIOS,
   CAREER_PRESENTATION_FORMATS,
@@ -50,6 +52,8 @@ export default function CareerPresentationTargetPage() {
   const draft = useMemo(() => (isMounted ? loadPresentationTargetDraft() : null), [isMounted]);
 
   const [companyName, setCompanyName] = useState('');
+  // Company Data Spine の canonical key（R6）。未紐付け（undefined）が正常。
+  const [companyId, setCompanyId] = useState<string | undefined>(undefined);
   const [industry, setIndustry] = useState('');
   const [jobType, setJobType] = useState('');
   const [scenario, setScenario] = useState<CareerPresentationScenario | null>(null);
@@ -64,6 +68,8 @@ export default function CareerPresentationTargetPage() {
   if (isMounted && !hydrated) {
     if (draft) {
       setCompanyName(draft.companyName ?? '');
+      // 旧 target には companyId が無い（欠損が正常）。
+      setCompanyId(draft.companyId);
       setIndustry(draft.industry ?? '');
       setJobType(draft.jobType ?? '');
       setScenario(draft.scenario ?? null);
@@ -87,9 +93,24 @@ export default function CareerPresentationTargetPage() {
     companyMemo.trim() !== '' ||
     focusPoint.trim() !== '';
 
+  /**
+   * 企業選択（Company Identity / R6）+ 応募文脈の初期値供給（Application Context / R6）。
+   * ★ 既に入力済みの項目は上書きしない（空欄のときだけ初期値を入れる）。
+   */
+  function handleCompanyChange(next: { companyId?: string; companyName: string }) {
+    setCompanyId(next.companyId);
+    setCompanyName(next.companyName);
+    if (!next.companyId) return;
+    const defaults = loadCompanyApplicationDefaults(next.companyId);
+    if (defaults.jobType && jobType.trim() === '') setJobType(defaults.jobType);
+    if (defaults.selectionType && selectionType === null) setSelectionType(defaults.selectionType);
+  }
+
   function handleNext() {
     const target = normalizePresentationTarget({
       companyName,
+      // companyName が空なら normalize 側が companyId を落とす（乖離を作らない）。
+      companyId,
       industry,
       jobType,
       scenario: scenario ?? undefined,
@@ -124,15 +145,12 @@ export default function CareerPresentationTargetPage() {
           受ける企業・業界（おすすめ）
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-bold text-slate-800 mb-2">企業名</label>
-            <Input
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="例: 株式会社〇〇"
-              autoFocus
-            />
-          </div>
+          {/* 登録済み企業の選択 or 従来どおりの直接入力（free-text fallback は常に残す）。 */}
+          <CompanyPicker
+            value={{ companyId, companyName }}
+            onChange={handleCompanyChange}
+            placeholder="例: 株式会社〇〇"
+          />
           <div>
             <label className="block text-sm font-bold text-slate-800 mb-2">業界</label>
             <Input

@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { useAuthStatus, useIsMember } from '@/app/components/AuthProvider';
+import { useAuthStatus, useIsMember } from '@/app/career/components/CareerAuthProvider';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { GD_FORMAT_LABELS, GD_FORMAT_DESCRIPTIONS } from '../../gdRoles';
 import { ThemeSetupStep } from '../../components/ThemeSetupStep';

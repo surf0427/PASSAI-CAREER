@@ -25,7 +25,7 @@ import {
   loadCompanyResearchLogs,
   updateCompanyResearchLog,
 } from '../companyResearchStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerCompanyResearchLogsToSupabase } from '@/lib/supabase/careerCompanyResearch';
 import {
   CAREER_COMPANY_INTEREST_LABELS,

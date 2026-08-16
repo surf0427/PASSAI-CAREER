@@ -14,7 +14,7 @@ import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { useAuthStatus, useIsMember, useCurrentUserId } from '@/app/components/AuthProvider';
+import { useAuthStatus, useIsMember, useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { useCareerGdRealtime } from '@/hooks/useCareerGdRealtime';
 import { useCareerGdMessages, type GdPendingMessage } from '@/hooks/useCareerGdMessages';

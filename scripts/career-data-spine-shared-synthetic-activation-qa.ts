@@ -102,7 +102,8 @@ async function main(): Promise<void> {
 
     const svc = read('lib/careerDataSpineDb/sharedServiceRolePorts.server.ts');
     check('B4 service-role port は server-only', /import\s+['"]server-only['"]/.test(svc));
-    check('B5 既存 service-role factory を再利用', svc.includes('getServiceRoleSupabaseClient'));
+    // Project B 完全分離後: CAREER 専用（Project B）の service-role factory を再利用する。
+    check('B5 既存 CAREER service-role factory を再利用', svc.includes('getCareerServiceRoleSupabaseClient'));
     check('B6 service-role client を作らない（createClient なし）', !/createClient\s*\(/.test(svc));
     check('B7 DataSpineReadPort のみ返す（raw client 非漏洩）', svc.includes('DataSpineReadPort') && !/return\s*{\s*status:\s*'available',\s*client/.test(svc));
     check('B8 NEXT_PUBLIC で service-role を参照しない', !/NEXT_PUBLIC[A-Z_]*SERVICE_ROLE/.test(svc));
@@ -255,12 +256,16 @@ async function main(): Promise<void> {
   }
 
   // ══════════════════════════════════════════════════════════════
-  console.log('[J] Canary identity (shared auth UID)');
+  // Project B 完全分離後、career runtime の auth UID 空間は CAREER Supabase（Project B）に一本化された。
+  // canary identity もそこから取る（旧: 受験版 Project A の shared UID）。
+  // NOTE: 内部の識別子 `resolveSharedAuthUserId` / 型 `SharedAuthUserId` の "Shared" は
+  //       「career 全体で単一の UID」の意で、受験版 Project A を指すものではない（rename は別 STEP）。
+  console.log('[J] Canary identity (CAREER Project B auth UID)');
   {
     const runtime = read('lib/careerAggregate/batch/aggregatedInsightPrivilegedShadow.batch.ts');
-    check('J1 shared auth UID を使う（getServerSupabaseClient）', runtime.includes('getServerSupabaseClient') && runtime.includes('resolveSharedAuthUserId'));
-    // CAREER OTP を「import しない」ことを検査（コメント中の語ではなく実 import 文）。
-    check('J2 CAREER OTP UID を使わない（careerSupabase を import しない）', !/from\s+['"]@\/lib\/careerSupabase/.test(runtime) && !/from\s+['"][^'"]*CareerAuthProvider/.test(runtime));
+    check('J1 CAREER auth UID を使う（getCareerServerSupabaseClient）', runtime.includes('getCareerServerSupabaseClient') && runtime.includes('resolveSharedAuthUserId'));
+    // 受験版 Project A の client を「import しない」ことを検査（コメント中の語ではなく実 import 文）。
+    check('J2 Project A UID を使わない（受験版 client / AuthProvider を import しない）', !/from\s+['"]@\/lib\/supabase\/(server|browser|serviceRole)Client['"]/.test(runtime) && !/from\s+['"][^'"]*app\/components\/AuthProvider/.test(runtime));
     check('J3 email join を実装しない（実コード）', !/\.eq\(['"]email/.test(runtime) && !/from\s+['"][^'"]*email/i.test(runtime));
     check('J4 UID を evidence/console/response へ出さない', !runtime.includes('console.') && !/return[^;]*uid/i.test(runtime));
     check('J5 SharedAuthUserId 型が存在', read('lib/careerAggregate/server/runtimeTypes.ts').includes('SharedAuthUserId'));

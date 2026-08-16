@@ -27,6 +27,8 @@ import { appendEsLog, createEsWorkspaceLog, loadEsLogById } from '../../esStorag
 import { EsDeepDivePanel } from '../../components/EsDeepDivePanel';
 import { EsMaterialPickerPanel } from '../../components/EsMaterialPickerPanel';
 import { classifyEsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
+import { buildEsReviewRequestBody } from '@/lib/careerEs/reviewRequest';
+import { esSelectionTypeLabel } from '@/lib/careerEs/esSettings';
 import {
   buildEsKnownFacts,
   buildEsMaterialCandidates,
@@ -38,7 +40,7 @@ import { loadActivityData } from '@/app/career/activity/activityStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 // P17-M1: ES 正式ログ化（新規作成）確定後の Personal Memory shadow-write（flag OFF/canary deny では no-op）。
@@ -53,12 +55,6 @@ import type {
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
-
-function selectionTypeLabel(type: CareerEsDraft['selectionType']): string {
-  if (type === 'main') return '本選考';
-  if (type === 'internship') return 'インターン応募';
-  return '';
-}
 
 export default function CareerEsDraftEditorPage() {
   const router = useRouter();
@@ -193,15 +189,9 @@ export default function CareerEsDraftEditorPage() {
       const res = await fetch('/api/career/es-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answer,
-          question: draft.question,
-          companyName: draft.companyName,
-          charLimit: draft.charLimit,
-          selectionType: draft.selectionType,
-          industry: draft.industry,
-          jobType: draft.jobType,
-        }),
+        // ES 設定 6 項目（設問 / 文字数 / 企業名 / 業界 / 職種 / 選考種別）を欠落なく送る。
+        // 組み立ては [id] の再添削と共通の builder に集約する（項目落ちの再発防止）。
+        body: JSON.stringify(buildEsReviewRequestBody(draft, answer)),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -319,7 +309,7 @@ export default function CareerEsDraftEditorPage() {
           {draft.companyName && <span>企業: {draft.companyName}</span>}
           {draft.industry && <span>業界: {draft.industry}</span>}
           {draft.jobType && <span>職種: {draft.jobType}</span>}
-          {draft.selectionType && <span>{selectionTypeLabel(draft.selectionType)}</span>}
+          {draft.selectionType && <span>{esSelectionTypeLabel(draft.selectionType)}</span>}
           {draft.charLimit && <span>指定 {draft.charLimit} 字</span>}
           <span className="text-amber-600">下書き（未保存のトレーニング）</span>
         </div>

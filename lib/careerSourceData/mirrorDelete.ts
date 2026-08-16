@@ -19,7 +19,7 @@
  *   - 任意 userId を信用しない（呼び出し側が session 由来 userId を渡す。RLS が最終権威）。
  */
 
-import { getBrowserSupabaseClient } from '@/lib/supabase/browserClient';
+import { getCareerBrowserSupabaseClient } from '@/lib/careerSupabase/browserClient';
 import { CAREER_SOURCE_TABLES, type CareerSourceKind } from './types';
 
 export type MirrorDeleteOutcome =
@@ -47,7 +47,7 @@ export async function deleteCareerSourceMirrors(
     for (const kind of kinds) outcomes.push({ kind, ok: false, reason: 'guest' });
     return { outcomes, hasFailure: true };
   }
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) {
     for (const kind of kinds) outcomes.push({ kind, ok: false, reason: 'no_client' });
     return { outcomes, hasFailure: true };

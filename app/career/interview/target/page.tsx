@@ -23,6 +23,8 @@ import {
   clearInterviewTargetDraft,
 } from '../interviewStorage';
 import { normalizeInterviewTarget } from '../interviewModes';
+import { CompanyPicker } from '@/components/career/CompanyPicker';
+import { loadCompanyApplicationDefaults } from '@/app/career/company/applicationStorage';
 import type {
   CareerInterviewSelectionType,
   CareerInterviewPhase,
@@ -67,6 +69,8 @@ export default function CareerInterviewTargetPage() {
   const draft = useMemo(() => (isMounted ? loadInterviewTargetDraft() : null), [isMounted]);
 
   const [companyName, setCompanyName] = useState('');
+  // Company Data Spine の canonical key（R5）。未紐付け（undefined）が正常。
+  const [companyId, setCompanyId] = useState<string | undefined>(undefined);
   const [industry, setIndustry] = useState('');
   const [jobType, setJobType] = useState('');
   const [selectionType, setSelectionType] =
@@ -80,6 +84,8 @@ export default function CareerInterviewTargetPage() {
   if (isMounted && !hydrated) {
     if (draft) {
       setCompanyName(draft.companyName);
+      // 旧 target には companyId が無い（欠損が正常）。
+      setCompanyId(draft.companyId);
       setIndustry(draft.industry ?? '');
       setJobType(draft.jobType ?? '');
       setSelectionType(draft.selectionType ?? null);
@@ -92,9 +98,30 @@ export default function CareerInterviewTargetPage() {
 
   const canProceed = companyName.trim() !== '';
 
+  /**
+   * 企業選択（Company Identity）+ 応募文脈の初期値供給（Application Context / R6）。
+   *
+   * ★ 既に入力済みの項目は **上書きしない**（「今回だけ別職種で練習する」を壊さない）。
+   *   空欄のときだけ Application Context の値を初期値として入れる。
+   */
+  function handleCompanyChange(next: { companyId?: string; companyName: string }) {
+    setCompanyId(next.companyId);
+    setCompanyName(next.companyName);
+    if (!next.companyId) return;
+    const defaults = loadCompanyApplicationDefaults(next.companyId);
+    if (defaults.jobType && jobType.trim() === '') setJobType(defaults.jobType);
+    if (defaults.selectionType && selectionType === null) setSelectionType(defaults.selectionType);
+    if (defaults.selectionPhase && interviewPhase === null) {
+      setInterviewPhase(defaults.selectionPhase);
+    }
+  }
+
   function handleNext() {
     const target = normalizeInterviewTarget({
       companyName,
+      // companyName が空なら normalize が null を返すため、
+      // 「companyId があるのに companyName 空」は保存され得ない（R5 不変条件）。
+      companyId,
       industry,
       jobType,
       selectionType: selectionType ?? undefined,
@@ -122,18 +149,14 @@ export default function CareerInterviewTargetPage() {
       />
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <label className="block text-sm font-bold text-slate-800 mb-2">
-          企業名 <span className="text-red-500">*</span>
-        </label>
-        <Input
-          value={companyName}
-          onChange={(e) => setCompanyName(e.target.value)}
+        {/* 登録済み企業の選択 or 従来どおりの直接入力（free-text fallback は常に残す）。 */}
+        <CompanyPicker
+          value={{ companyId, companyName }}
+          onChange={handleCompanyChange}
+          required
           placeholder="例: 株式会社〇〇"
-          autoFocus
+          hint="この企業を受ける想定で、志望動機・企業理解・職種理解の深掘りを増やします（AIが企業情報を断定することはありません）。"
         />
-        <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-          この企業を受ける想定で、志望動機・企業理解・職種理解の深掘りを増やします（AIが企業情報を断定することはありません）。
-        </p>
       </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">

@@ -20,7 +20,7 @@ import {
   upsertPresentationSession,
   loadPresentationTargetDraft,
 } from '../presentationStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerPresentationSessionsToSupabase } from '@/lib/supabase/careerPresentation';
 import {
   CAREER_PRESENTATION_TIME_LIMITS,

@@ -20,7 +20,7 @@ import {
   appendInterviewResult,
 } from '../interviewStorage';
 import { useVoice } from '../useVoice';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
   upsertCareerInterviewSessionsToSupabase,
   upsertCareerInterviewResultsToSupabase,

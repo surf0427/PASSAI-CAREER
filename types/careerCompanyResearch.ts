@@ -51,10 +51,52 @@ export type CareerCompanyResearchFile = {
   extractionError?: string;
 };
 
+// ── User Private Evidence（Company Data Spine B 層）──────────────────
+// 本ログ（CareerCompanyResearchLog）は Company Data Spine における
+// **User Private Evidence の canonical** である（新テーブルを作らない）。
+//
+// 100% PRIVATE:
+//   - 本人以外に見せない。Community（Layer 5）へは **一切**書かない・変換しない。
+//   - そのため visibility / shareConsent / communityRequested / publish /
+//     moderationStatus といったフィールドは **意図的に持たない**（型に存在させない）。
+//
+// 一次情報と AI 生成物を混同しない:
+//   - 一次情報 = input（manualMemo / pastedText / uploadedFiles / extractedText /
+//     verifiedResearchText / sources）
+//   - AI 生成物 = review / fitAnalysis / interviewContextSummary / revisionHistory
+//     これらは Private Evidence **ではない**。
+
+/**
+ * この企業情報をどこで得たか（Phase A / R5・optional・後方互換）。
+ * 欠損は 'own_note' 相当（自分のメモ）として扱う。UI では未選択も許す。
+ */
+export type CompanyEventType =
+  | 'briefing' // 説明会
+  | 'ob_visit' // OB/OG訪問
+  | 'internship' // インターン
+  | 'employee_talk' // 社員との会話
+  | 'material' // 配布資料
+  | 'selection' // 選考関連
+  | 'own_note'; // 自分のメモ
+
+export const CAREER_COMPANY_EVENT_TYPE_LABELS: Record<CompanyEventType, string> = {
+  briefing: '説明会',
+  ob_visit: 'OB/OG訪問',
+  internship: 'インターン',
+  employee_talk: '社員との会話',
+  material: '配布資料',
+  selection: '選考関連',
+  own_note: '自分のメモ',
+};
+
 // ── ユーザーが行った企業研究（一次データ） ────────────────────────────
 export type CareerCompanyResearchInput = {
-  // 企業名（必須運用）。
+  // 企業名（必須運用）。★ Company Identity 導入後も **維持する**（削除しない）。
   companyName: string;
+  // Company Data Spine の canonical key（Phase A / R3 で追加・optional・後方互換）。
+  //   - 登録済み企業を選んだときだけ入る。欠損（未登録・free-text 入力）が正常。
+  //   - companyName の置換ではなく **追加情報**。表示は companyName へ fallback できる。
+  companyId?: string;
   // 業界。
   industry: string;
   // 志望度。
@@ -71,6 +113,17 @@ export type CareerCompanyResearchInput = {
   verifiedResearchText: string;
   // 参考にした情報源（公式サイト・説明会・OB訪問など）。
   sources: string;
+
+  // ── User Private Evidence の構造化（Phase A / R5・すべて optional・後方互換）──
+  //
+  // ★ 最小 2 項目に絞っている。前回 PLAN の `sourceUrls` / `attachments` は
+  //   既存の `sources`（情報源の free-text）と `uploadedFiles` が既に担っているため
+  //   **追加しない**（巨大 schema・二重表現を作らない）。
+  //
+  /** この情報をどこで得たか。欠損は「自分のメモ」相当として扱う。 */
+  eventType?: CompanyEventType;
+  /** 観測時期（'2026-05' / '2026' 等の粗い粒度）。情報の鮮度を本人が判断するために持つ。 */
+  observedPeriod?: string;
 };
 
 // ── AI添削の出力 ──────────────────────────────────────────────────
@@ -144,6 +197,9 @@ export type CareerCompanyResearchLog = {
 
   // 一覧・絞り込み用に昇格した属性（input にも同値を持つ）。
   companyName: string;
+  // Company Data Spine の canonical key（Phase A / R3・optional・後方互換）。
+  // 既存ログには存在しないため、read / normalize 側で defensive に扱うこと。
+  companyId?: string;
   industry: string;
   interestLevel: CareerCompanyInterestLevel | null;
 
@@ -169,6 +225,9 @@ export type CareerCompanyResearchLog = {
 export type CompanyResearchSnapshot = {
   logId: string;
   companyName: string;
+  // Company Data Spine の canonical key（Phase A / R3・optional）。
+  // 他機能が「同じ企業のログか」を突き合わせるために使う。prompt には入れない。
+  companyId?: string;
   industry?: string;
   interestLevel?: CareerCompanyInterestLevel | null;
   updatedAt: string;

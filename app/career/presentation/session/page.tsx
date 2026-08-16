@@ -22,7 +22,7 @@ import {
 } from '../presentationStorage';
 import { getScenarioConfig } from '../presentationModes';
 import { useVoice } from '@/app/career/interview/useVoice';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
   upsertCareerPresentationSessionsToSupabase,
   upsertCareerPresentationResultsToSupabase,

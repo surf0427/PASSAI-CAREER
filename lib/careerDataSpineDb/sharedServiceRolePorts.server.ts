@@ -1,8 +1,9 @@
 /**
- * Data Spine DB boundary — shared service-role read port（P17-E2 §3・server-only）。
+ * Data Spine DB boundary — CAREER service-role read port（P17-E2 §3・server-only）。
  *
  * default-deny table（RLS enabled / policy 0）を **server-only の service-role** で read するための
- * 限定 factory。既存の安全な shared service-role factory（lib/supabase/serviceRoleClient）を **再利用**する。
+ * 限定 factory。CAREER 専用（Project B）の service-role factory
+ * （lib/careerSupabase/serviceRoleClient）を **再利用**する。受験版 Project A は参照しない。
  *
  * 厳守:
  *   - server-only（`import 'server-only'` + 既存 factory の window guard）。
@@ -16,7 +17,7 @@
 
 import 'server-only';
 
-import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 import { adaptReadPort, type SupabaseLikeClient } from './client';
 import type { PrivilegedReadResult } from '@/lib/careerAggregate/server/runtimeTypes';
 
@@ -30,7 +31,7 @@ export type { PrivilegedReadResult };
  */
 export function getSharedServiceRoleReadPort(): PrivilegedReadResult {
   try {
-    const client = getServiceRoleSupabaseClient(); // 未設定なら throw（key/url）
+    const client = getCareerServiceRoleSupabaseClient(); // 未設定なら throw（key/url）
     const read = adaptReadPort(client as unknown as SupabaseLikeClient);
     return { status: 'available', read };
   } catch {

@@ -94,6 +94,10 @@ export function buildCompanyResearchSnapshot(
     companyName: str(log.companyName) || str(log.input?.companyName),
     updatedAt: str(log.updatedAt) || str(log.createdAt),
   };
+  // Company Identity（Phase A / R3）: 紐付いていれば運ぶ。欠損が正常（旧ログ・未登録企業）。
+  // ★ prompt 整形（format*ForPrompt）には出さない。突き合わせ用の識別子であり文脈ではない。
+  const companyId = str(log.companyId) || str(log.input?.companyId);
+  if (companyId) snapshot.companyId = companyId;
   const industry = str(log.industry) || str(log.input?.industry);
   if (industry) snapshot.industry = industry;
   const interestLevel = log.interestLevel ?? log.input?.interestLevel ?? null;
@@ -153,6 +157,7 @@ export function normalizeCompanyResearchSnapshot(raw: unknown): CompanyResearchS
     companyName,
     updatedAt: str(r.updatedAt),
   };
+  if (str(r.companyId)) snapshot.companyId = str(r.companyId);
   if (str(r.industry)) snapshot.industry = str(r.industry);
   if (
     r.interestLevel === 'high' ||

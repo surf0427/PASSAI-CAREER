@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Card } from '@/components/ui/Card';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { GD_FORMAT_LABELS } from './gdRoles';
 import { GdEvaluationDetail, GD_GRADE_STYLE } from './GdEvaluationDetail';
 import { GdRoomOverallDetail } from './GdRoomOverallDetail';

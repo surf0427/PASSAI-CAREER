@@ -26,7 +26,7 @@ import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 // P4-E2: 横断 context 組み立ては lib/careerMemory/selector.ts へ抽出（出力 request body は byte 不変）。
 import { buildMatchingRequestContext } from '@/lib/careerMemory/selector';
 import { appendMatchingLog } from './matchingStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerMatchingResultsToSupabase } from '@/lib/supabase/careerMatching';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { toScoreBand } from '@/lib/careerEvents/sanitize';

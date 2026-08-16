@@ -10,7 +10,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type { CareerEsLog } from "@/types/careerEs";
 // row→domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
 import {
@@ -25,6 +25,8 @@ const TABLE = "career_es_logs";
 function toMeta(log: CareerEsLog): Record<string, unknown> {
   const meta: Record<string, unknown> = {};
   if (log.companyName !== undefined) meta.companyName = log.companyName;
+  // Company Data Spine の canonical key（Phase A / R4）。旧ログでは欠損。
+  if (log.companyId !== undefined) meta.companyId = log.companyId;
   if (log.question !== undefined) meta.question = log.question;
   if (log.charLimit !== undefined) meta.charLimit = log.charLimit;
   if (log.selectionType !== undefined) meta.selectionType = log.selectionType;
@@ -47,7 +49,7 @@ export async function upsertCareerEsLogsToSupabase(
   logs: CareerEsLog[],
 ): Promise<void> {
   if (!userId || logs.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = logs.map((log) => ({
@@ -75,7 +77,7 @@ export async function upsertCareerEsLogsToSupabase(
 /** 自分の ES ログを created_at 降順で返す（never throw / 失敗時は []）。 */
 export async function listCareerEsLogsFromSupabase(userId: string): Promise<CareerEsLog[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

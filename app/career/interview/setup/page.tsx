@@ -24,7 +24,7 @@ import {
 } from '../interviewModes';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchSnapshot } from '@/lib/careerCompanyResearch/context';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerInterviewSessionsToSupabase } from '@/lib/supabase/careerInterview';
 import { useVoice } from '../useVoice';
 import {

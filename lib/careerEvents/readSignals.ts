@@ -21,7 +21,7 @@
  *     reader は field を 4 列へ絞るだけで、値を勝手に補正しない。
  *
  * boundary（既存 read.ts / mirror helper と同方針）:
- *   - getBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
+ *   - getCareerBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
  *   - never throw。guest / userId 不正 / now 不正 / env 未設定 / client 失敗 / DB error / 例外は
  *     **undefined**（＝reader を利用できなかった）。正常取得だが 0 件なら **[]**（両者を区別する）。
  *   - userId / query payload / Event rows / metadata / PII / URL / key / token を log しない。
@@ -29,7 +29,7 @@
  */
 
 import { devWarn } from '@/lib/devLog';
-import { getBrowserSupabaseClient } from '@/lib/supabase/browserClient';
+import { getCareerBrowserSupabaseClient } from '@/lib/careerSupabase/browserClient';
 import type { CareerEventSignalSourceRow } from '@/lib/careerMemory/eventSignals';
 
 // builder と一致させる window / limit / 時刻列基準の contract（QA から参照して固定する）。
@@ -56,7 +56,7 @@ export type CareerEventSignalRowsAdapter = (input: {
 }) => Promise<unknown>;
 
 const defaultAdapter: CareerEventSignalRowsAdapter = async ({ userId, fromIso, toIso, limit }) => {
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return undefined; // env 未設定 = 利用不可
   const { data, error } = await supabase
     .from(TABLE)

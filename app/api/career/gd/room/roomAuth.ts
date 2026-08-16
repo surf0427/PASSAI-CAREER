@@ -5,8 +5,8 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
-import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 
 function jsonError(error: string, detail: string, status: number): Response {
   return Response.json({ error, detail }, { status });
@@ -16,7 +16,7 @@ export type MemberAuth = { kind: 'ok'; userId: string } | { kind: 'reject'; resp
 
 // member（メール登録済み）を確認する。guest / 匿名 / env 未設定は分かりやすく拒否。
 export async function authenticateGdMember(): Promise<MemberAuth> {
-  const authClient = await getServerSupabaseClient();
+  const authClient = await getCareerServerSupabaseClient();
   if (!authClient) {
     return {
       kind: 'reject',
@@ -41,7 +41,7 @@ export type AdminResult = { kind: 'ok'; admin: SupabaseClient } | { kind: 'rejec
 // service-role クライアントを取得（未設定なら実値を出さずに 503）。
 export function getGdAdmin(): AdminResult {
   try {
-    return { kind: 'ok', admin: getServiceRoleSupabaseClient() };
+    return { kind: 'ok', admin: getCareerServiceRoleSupabaseClient() };
   } catch {
     return {
       kind: 'reject',

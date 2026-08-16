@@ -7,7 +7,7 @@
  *   - localStorage（app/career/values/careerValuesStorage.ts）を canonical とし、本 table は
  *     ログイン済みユーザー（member）の durable mirror。self_prs / interview_practice_records と
  *     同じ auth-scoped 永続層であり、mirror_events 系統ではない。
- *   - user-scoped browser client（getBrowserSupabaseClient）で読み書きするため RLS が効く
+ *   - user-scoped browser client（getCareerBrowserSupabaseClient）で読み書きするため RLS が効く
  *     （schema.sql career_values の全行操作は auth.uid() = user_id で閉じる）。
  *   - 1 ユーザー 1 行（UNIQUE(user_id)）。保存は upsert（onConflict=user_id）で冪等。
  *   - never throw。env 未設定 / 失敗時は discriminated result を返し、UI を壊さない。
@@ -16,7 +16,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import {
   enqueueLatestMirrorWrite,
   mirrorWriteKey,
@@ -48,7 +48,7 @@ export async function loadCareerValuesFromSupabase(
   userId: string,
 ): Promise<LoadCareerValuesResult> {
   if (!userId) return { kind: "no-env" };
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return { kind: "no-env" };
 
   try {
@@ -86,7 +86,7 @@ export async function saveCareerValuesToSupabase(
   values: CareerValues,
 ): Promise<SaveCareerValuesResult> {
   if (!userId) return { kind: "no-env" };
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return { kind: "no-env" };
 
   const row = {

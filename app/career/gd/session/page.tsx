@@ -20,7 +20,7 @@ import {
   upsertGdSession,
   appendGdResult,
 } from '../gdStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type {
   CareerGdSession,

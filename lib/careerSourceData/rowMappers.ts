@@ -190,6 +190,9 @@ export function rowToCareerEsLog(row: CareerEsLogRow): CareerEsLog {
   };
   if (row.edited_result) log.editedResult = row.edited_result as CareerEsResult;
   if (typeof meta.companyName === 'string') log.companyName = meta.companyName;
+  // Company Data Spine の canonical key（Phase A / R4）。旧 meta では欠損。
+  if (typeof meta.companyId === 'string' && meta.companyId !== '')
+    log.companyId = meta.companyId;
   if (typeof meta.question === 'string') log.question = meta.question;
   if (typeof meta.charLimit === 'number') log.charLimit = meta.charLimit;
   if (typeof meta.selectionType === 'string')

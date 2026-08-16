@@ -31,6 +31,20 @@ declare namespace NodeJS {
     readonly NEXT_PUBLIC_SUPABASE_MIRROR_DISABLED?: string;
     readonly NEXT_PUBLIC_SUPABASE_OBSERVABILITY_DISABLED?: string;
 
+    // CAREER (就活版) Supabase — 受験版とは別プロジェクト（Project B）。
+    //   boundary: `lib/careerSupabase/env.ts`（受験版 env へは fallback しない）。
+    //   career runtime（identity / mirror / server / service role）は必ずこの系統を使う。
+    readonly NEXT_PUBLIC_CAREER_SUPABASE_URL?: string;
+    readonly NEXT_PUBLIC_CAREER_SUPABASE_ANON_KEY?: string;
+    /** server-only secret. NEXT_PUBLIC_ prefix なし → browser bundle に inline されない。 */
+    readonly CAREER_SUPABASE_SERVICE_ROLE_KEY?: string;
+    /**
+     * server-only secret. マルチGD の join code HMAC pepper
+     * （`app/api/career/gd/room/roomCode.ts`）。**明示設定を推奨**。
+     * 未設定時の fallback は CAREER_SUPABASE_SERVICE_ROLE_KEY のみ。
+     */
+    readonly CAREER_GD_JOIN_CODE_PEPPER?: string;
+
     // Stripe (test mode only — sk_live_* は lib/stripe/server.ts で runtime refuse)
     readonly STRIPE_SECRET_KEY?: string;
     readonly NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?: string;

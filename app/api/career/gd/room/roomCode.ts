@@ -8,14 +8,17 @@
 //   - room_salt は廃止（DDL からも削除）。DB には平文コードを保存しない（hash のみ）。
 //
 // pepper（server-side secret）:
-//   - CAREER_GD_JOIN_CODE_PEPPER を優先。無ければ SUPABASE_SERVICE_ROLE_KEY を fallback。
+//   - CAREER_GD_JOIN_CODE_PEPPER を **明示設定するのが正**（env contract の必須項目）。
+//   - 未設定時の fallback は **CAREER（Project B）の service-role key のみ**。受験版
+//     （Project A / SUPABASE_SERVICE_ROLE_KEY）は絶対に参照しない。Project A の鍵に依存すると
+//     career の join code が受験版プロジェクトの secret に結び付き、分離が崩れる。
 //   - どちらも未設定なら hashJoinCode は null を返す（呼び出し側で 503 にする）。
 //   - pepper 実値はログ出力・クライアント露出しない（本ファイルは server-only）。
 
 import 'server-only';
 
 import { randomInt, createHmac } from 'node:crypto';
-import { getSupabaseServiceRoleKey } from '@/lib/supabase/env';
+import { getCareerSupabaseServiceRoleKey } from '@/lib/careerSupabase/env';
 
 // 6 桁数字コードを生成する（"000000"〜"999999"）。暗号学的乱数を使う。
 export function generateSixDigitJoinCode(): string {
@@ -37,8 +40,8 @@ export function isValidJoinCode(normalized: string): boolean {
 function getJoinCodePepper(): string | null {
   const explicit = process.env.CAREER_GD_JOIN_CODE_PEPPER;
   if (explicit && explicit.trim() !== '') return explicit;
-  // fallback: service-role key（env.ts 経由でのみ読む規約に従う）。
-  const fallback = getSupabaseServiceRoleKey();
+  // fallback: CAREER（Project B）service-role key（career env boundary 経由でのみ読む）。
+  const fallback = getCareerSupabaseServiceRoleKey();
   if (fallback && fallback.trim() !== '') return fallback;
   return null;
 }

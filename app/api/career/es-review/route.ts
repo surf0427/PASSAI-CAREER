@@ -17,11 +17,17 @@ import type {
   CareerEsReview,
   CareerEsReviewBreakdown,
   CareerEsRank,
+  CareerEsSelectionType,
 } from '@/types/careerEs';
 import {
   normalizeCompanyResearchSnapshot,
   formatCompanyResearchContextForPrompt,
 } from '@/lib/careerCompanyResearch/context';
+// prompt は lib へ lift 済み（QA harness から byte 検証するため。route の挙動は不変）。
+import {
+  ES_REVIEW_SYSTEM_PROMPT,
+  buildEsReviewUserMessage,
+} from '@/lib/careerEs/reviewPrompt';
 import { anthropic, extractJson } from '@/lib/ai';
 import {
   AI_BUDGET_PRESET_80S_WALL,
@@ -77,38 +83,6 @@ function deriveRank(score: number): CareerEsRank {
   return 'D';
 }
 
-// 選考種別に応じた「重点的に見る評価観点」の追加指示ブロックを作る。
-// 6 軸スコア（固定）は変えず、コメント・改善点・優先改善の着眼点を選考種別に寄せる。
-// 未指定（none）は基本観点のみで汎用ES として評価するため空文字を返す。
-function buildSelectionReviewInstruction(
-  selectionType: 'main' | 'internship' | null,
-): string {
-  if (selectionType === 'main') {
-    return [
-      '# 選考種別: 本選考（重点評価観点）',
-      'この ES は入社を前提とした本選考向けです。基本観点に加え、特に次を重視して添削してください:',
-      '- 入社後の貢献度（経験から入社後の活躍・再現性が見えるか）。',
-      '- 企業適合性（本人の強み・価値観と企業の方向性が結びついているか）。',
-      '- 志望度の具体性（「なぜこの会社か」「なぜこの職種か」が伝わるか）。',
-      '- 他社にも通用する汎用文になっていないか（差別化・具体性）。',
-      '- 「学びたい」「成長したい」だけの受け身表現に寄りすぎていないか。',
-      '- 採用担当が「採用する理由」を感じられるか。',
-    ].join('\n');
-  }
-  if (selectionType === 'internship') {
-    return [
-      '# 選考種別: インターン応募（重点評価観点）',
-      'この ES はインターンシップ応募向けです。基本観点に加え、特に次を重視して添削してください:',
-      '- 参加目的の明確さ（インターンで何を得たいか・検証したい仮説があるか）。',
-      '- 業界・企業への関心、業務理解への意欲。',
-      '- 学習意欲・成長ポテンシャル・主体性（受け身でないか）。',
-      '- 本選考につながる自然さがあるか。',
-      '- 内定欲・入社意思が強すぎる断定表現になっていないか（応募段階はインターン参加）。',
-    ].join('\n');
-  }
-  return '';
-}
-
 // AI 出力（パース済み unknown）を CareerEsReview 形状に正規化する。
 // overallScore / rank は AI の値を使わず、breakdown から決定論で再計算する。
 function normalizeReview(raw: unknown): CareerEsReview {
@@ -140,75 +114,6 @@ function normalizeReview(raw: unknown): CareerEsReview {
   };
 }
 
-// ── system prompt（就活ES添削者） ────────────────────────────────
-
-const SYSTEM_PROMPT = [
-  'あなたは、日本の新卒就職活動のエントリーシート（ES）を添削する専門家です。',
-  '学生が書いた ES 回答 1 本を採点・添削し、本人が自分で直せるように具体的に助言します。',
-  '',
-  '【評価する観点】',
-  '次の観点で本文の質のみを評価してください（与えられた回答文の範囲だけで判断する）:',
-  '- 設問に正面から答えているか',
-  '- 結論が先にあるか（結論ファースト）',
-  '- 主張の根拠が十分か',
-  '- エピソードが具体的か（数字・固有名詞・行動が見えるか）',
-  '- 学び・成長が言語化されているか',
-  '- 入社後の活躍や仕事への接続があるか',
-  '- 冗長でないか・一文が長すぎないか',
-  '- 誤字脱字・表記の乱れ',
-  '- 読みやすさ（構成・接続・リズム）',
-  '- 企業名が与えられている場合は、その企業・業界との整合性',
-  '',
-  '【6 軸スコア（各 0〜100 の整数）】',
-  '- logic: 論理性（結論→根拠→具体→学びの一貫性）',
-  '- specificity: 具体性（エピソード・数字・行動の具体度）',
-  '- originality: オリジナリティ（その人固有の経験・視点か、テンプレ的でないか）',
-  '- readability: 読みやすさ（文の長さ・構成・誤字脱字）',
-  '- persuasion: 説得力（採用担当が納得できるか）',
-  '- companyFit: 企業適合性（企業名がある場合はその企業/業界との整合、ない場合は志望文脈への接続の自然さ）',
-  '',
-  '【絶対のルール】',
-  '- 与えられた回答文に書かれていない事実（実績・数値・所属・体験）を捏造しない。',
-  '- 本文の代筆・完成例・「こう書きましょう」という書き換え文を一切出さない。',
-  '  あなたの役割は評価と助言であり、本人が自分で書き直せるようにすること。',
-  '- 改善点・優先改善は「次に何をすればよいか」が分かる行動レベルの指示にする。',
-  '  「具体性を上げましょう」のような抽象的な助言だけで終えない。',
-  '- ランクや総合点は書かなくてよい（スコアから自動で決まる）。breakdown の 6 軸を必ず埋める。',
-  '',
-  '【missingElements（不足している要素）のルール】',
-  '- この回答に足りていない観点・エピソード要素を指摘する（例:「成果を示す数字」「主体的に動いた具体行動」「なぜその会社かの根拠」）。',
-  '- 本文を書き足すのではなく、「何が欠けているか」を要素として挙げる。',
-  '',
-  '【recruiterComments（採用担当視点コメント）のルール】',
-  '- 採用担当がこの回答を読んだときにどう受け取るかを、担当者の視点で率直に述べる。',
-  '  例:「行動力は伝わる」「主体性が弱い」「成果の具体性が不足」「志望理由が浅い」。',
-  '- 良い受け取りも懸念も両方含めてよい。合否の断定はしない。',
-  '',
-  '【出力ルール】',
-  '- 返答は必ず 1 つの JSON オブジェクトのみ。',
-  '- JSON の前後に説明文・コメント・挨拶・コードブロック記号（```）を一切書かない。',
-  '- 出力の 1 文字目が { 、最後の文字が } であること。',
-  '- すべてのキー・文字列値をダブルクォートで囲むこと。',
-  '',
-  '出力形式:',
-  '{',
-  '  "overallComment": string,        // 総評（全体所感、2〜3文）',
-  '  "breakdown": {',
-  '    "logic": number,               // 0〜100',
-  '    "specificity": number,         // 0〜100',
-  '    "originality": number,         // 0〜100',
-  '    "readability": number,         // 0〜100',
-  '    "persuasion": number,          // 0〜100',
-  '    "companyFit": number           // 0〜100',
-  '  },',
-  '  "strengths": string[],           // 良かった点（最大5件）',
-  '  "improvements": string[],        // 改善点（行動レベル、最大5件）',
-  '  "missingElements": string[],     // 不足している要素（最大5件）',
-  '  "recruiterComments": string[],   // 採用担当視点コメント（最大5件）',
-  '  "priorityActions": string[]      // 優先的に直すべき順（最大5件、0番目が最重要）',
-  '}',
-].join('\n');
-
 export async function POST(req: Request) {
   let body: unknown;
   try {
@@ -235,13 +140,12 @@ export async function POST(req: Request) {
     typeof b.charLimit === 'number' && Number.isFinite(b.charLimit) && b.charLimit > 0
       ? Math.floor(b.charLimit)
       : null;
-  // 応募メタ（添削時の企業適合性・整合性評価の文脈に使う）。未指定は許容する。
-  const selectionType: 'main' | 'internship' | null =
+  // 応募メタ（添削時の企業適合性・整合性評価の文脈に使う）。
+  // 新規作成では必須だが、旧ログ（旧「指定なし」= 欠損）からの再添削もあるため未指定を許容する。
+  const selectionType: CareerEsSelectionType | null =
     b.selectionType === 'main' || b.selectionType === 'internship'
       ? b.selectionType
       : null;
-  // 選考種別に応じた追加の評価観点。未指定（none）は基本観点のみで汎用ESとして評価する。
-  const selectionInstruction = buildSelectionReviewInstruction(selectionType);
   const industry = str(b.industry);
   const jobType = str(b.jobType);
   // 保存済み企業研究（任意・1 件）。あれば回答との整合性評価に使う。
@@ -273,21 +177,19 @@ export async function POST(req: Request) {
       ].join('\n')
     : '';
 
-  // user メッセージ: 設問・企業名・文字数（あれば）+ 企業研究（あれば）+ 添削対象本文。
-  const userMessage = [
-    question ? `# ES設問\n${question}` : '',
-    selectionInstruction,
-    companyName ? `# 志望企業\n${companyName}` : '',
-    industry ? `# 志望業界\n${industry}` : '',
-    jobType ? `# 志望職種\n${jobType}` : '',
-    charLimit ? `# 指定文字数\n${charLimit} 字（±10% 以内を目安）` : '',
+  // user メッセージ: ES 設定（設問 / 文字数 / 企業名 / 業界 / 職種 / 選考種別）を
+  // 提出先コンテキスト + 添削基準として積み、最後に添削対象本文を置く。
+  // 欠損項目（旧ログ）はブロックごと出さない（AI に埋めさせない）。
+  const userMessage = buildEsReviewUserMessage({
+    answer,
+    question,
+    charLimit,
+    companyName,
+    industry,
+    jobType,
+    selectionType,
     researchInstruction,
-    `# 添削対象の回答本文\n${answer}`,
-    '',
-    '上記の回答本文を、指定の JSON 形式で添削してください。事実を捏造しないでください。',
-  ]
-    .filter((s) => s !== '')
-    .join('\n\n');
+  });
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（生成系と同方針）。
@@ -312,7 +214,7 @@ export async function POST(req: Request) {
           model: MODEL,
           max_tokens: MAX_TOKENS,
           temperature: attempt === 2 ? 0 : 0.4,
-          system: SYSTEM_PROMPT,
+          system: ES_REVIEW_SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userMessage }],
         },
         { signal: createTimeoutSignal(callTimeoutMs) },

@@ -8,6 +8,7 @@ import type {
   CareerCompanyResearchRevision,
   CareerCompanyResearchExtractionStatus,
   CareerCompanyInterestLevel,
+  CompanyEventType,
 } from '@/types/careerCompanyResearch';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 
@@ -34,6 +35,19 @@ function interestLevel(value: unknown): CareerCompanyInterestLevel | null {
   return value === 'high' || value === 'mid' || value === 'low' || value === 'watch'
     ? value
     : null;
+}
+
+// User Private Evidence の情報源種別（R5）。未知値は undefined（未指定）に倒す。
+function companyEventType(value: unknown): CompanyEventType | undefined {
+  return value === 'briefing' ||
+    value === 'ob_visit' ||
+    value === 'internship' ||
+    value === 'employee_talk' ||
+    value === 'material' ||
+    value === 'selection' ||
+    value === 'own_note'
+    ? value
+    : undefined;
 }
 
 function extractionStatus(value: unknown): CareerCompanyResearchExtractionStatus {
@@ -92,7 +106,7 @@ function normalizeInput(raw: unknown): CareerCompanyResearchInput {
   const legacyText = migrateLegacyInputText(r);
   const manualMemo = str(r.manualMemo) || legacyText;
   const verifiedResearchText = str(r.verifiedResearchText) || manualMemo;
-  return {
+  const input: CareerCompanyResearchInput = {
     companyName: str(r.companyName),
     industry: str(r.industry),
     interestLevel: interestLevel(r.interestLevel),
@@ -103,6 +117,15 @@ function normalizeInput(raw: unknown): CareerCompanyResearchInput {
     verifiedResearchText,
     sources: str(r.sources),
   };
+  // Company Identity（R3）: 欠損が正常。空文字は「未紐付け」として落とす。
+  const companyId = str(r.companyId).trim();
+  if (companyId) input.companyId = companyId;
+  // User Private Evidence の構造化（R5）: どちらも optional。未知値は捨てる。
+  const eventType = companyEventType(r.eventType);
+  if (eventType) input.eventType = eventType;
+  const observedPeriod = str(r.observedPeriod).trim();
+  if (observedPeriod) input.observedPeriod = observedPeriod;
+  return input;
 }
 
 function normalizeBreakdown(raw: unknown): CareerCompanyResearchBreakdown {
@@ -192,6 +215,9 @@ function normalizeLog(raw: unknown): CareerCompanyResearchLog | null {
     revisionHistory: normalizeRevisionHistory(r.revisionHistory),
   };
   if (typeof r.favorite === 'boolean') log.favorite = r.favorite;
+  // Company Identity（R3）: log 直下 → input の順で拾う。欠損が正常（旧ログは常に欠損）。
+  const companyId = str(r.companyId).trim() || (input.companyId ?? '');
+  if (companyId) log.companyId = companyId;
   return log;
 }
 

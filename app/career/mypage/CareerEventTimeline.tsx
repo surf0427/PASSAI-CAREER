@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { listRecentCareerEvents } from '@/lib/careerEvents/read';
 import { toEventTimelineItems, type EventTimelineItem } from '@/lib/careerEvents/timeline';
 

@@ -29,7 +29,7 @@
 
 import 'server-only';
 
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import {
   isAggregatedInsightReadEnabled,
   isAggregatedInsightConsultationEnabled,
@@ -116,7 +116,7 @@ export async function probeAggregatedInsightGates(input: {
     // 5) canary（shared auth UID。**anon server client のみ**。privileged client ではない）。
     let uid: string | null = null;
     try {
-      const client = await getServerSupabaseClient();
+      const client = await getCareerServerSupabaseClient();
       const { data } = (await client?.auth.getUser()) ?? { data: null };
       uid = data?.user?.id ?? null;
     } catch {

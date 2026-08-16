@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CareerProfile } from '@/types/careerProfile';
 import { saveBasicInfo, loadBasicInfo } from './profileStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
   loadCareerProfileFromSupabase,
   saveCareerProfileToSupabase,

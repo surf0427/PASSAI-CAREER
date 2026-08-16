@@ -4,7 +4,7 @@
  * career_user_events の本人向け read helper（P9-B）。
  *
  *   - 既存 mirror helper（lib/supabase/career*.ts の list*）と同じ boundary 設計:
- *       * getBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
+ *       * getCareerBrowserSupabaseClient() 経由（anon key + user session、RLS で owner に閉じる）。
  *       * never throw（best-effort）。userId が空（guest）/ env 未設定なら **空配列**。
  *       * fetch error は握りつぶし空配列を返す（呼び出し側 mypage を壊さない）。
  *   - owner scope（.eq('user_id', ...) + RLS 二重）で occurred_at desc 直近 N 件のみ取得。
@@ -14,7 +14,7 @@
  */
 
 import { devWarn } from '@/lib/devLog';
-import { getBrowserSupabaseClient } from '@/lib/supabase/browserClient';
+import { getCareerBrowserSupabaseClient } from '@/lib/careerSupabase/browserClient';
 import type { RecentCareerEventRow } from './timeline';
 
 const TABLE = 'career_user_events';
@@ -34,7 +34,7 @@ export async function listRecentCareerEvents(
   limit: number = DEFAULT_LIMIT,
 ): Promise<RecentCareerEventRow[]> {
   if (!userId) return []; // guest は Event Log を持たない
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return []; // env 未設定 = mirror 無効 = 空
 
   const safeLimit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit) || DEFAULT_LIMIT));

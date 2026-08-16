@@ -24,7 +24,7 @@ import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import { loadActivityData, hasAnyActivity } from '@/app/career/activity/activityStorage';
 import { loadCareerValues } from '@/app/career/values/careerValuesStorage';
 import { loadSelfAnalysisLogs } from '../selfAnalysisStorage';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { buildSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 import {
   collapseSelfAnalysisRevisions,

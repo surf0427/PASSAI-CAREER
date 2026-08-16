@@ -7,8 +7,8 @@
  *
  * 安全境界（受験版 serviceRoleClient.ts と同方針）:
  *   - `import 'server-only'`: client bundle に紛れたら build error。
- *   - key は career env boundary 経由でのみ読む（CAREER_SUPABASE_SERVICE_ROLE_KEY
- *     ?? SUPABASE_SERVICE_ROLE_KEY）。実値はログ出力しない。
+ *   - key は career env boundary 経由でのみ読む（CAREER_SUPABASE_SERVICE_ROLE_KEY のみ。
+ *     受験版 Project A の service-role key へは fallback しない）。実値はログ出力しない。
  *   - `typeof window !== 'undefined'` runtime guard で最終防衛。
  *   - `autoRefreshToken: false / persistSession: false`: cookie / storage に session を
  *     残さない。

@@ -34,7 +34,9 @@ import {
   updateEsLog,
 } from '../esStorage';
 import { EsReviewPanel } from '../components/EsReviewPanel';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { buildEsReviewRequestBody } from '@/lib/careerEs/reviewRequest';
+import { esSelectionTypeLabel } from '@/lib/careerEs/esSettings';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 // P17-M1: ES canonical ログ確定後の Personal Memory shadow-write（flag OFF/canary deny では no-op・fire-and-forget）。
@@ -44,12 +46,6 @@ import type { CareerEsLog, CareerEsReview } from '@/types/careerEs';
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
-
-function selectionTypeLabel(type: CareerEsLog['selectionType']): string {
-  if (type === 'main') return '本選考';
-  if (type === 'internship') return 'インターン応募';
-  return '';
-}
 
 export default function CareerEsEditorPage() {
   const router = useRouter();
@@ -129,16 +125,14 @@ export default function CareerEsEditorPage() {
       const res = await fetch('/api/career/es-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          answer,
-          question: log.question,
-          companyName: log.companyName,
-          charLimit: log.charLimit,
-          selectionType: log.selectionType,
-          industry: log.industry,
-          jobType: log.jobType,
-          companyResearchContext: log.companyResearchSnapshot,
-        }),
+        // draft の初回添削と同じ builder で ES 設定 6 項目を送る。
+        // 旧ログ（項目欠損 / 旧「指定なし」）は '' / null として送られ、route 側で未指定扱いになる。
+        body: JSON.stringify(
+          buildEsReviewRequestBody(
+            { ...log, companyResearchContext: log.companyResearchSnapshot },
+            answer,
+          ),
+        ),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
@@ -240,7 +234,7 @@ export default function CareerEsEditorPage() {
           {log.companyName && <span>企業: {log.companyName}</span>}
           {log.industry && <span>業界: {log.industry}</span>}
           {log.jobType && <span>職種: {log.jobType}</span>}
-          {log.selectionType && <span>{selectionTypeLabel(log.selectionType)}</span>}
+          {log.selectionType && <span>{esSelectionTypeLabel(log.selectionType)}</span>}
           {log.charLimit && <span>指定 {log.charLimit} 字</span>}
           <span>版 v{log.version ?? 1}</span>
         </div>

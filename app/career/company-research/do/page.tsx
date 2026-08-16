@@ -43,7 +43,7 @@ import {
   extractTextFromFile,
   applyExtraction,
 } from '../extraction';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerCompanyResearchLogsToSupabase } from '@/lib/supabase/careerCompanyResearch';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
@@ -53,8 +53,12 @@ import type { CareerActivity } from '@/types/careerActivity';
 import type { CareerValues } from '@/types/careerValues';
 import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import { CompanyPicker } from '@/components/career/CompanyPicker';
+import { loadCompanyApplicationDefaults } from '@/app/career/company/applicationStorage';
 import {
   CAREER_COMPANY_INTEREST_LABELS,
+  CAREER_COMPANY_EVENT_TYPE_LABELS,
+  type CompanyEventType,
   type CareerCompanyInterestLevel,
   type CareerCompanyResearchFile,
   type CareerCompanyResearchInput,
@@ -77,6 +81,17 @@ function newId(): string {
 }
 
 const INTEREST_OPTIONS: CareerCompanyInterestLevel[] = ['high', 'mid', 'low', 'watch'];
+
+// User Private Evidence の情報源種別（R5）。表示順は固定（決定論）。
+const EVENT_TYPE_OPTIONS: CompanyEventType[] = [
+  'briefing',
+  'ob_visit',
+  'internship',
+  'employee_talk',
+  'material',
+  'selection',
+  'own_note',
+];
 
 type ReviewResult = {
   review: CareerCompanyResearchReview;
@@ -115,6 +130,11 @@ function CompanyResearchDoInner() {
 
   // 基本情報・素材入力。
   const [companyName, setCompanyName] = useState('');
+  // Company Data Spine の canonical key（R3）。未紐付け（undefined）が正常。
+  const [companyId, setCompanyId] = useState<string | undefined>(undefined);
+  // User Private Evidence の構造化（R5）。どちらも任意。
+  const [eventType, setEventType] = useState<CompanyEventType | null>(null);
+  const [observedPeriod, setObservedPeriod] = useState('');
   const [industry, setIndustry] = useState('');
   const [interestLevel, setInterestLevel] = useState<CareerCompanyInterestLevel | null>(null);
   const [manualMemo, setManualMemo] = useState('');
@@ -152,11 +172,27 @@ function CompanyResearchDoInner() {
   useEffect(() => {
     if (!isMounted || loadedRef.current) return;
     loadedRef.current = true;
-    if (!editingId) return;
+    if (!editingId) {
+      // 企業詳細ページからの遷移（?companyId=&companyName=）。新規作成時のみ初期値に使う。
+      // ★ lazy linkage: 既存ログを一括 migration せず、この導線を通ったときだけ紐付く。
+      const paramCompanyId = searchParams.get('companyId')?.trim() ?? '';
+      const paramCompanyName = searchParams.get('companyName')?.trim() ?? '';
+      if (paramCompanyId && paramCompanyName) {
+        setCompanyId(paramCompanyId);
+        setCompanyName(paramCompanyName);
+      } else if (paramCompanyName) {
+        setCompanyName(paramCompanyName);
+      }
+      return;
+    }
     const log = loadCompanyResearchLog(editingId);
     if (!log) return;
     setEditingLog(log);
     setCompanyName(log.input.companyName || log.companyName);
+    // 旧ログには companyId が無い（欠損が正常）。あれば引き継ぐ。
+    setCompanyId(log.companyId ?? log.input.companyId);
+    setEventType(log.input.eventType ?? null);
+    setObservedPeriod(log.input.observedPeriod ?? '');
     setIndustry(log.input.industry || log.industry);
     setInterestLevel(log.input.interestLevel ?? log.interestLevel);
     setManualMemo(log.input.manualMemo);
@@ -164,7 +200,7 @@ function CompanyResearchDoInner() {
     setSources(log.input.sources);
     setFiles(log.input.uploadedFiles);
     setVerifiedResearchText(log.input.verifiedResearchText);
-  }, [isMounted, editingId]);
+  }, [isMounted, editingId, searchParams]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // 横断コンテキスト（添削・すり合わせの材料）。
@@ -328,6 +364,12 @@ function CompanyResearchDoInner() {
         verifiedResearchText: verifiedResearchText.trim(),
         sources: sources.trim(),
       };
+      // Company Identity（R3）/ Private Evidence の構造化（R5）: いずれも optional。
+      // 未指定なら field ごと作らない（旧ログと同じ形を保つ）。
+      const linkedCompanyId = companyId?.trim();
+      if (linkedCompanyId) input.companyId = linkedCompanyId;
+      if (eventType) input.eventType = eventType;
+      if (observedPeriod.trim()) input.observedPeriod = observedPeriod.trim();
       const revision: CareerCompanyResearchRevision = {
         revisionId: newId(),
         verifiedResearchText: input.verifiedResearchText,
@@ -343,6 +385,7 @@ function CompanyResearchDoInner() {
         saved = {
           ...editingLog,
           companyName: input.companyName,
+          ...(linkedCompanyId ? { companyId: linkedCompanyId } : {}),
           industry: input.industry,
           interestLevel,
           input,
@@ -359,6 +402,7 @@ function CompanyResearchDoInner() {
           createdAt: now,
           updatedAt: now,
           companyName: input.companyName,
+          ...(linkedCompanyId ? { companyId: linkedCompanyId } : {}),
           industry: input.industry,
           interestLevel,
           input,
@@ -421,17 +465,22 @@ function CompanyResearchDoInner() {
       {/* STEP 1: 企業の基本情報 */}
       <StepCard step={1} title="企業の基本情報">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-bold text-slate-800 mb-2">
-              企業名 <span className="text-red-500">*</span>
-            </label>
-            <Input
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="例: 〇〇株式会社"
-              disabled={busy}
-            />
-          </div>
+          {/* 企業名: 登録済み企業の選択 or 従来どおりの直接入力（free-text fallback）。 */}
+          <CompanyPicker
+            value={{ companyId, companyName }}
+            onChange={(next) => {
+              setCompanyId(next.companyId);
+              setCompanyName(next.companyName);
+              // Application Context（R6）の初期値供給。空欄のときだけ入れる（上書きしない）。
+              if (!next.companyId) return;
+              const defaults = loadCompanyApplicationDefaults(next.companyId);
+              if (defaults.interestLevel && interestLevel === null) {
+                setInterestLevel(defaults.interestLevel);
+              }
+            }}
+            required
+            disabled={busy}
+          />
           <div>
             <label className="block text-sm font-bold text-slate-800 mb-2">業界（任意）</label>
             <Input
@@ -441,6 +490,43 @@ function CompanyResearchDoInner() {
               disabled={busy}
             />
           </div>
+        </div>
+
+        {/* User Private Evidence の構造化（R5）: どこで・いつ得た情報か。任意。 */}
+        <label className="block text-sm font-bold text-slate-800 mb-2">
+          どこで得た情報ですか？（任意）
+        </label>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <InterestButton
+            label="指定なし"
+            active={eventType === null}
+            onClick={() => setEventType(null)}
+            disabled={busy}
+          />
+          {EVENT_TYPE_OPTIONS.map((kind) => (
+            <InterestButton
+              key={kind}
+              label={CAREER_COMPANY_EVENT_TYPE_LABELS[kind]}
+              active={eventType === kind}
+              onClick={() => setEventType(kind)}
+              disabled={busy}
+            />
+          ))}
+        </div>
+
+        <div className="mb-4 sm:max-w-xs">
+          <label className="block text-sm font-bold text-slate-800 mb-2">
+            いつ得た情報ですか？（任意）
+          </label>
+          <Input
+            value={observedPeriod}
+            onChange={(e) => setObservedPeriod(e.target.value)}
+            placeholder="例: 2026-05"
+            disabled={busy}
+          />
+          <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+            選考情報は時期によって変わります。あとで見返すときの目安になります。
+          </p>
         </div>
         <label className="block text-sm font-bold text-slate-800 mb-2">志望度（任意）</label>
         <div className="flex flex-wrap gap-2">

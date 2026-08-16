@@ -62,8 +62,13 @@ export type CareerInterviewPhase =
 
 // 面接の前段で入力する受験先・選考情報。companyName のみ必須、他は任意。
 export type CareerInterviewTarget = {
-  // 志望企業名（必須）。
+  // 志望企業名（必須）。★ Company Identity 導入後も **required のまま維持する**。
   companyName: string;
+  // Company Data Spine の canonical key（Phase A / R5・optional・後方互換）。
+  //   - 登録済み企業を選んだときだけ入る。欠損（未登録・free-text・旧 target）が正常。
+  //   - ★ 不変条件: companyId があるなら companyName も必ず非空
+  //     （normalizeInterviewTarget が companyName 空を null に倒すため構造的に担保される）。
+  companyId?: string;
   // 志望業界（任意）。
   industry?: string;
   // 志望職種（任意）。

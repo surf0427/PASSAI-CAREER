@@ -11,8 +11,8 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
-import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 import { generateSixDigitJoinCode, hashJoinCode } from '../roomCode';
 import { parseParticipantCount } from '@/lib/careerGd/participantCount';
 import { parseRoomThemeInput } from '@/lib/careerGd/roomThemeInput';
@@ -94,9 +94,9 @@ export async function POST(req: Request) {
   const theme = themeParsed.theme;
 
   // ── 2) 認証（member ログイン必須・guest/匿名は拒否） ──
-  const authClient = await getServerSupabaseClient();
+  const authClient = await getCareerServerSupabaseClient();
   if (!authClient) {
-    // env（NEXT_PUBLIC_SUPABASE_URL / ANON_KEY）未設定。
+    // CAREER env（NEXT_PUBLIC_CAREER_SUPABASE_URL / _ANON_KEY）未設定。
     return jsonError('SUPABASE_UNAVAILABLE', 'サーバのデータベース設定が未完了です。時間をおいて再度お試しください。', 503);
   }
   const { data: userData, error: userErr } = await authClient.auth.getUser();
@@ -115,9 +115,9 @@ export async function POST(req: Request) {
   // ── 3) service-role クライアント（未設定なら分かりやすく失敗） ──
   let admin: SupabaseClient;
   try {
-    admin = getServiceRoleSupabaseClient();
+    admin = getCareerServiceRoleSupabaseClient();
   } catch {
-    // SUPABASE_SERVICE_ROLE_KEY 未設定など。実値はログにも出さない。
+    // CAREER_SUPABASE_SERVICE_ROLE_KEY 未設定など。実値はログにも出さない。
     return jsonError('SERVER_DB_UNCONFIGURED', 'サーバのデータベース設定が未完了です。管理者にお問い合わせください。', 503);
   }
 

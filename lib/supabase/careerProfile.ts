@@ -6,7 +6,7 @@
  * 役割（lib/supabase/careerValues.ts と同形）:
  *   - localStorage（app/career/profile/profileStorage.ts, key='careerBasicFormData'）が
  *     canonical。本 table はログイン済み（member）ユーザーの durable mirror。
- *   - user-scoped browser client（getBrowserSupabaseClient）で読み書きするため RLS が効く。
+ *   - user-scoped browser client（getCareerBrowserSupabaseClient）で読み書きするため RLS が効く。
  *   - 1 ユーザー 1 行（UNIQUE(user_id)）。保存は upsert（onConflict=user_id）で冪等。
  *   - never throw。env 未設定 / 失敗時は discriminated result または void を返し UI を壊さない。
  *
@@ -14,7 +14,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import {
   enqueueLatestMirrorWrite,
   mirrorWriteKey,
@@ -42,7 +42,7 @@ export async function loadCareerProfileFromSupabase(
   userId: string,
 ): Promise<LoadCareerProfileResult> {
   if (!userId) return { kind: "no-env" };
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return { kind: "no-env" };
 
   try {
@@ -76,7 +76,7 @@ export async function saveCareerProfileToSupabase(
   profile: CareerProfile,
 ): Promise<void> {
   if (!userId) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const pref = Array.isArray(profile.preferences) ? profile.preferences[0] : undefined;

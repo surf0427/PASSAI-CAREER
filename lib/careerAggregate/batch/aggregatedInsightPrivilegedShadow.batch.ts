@@ -26,8 +26,10 @@
  *   5 shared canary UID 解決 → 6 real-mode 確認（compose 内）→ 7 privileged client 生成（compose 内）→
  *   8 synthetic-only query → 9 governance → 10 safe projection → 11 renderer → 12 evidence。
  *
- * canary identity は **shared Supabase auth UID**（getServerSupabaseClient の session）を使う。
- * CAREER OTP（careerSupabase）の UID は使わない。UID を evidence / console / response へ出さない。
+ * canary identity は **CAREER Supabase（Project B）の auth UID**
+ * （getCareerServerSupabaseClient の session）を使う。Project B 完全分離により career runtime の
+ * UID 空間は CAREER OTP セッションに一本化された（旧: 受験版 shared UID）。
+ * UID を evidence / console / response へ出さない。
  *
  * synthetic-only 固定。real mode は compose が blocked に倒す（有効化できない）。
  * Layer 5 / Personal Memory 依存なし。secret / client metadata を返さない。
@@ -35,7 +37,7 @@
 
 import 'server-only';
 
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import { getSharedServiceRoleReadPort } from '@/lib/careerDataSpineDb/sharedServiceRolePorts.server';
 import { createSyntheticShadowReadRepository } from '@/lib/careerAggregate/syntheticShadowReadRepository';
 import {
@@ -65,7 +67,7 @@ const readSyntheticArtifact: SyntheticShadowReadFn = (read, now) =>
  */
 async function resolveSharedAuthUserId(): Promise<SharedAuthUserId | null> {
   try {
-    const client = await getServerSupabaseClient();
+    const client = await getCareerServerSupabaseClient();
     if (!client) return null;
     const { data } = await client.auth.getUser();
     return data?.user?.id ?? null;

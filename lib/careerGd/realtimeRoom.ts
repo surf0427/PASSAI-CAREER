@@ -26,7 +26,7 @@
 
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
-import { getBrowserSupabaseClient } from '@/lib/supabase/browserClient';
+import { getCareerBrowserSupabaseClient } from '@/lib/careerSupabase/browserClient';
 import type {
   CareerGdRoom,
   CareerGdRoomMember,
@@ -259,7 +259,7 @@ export class CareerGdRealtimeRoom {
   // 購読開始。既に channel があるなら何もしない（重複購読禁止）。
   subscribe(): void {
     if (this.channel) return;
-    const client = getBrowserSupabaseClient();
+    const client = getCareerBrowserSupabaseClient();
     if (!client) {
       // env 未設定 = Realtime 無効。UI は Presence 無し（全員 offline 表示）で継続する。
       this.setConnectionState('disconnected');
@@ -351,7 +351,7 @@ export class CareerGdRealtimeRoom {
   unsubscribe(): void {
     this.intentionalClose = true;
     this.clearReconnectTimer();
-    const client = getBrowserSupabaseClient();
+    const client = getCareerBrowserSupabaseClient();
     const channel = this.channel;
     this.channel = null;
     if (channel) {
@@ -461,7 +461,7 @@ export class CareerGdRealtimeRoom {
 
   // channel だけを畳む（intentionalClose フラグは変えない = 再接続経路で使う）。
   private teardownChannel(): void {
-    const client = getBrowserSupabaseClient();
+    const client = getCareerBrowserSupabaseClient();
     const channel = this.channel;
     this.channel = null;
     if (channel) {

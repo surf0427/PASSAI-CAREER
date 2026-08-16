@@ -1,7 +1,8 @@
 /**
  * Data Spine DB boundary — shared server client → port adapter（P17-E §4）。
  *
- * server-only。既存の shared server Supabase client factory（lib/supabase/serverClient）を
+ * server-only。CAREER 専用（Project B）server Supabase client factory
+ * （lib/careerSupabase/serverClient）を
  * **再利用**して DataSpine port へ変換する。本モジュールは client を新規実装しない・env 値を読まない
  * （factory 内部の env 解決には触れない）・URL/key/session をログに出さない。
  *
@@ -16,7 +17,7 @@
 
 import 'server-only';
 
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import { adaptBatchPort, adaptReadPort, adaptWritePort, type SupabaseLikeClient } from './client';
 import type {
   DataSpineBatchPort,
@@ -38,7 +39,7 @@ export type SharedDataSpinePorts = {
  */
 export async function getSharedDataSpinePorts(): Promise<SharedDataSpinePorts | null> {
   try {
-    const client = await getServerSupabaseClient();
+    const client = await getCareerServerSupabaseClient();
     if (!client) return null;
     // 構造的に SupabaseLikeClient と一致（.from().select()/insert()/update()/upsert()）。raw は封じ込める。
     const like = client as unknown as SupabaseLikeClient;

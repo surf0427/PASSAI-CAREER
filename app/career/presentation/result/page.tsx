@@ -30,7 +30,7 @@ import {
   getSelectionTypeLabel,
   evalFocusLabels,
 } from '../presentationModes';
-import { useCurrentUserId } from '@/app/components/AuthProvider';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerPresentationResultsToSupabase } from '@/lib/supabase/careerPresentation';
 import type {
   CareerPresentationResult,

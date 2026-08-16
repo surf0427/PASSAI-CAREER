@@ -22,7 +22,8 @@
  * TTL 上書き（QA / 運用調整用・省略時は既定値）:
  *   - `?waitingTtlMin=`（既定 60）/ `?activeTtlMin=`（既定 180）/ `?queueTtlDays=`（既定 7）。負値は 0 に丸め。
  *
- * 必要 env: CRON_SECRET / SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_SUPABASE_URL
+ * 必要 env: CRON_SECRET / CAREER_SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_CAREER_SUPABASE_URL
+ * （career_gd_* は CAREER 専用 Supabase = Project B に存在する。受験版 Project A は参照しない）
  * env 未設定でも build は落ちない（実行時に 401/500 で安全に失敗）。
  */
 
@@ -32,7 +33,7 @@ import { NextResponse } from 'next/server';
 
 import { devWarn } from '@/lib/devLog';
 import { captureRouteException } from '@/lib/sentry/capture';
-import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -72,7 +73,7 @@ async function handle(req: Request) {
   const startedAt = new Date().toISOString();
 
   try {
-    const admin = getServiceRoleSupabaseClient();
+    const admin = getCareerServiceRoleSupabaseClient();
 
     // 1) waiting match_queue の期限切れ → expired。
     let expiredQueueCount = 0;

@@ -14,7 +14,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type {
   CareerCompanyResearchLog,
   CareerCompanyResearchInput,
@@ -29,6 +29,8 @@ const TABLE = "career_company_research_logs";
 type CompanyResearchRow = {
   client_id: string;
   company_name: string;
+  // Company Data Spine の canonical key（Phase A / R3）。旧行では null。
+  company_id: string | null;
   industry: string;
   interest_level: string | null;
   input: unknown;
@@ -53,13 +55,14 @@ export async function upsertCareerCompanyResearchLogsToSupabase(
   logs: CareerCompanyResearchLog[],
 ): Promise<void> {
   if (!userId || logs.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = logs.map((log) => ({
     user_id: userId,
     client_id: log.id,
     company_name: log.companyName ?? "",
+    company_id: log.companyId ?? null,
     industry: log.industry ?? "",
     interest_level: log.interestLevel ?? null,
     input: log.input ?? {},
@@ -87,14 +90,14 @@ export async function listCareerCompanyResearchLogsFromSupabase(
   userId: string,
 ): Promise<CareerCompanyResearchLog[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {
     const { data, error } = await supabase
       .from(TABLE)
       .select(
-        "client_id, company_name, industry, interest_level, input, review, fit_analysis, interview_context_summary, revision_history, favorite, created_at, updated_at",
+        "client_id, company_name, company_id, industry, interest_level, input, review, fit_analysis, interview_context_summary, revision_history, favorite, created_at, updated_at",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
@@ -107,6 +110,10 @@ export async function listCareerCompanyResearchLogsFromSupabase(
       createdAt: row.created_at,
       updatedAt: row.updated_at ?? row.created_at,
       companyName: row.company_name ?? "",
+      // 旧行は null。欠損のまま返して呼び出し側の defensive normalize に任せる。
+      ...(typeof row.company_id === "string" && row.company_id !== ""
+        ? { companyId: row.company_id }
+        : {}),
       industry: row.industry ?? "",
       interestLevel: interestLevel(row.interest_level),
       input: (row.input ?? {}) as CareerCompanyResearchInput,

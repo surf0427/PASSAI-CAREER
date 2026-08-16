@@ -54,6 +54,9 @@ export type CareerPresentationSelectionType = 'main' | 'internship';
 // localStorage 下書きキー: 'careerPresentationTargetDraft'。
 export type CareerPresentationTarget = {
   companyName?: string;
+  // Company Data Spine の canonical key（Phase A / R6・optional・後方互換）。
+  // 登録済み企業を選んだときだけ入る。旧 target・未登録企業では欠損が正常。
+  companyId?: string;
   industry?: string;
   jobType?: string;
   scenario?: CareerPresentationScenario;
@@ -71,6 +74,10 @@ export type CareerPresentationTarget = {
 export type CareerPresentationConfig = {
   scenario?: CareerPresentationScenario;
   companyName?: string;
+  // Company Data Spine の canonical key（Phase A / R6・optional）。target 由来。
+  // ★ target と config で companyName が複製されているため companyId も両方に持たせ、
+  //   片方だけ更新して不整合になることを防ぐ（写しは targetToConfig が一括で行う）。
+  companyId?: string;
   industry?: string;
   jobType?: string;
   format?: CareerPresentationFormat;

@@ -10,7 +10,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type { CareerMatchingLog } from "@/types/careerMatching";
 import type { CareerMatchEngineResult } from "@/lib/careerMatching";
 
@@ -29,7 +29,7 @@ export async function upsertCareerMatchingResultsToSupabase(
   logs: CareerMatchingLog[],
 ): Promise<void> {
   if (!userId || logs.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = logs.map((log) => ({
@@ -55,7 +55,7 @@ export async function listCareerMatchingResultsFromSupabase(
   userId: string,
 ): Promise<CareerMatchingLog[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

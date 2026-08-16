@@ -51,11 +51,16 @@ supabase/career_accounts_apply.sql     ← identity テーブル DDL + RLS
 CAREER 専用 env（`NEXT_PUBLIC_CAREER_SUPABASE_URL` / `NEXT_PUBLIC_CAREER_SUPABASE_ANON_KEY` /
 `CAREER_SUPABASE_SERVICE_ROLE_KEY`）を読む。
 
-- **development / test**（`NODE_ENV !== 'production'`）: CAREER 専用が未設定なら shared
-  （`NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_SERVICE_ROLE_KEY`）へ **read-only・一方向**で fallback 可。
-- **production**: fallback 一切禁止。CAREER 専用未設定なら `null` を返し career client を無効化
-  （auth 無効 / mirror no-op）。受験版 / shared プロジェクトへは**絶対に接続しない**。
-- いずれも throw しない（build を落とさない）。
+- **全環境で fallback 禁止**（Project B 完全分離以降）。旧「development / test に限り受験版 env へ
+  fallback してよい」という DX 用の緩和は **削除済み**。
+  - 理由: fallback があると CAREER env の設定漏れが受験版 Supabase への接続で「動いているように
+    見えて」しまい、identity は Project B・data は Project A という split-brain をローカルで
+    再現させてしまう。設定漏れは設定漏れとして落ちるのが正しい。
+- CAREER 専用未設定なら `null` を返し career client を無効化（auth 無効 / mirror no-op）。
+  受験版 / Project A へは**絶対に接続しない**。
+- throw しない（build を落とさない）。
+- この不変条件は `scripts/career-supabase-project-boundary-qa.ts` と
+  `scripts/career-supabase-env-inline-qa.ts` が静的に固定する。
 
 ## DB / RLS 設計（`career_accounts`）
 
@@ -96,17 +101,25 @@ RLS: `ENABLE ROW LEVEL SECURITY` + **owner-only**（select / insert / update / d
 **クラウド保存・別端末同期・履歴復元・GD マルチ・将来課金**の土台として扱う。
 将来の課金ゲートは受験版 `PlanGate` に触れず `CareerPlanGate` 等の別実装にする。
 
-## ⚠️ split-brain リスクと物理分離の前提（TODO）
+## ✅ split-brain 解消と Project B 完全分離（完了）
 
-現状、既存の career 機能 mirror（`lib/supabase/career*.ts`）と GD の `roomAuth`
-（`app/api/career/gd/room/roomAuth.ts`）は **shared client**（`lib/supabase/*`）を使い、
-shared の `auth.uid()` で書いている。一方 identity（`career_accounts`）は career client
-（`lib/careerSupabase/*`）を使う。
+かつて career 機能 mirror（`lib/supabase/career*.ts`）と GD の `roomAuth` は **受験版 client**
+（`lib/supabase/*`）を使い、受験版の `auth.uid()` で書いていた。一方 identity（`career_accounts`）は
+career client（`lib/careerSupabase/*`）を使っていたため、CAREER_* を別プロジェクトへ向けた瞬間に
+`auth.uid()` 空間が分裂する split-brain リスクがあった。
 
-- **CAREER_* env を shared と同一 Supabase プロジェクトに向けている間は `auth.uid()` が一致**し安全。
-- **CAREER_* を別プロジェクトに向けた瞬間、`auth.uid()` 空間が分裂**し、identity は career
-  プロジェクト・mirror は shared プロジェクトに書かれてデータが割れる（split-brain）。
+**現在は career runtime 全体が Project B に統一されており、このリスクは解消済み。**
 
-→ **物理的に別 Supabase プロジェクトへ分離するのは、`lib/supabase/career*.ts` と `roomAuth` を
-career client へ移管した後**にする。本ログイン PR ではその移管は**行わない**。MVP は CAREER_* を
-shared と同一物理プロジェクトへ向ける（または分離をまだ行わない）前提で進める。
+| 層 | 使用する client | プロジェクト |
+|---|---|---|
+| identity（`CareerAuthProvider`） | `lib/careerSupabase/browserClient` | B |
+| browser mirror（`lib/supabase/career*.ts` / `careerEvents` / `careerGd` / `careerSourceData`） | `lib/careerSupabase/browserClient` | B |
+| server read（`serverReader` / `personalMemoryReadServer` / GD `roomAuth` / self-analysis） | `lib/careerSupabase/serverClient` | B |
+| service role（GD room / cron gd-cleanup / Data Spine privileged port / Company Identity） | `lib/careerSupabase/serviceRoleClient` | B |
+| join code pepper | `CAREER_GD_JOIN_CODE_PEPPER` ?? CAREER service-role key | B |
+
+career 配下の identity hook は `@/app/career/components/CareerAuthProvider` から取る
+（受験版互換 alias `useCurrentUserId` / `useAuthStatus` / `useIsMember` を提供）。
+
+この不変条件は `scripts/career-supabase-project-boundary-qa.ts` が静的に固定する
+（Project A の client / auth / env module を career runtime が import したら CI で落ちる）。

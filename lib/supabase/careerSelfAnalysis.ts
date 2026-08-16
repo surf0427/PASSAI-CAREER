@@ -15,7 +15,7 @@
  */
 
 import { devWarn } from "@/lib/devLog";
-import { getBrowserSupabaseClient } from "./browserClient";
+import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type { CareerSelfAnalysisLog } from "@/types/careerSelfAnalysis";
 // row→domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
 import {
@@ -36,7 +36,7 @@ export async function upsertCareerSelfAnalysisResultsToSupabase(
   logs: CareerSelfAnalysisLog[],
 ): Promise<void> {
   if (!userId || logs.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = logs.map((log) => ({
@@ -62,7 +62,7 @@ export async function listCareerSelfAnalysisResultsFromSupabase(
   userId: string,
 ): Promise<CareerSelfAnalysisLog[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {
@@ -94,7 +94,7 @@ export async function upsertCareerSelfPRsToSupabase(
   prs: SelfPR[],
 ): Promise<void> {
   if (!userId || prs.length === 0) return;
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return;
 
   const rows = prs.map((pr) => ({
@@ -117,7 +117,7 @@ export async function upsertCareerSelfPRsToSupabase(
 /** 自分の自己 PR カードを created_at 降順で返す（never throw / 失敗時は []）。 */
 export async function listCareerSelfPRsFromSupabase(userId: string): Promise<SelfPR[]> {
   if (!userId) return [];
-  const supabase = getBrowserSupabaseClient();
+  const supabase = getCareerBrowserSupabaseClient();
   if (!supabase) return [];
 
   try {

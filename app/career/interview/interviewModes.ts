@@ -253,9 +253,14 @@ export function normalizeInterviewTarget(
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const companyName = trimStr(r.companyName);
+  // ★ 不変条件の要: companyName が空なら target を作らない。
+  //   これにより「companyId があるのに companyName 空」の target は **保存され得ない**。
   if (!companyName) return null;
 
   const target: CareerInterviewTarget = { companyName };
+  // Company Identity（Phase A / R5）: optional。companyName が確定した後にだけ載せる。
+  const companyId = trimStr(r.companyId);
+  if (companyId) target.companyId = companyId;
   const industry = trimStr(r.industry);
   if (industry) target.industry = industry;
   const jobType = trimStr(r.jobType);

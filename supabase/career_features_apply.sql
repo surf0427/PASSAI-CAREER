@@ -329,6 +329,11 @@ CREATE TABLE IF NOT EXISTS career_company_research_logs (
 );
 -- 既存テーブルに後から列を足す再実行安全 ALTER（idempotent）。
 ALTER TABLE career_company_research_logs ADD COLUMN IF NOT EXISTS revision_history jsonb NOT NULL DEFAULT '[]'::jsonb;
+-- Company Data Spine Phase A / R3: 企業マスタ（career_company_master）の canonical key。
+--   NULL 許容（既存行・未登録企業・free-text 入力は NULL のまま）。
+--   ★ FK は張らない: 企業マスタ未適用の環境でも mirror が壊れないようにする
+--     （canonical は localStorage であり、この table は best-effort mirror）。
+ALTER TABLE career_company_research_logs ADD COLUMN IF NOT EXISTS company_id text;
 CREATE INDEX IF NOT EXISTS career_company_research_logs_user_created_idx
   ON career_company_research_logs (user_id, created_at DESC);
 COMMENT ON TABLE career_company_research_logs IS

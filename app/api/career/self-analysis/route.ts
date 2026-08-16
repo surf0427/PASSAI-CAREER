@@ -20,8 +20,8 @@ import {
   createTimeoutSignal,
   isAbortError,
 } from '@/lib/aiTimeout';
-import { getServerSupabaseClient } from '@/lib/supabase/serverClient';
-import { getServiceRoleSupabaseClient } from '@/lib/supabase/serviceRoleClient';
+import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -240,7 +240,7 @@ async function legacyGenerate(input: SelfAnalysisSummaryInput): Promise<Response
 async function resolveMemberAuth(): Promise<AuthResolution> {
   let client;
   try {
-    client = await getServerSupabaseClient();
+    client = await getCareerServerSupabaseClient();
   } catch {
     return { kind: 'auth_error' };
   }
@@ -298,7 +298,7 @@ export async function POST(req: Request) {
       resolveAuth: resolveMemberAuth,
       getAdmin: () => {
         try {
-          return { kind: 'ok', admin: getServiceRoleSupabaseClient() };
+          return { kind: 'ok', admin: getCareerServiceRoleSupabaseClient() };
         } catch {
           return { kind: 'unavailable' };
         }

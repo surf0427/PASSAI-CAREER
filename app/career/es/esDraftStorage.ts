@@ -55,6 +55,11 @@ function normalizeDraft(raw: unknown): CareerEsDraft | null {
   };
   if (typeof r.charLimit === 'number' && Number.isFinite(r.charLimit)) draft.charLimit = r.charLimit;
   if (typeof r.companyName === 'string') draft.companyName = r.companyName;
+  // Company Identity（Phase A / R4）: optional・欠損が正常（旧 draft は常に欠損）。
+  // 空文字は「未紐付け」として落とす。schemaVersion は上げない（純追加）。
+  if (typeof r.companyId === 'string' && r.companyId.trim() !== '') {
+    draft.companyId = r.companyId.trim();
+  }
   if (typeof r.industry === 'string') draft.industry = r.industry;
   if (typeof r.jobType === 'string') draft.jobType = r.jobType;
   if (r.selectionType === 'main' || r.selectionType === 'internship') {
