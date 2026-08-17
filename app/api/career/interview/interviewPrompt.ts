@@ -21,6 +21,7 @@ import type {
   CareerInterviewTarget,
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
+import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 // P15-B: 企業研究ブロックの render は orchestrator 経由の interview canonical renderer が担うため、
 //   本ファイルでは型のみ参照する（formatInterviewCompanyResearchForPrompt の呼び出しは renderer 側）。
 import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
@@ -76,9 +77,16 @@ const CAREER_DEEP_DIVE_AXES = [
 //   自己分析モードは「自分自身を説明する力」を鍛える場なので、企業名が与えられていても
 //   志望動機・企業理解の深掘りを増やさない。target は背景情報としてのみ渡す。
 //   企業理解 / 本番 / 圧迫は従来どおり志望動機・企業理解・職種理解の深掘りを増やす。
+//
+// ★ hasCompanyOfficial（A 層あり）のときだけ、事実の扱いを **より厳密に**書き分ける。
+//   A 層が無いときは「企業の事実は一切断定しない」で正しいが、A 層があるときに同じ文言のままだと
+//   「出典付きで与えた公式事実すら使ってはいけない」と読めてしまい、統合の意味が消える。
+//   そこで「断定してよいのは公式情報 block にある事実だけ」と範囲を限定する
+//   （捏造禁止は緩めない。むしろ根拠の所在を明示する分だけ強い制約になる）。
 function buildTargetBlock(
   target: CareerInterviewTarget | null | undefined,
   interviewType?: CareerInterviewType,
+  hasCompanyOfficial = false,
 ): string {
   if (!target || !target.companyName) return '';
   const selfOnly = interviewType === 'self_analysis';
@@ -87,7 +95,9 @@ function buildTargetBlock(
     selfOnly
       ? `この面接は「${target.companyName}」を受ける想定です。ただし今回は自己分析モードのため、志望動機・企業理解の確認は主題にせず、この情報は背景としてのみ扱ってください（学生自身の経験・強み・価値観の深掘りに集中する）。`
       : `この面接は「${target.companyName}」を受ける想定で行ってください。志望動機・企業理解・職種理解に関する深掘りを自然に増やしてください。`,
-    `ただし「${target.companyName}」の事業内容・待遇・選考フロー・社風などの事実は断定・捏造せず、学生自身の理解と理由を問う形にしてください。`,
+    hasCompanyOfficial
+      ? `「${target.companyName}」について事実として言及してよいのは、下の【公式情報】ブロックに出典付きで示されている内容だけです。そこに無い事業内容・待遇・選考フロー・社風などは断定・捏造せず、学生自身の理解と理由を問う形にしてください。`
+      : `ただし「${target.companyName}」の事業内容・待遇・選考フロー・社風などの事実は断定・捏造せず、学生自身の理解と理由を問う形にしてください。`,
   ];
   if (target.industry) lines.push(`- 志望業界: ${target.industry}`);
   if (target.jobType) lines.push(`- 志望職種: ${target.jobType}`);
@@ -145,6 +155,11 @@ export type CareerInterviewContextInput = {
   // 保存済み企業研究（Company Data Spine B 層 = User Private Evidence）。
   //   ★ ユーザー本人の解釈・メモ。「あなたの記述では」と扱う（A 層の公式事実とは別物）。
   companyResearch?: InterviewCompanyResearchContext | null;
+  // Company Data Spine A 層（Company Official Facts）の read 結果。
+  //   ★ 外部・公式の一次情報（出典 URL + 取得日付き）。route が server 側で read して渡す
+  //     （本 builder は純関数のまま。I/O は持たない）。
+  //   未指定 / unavailable / disabled のときは renderer が空 block を返し、prompt は従来と byte 互換。
+  companyOfficial?: CompanyOfficialReadResult | null;
   // 前段で入力した受験先・選考の想定。企業・業界・職種・選考種別に合わせて深掘りする。
   target?: CareerInterviewTarget | null;
   interviewType?: CareerInterviewType;
@@ -174,11 +189,20 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
       consultationInsights: input.consultationInsights ?? null,
       companyResearch: input.companyResearch ?? null,
     },
+    // Company Data Spine A 層。renderer が purpose allowlist / budget / provenance を強制する。
+    //   ★ 既存 company_research_review と **同じ type・同じ renderer・同じ extras key** を使う
+    //     （面接専用の並行 architecture を作らない）。
+    ...(input.companyOfficial ? { company: input.companyOfficial } : {}),
   });
 
   const config = getInterviewModeConfig(input.interviewType);
   // 前段で入力した受験先・選考の想定。企業名があるときのみ出す（旧セッション互換で欠損可）。
-  const targetBlock = buildTargetBlock(input.target, input.interviewType);
+  //   A 層 block が実際に出るときだけ、事実として言及してよい範囲を公式情報へ限定する。
+  const targetBlock = buildTargetBlock(
+    input.target,
+    input.interviewType,
+    orchestrated.companyOfficialContext !== '',
+  );
 
   return [
     buildPersonaBlock(input.interviewType),
@@ -186,6 +210,10 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     //   同一 system message 内の二重 append を削除（schema・評価指示は不変の純粋な重複除去）。
     orchestrated.systemPrompt,
     targetBlock,
+    // Company Data Spine A 層（公式情報）。★ B 層（下の crossFeatureContext 内の企業研究メモ）とは
+    //   **別ブロック**として並べる。公式事実 / 本人の解釈 / AI 派生を混ぜないのが Spine の中核契約。
+    //   data が無い（A 層未取得 / flag OFF / 企業未解決 / 自己分析モード）ときは '' ＝ 従来 byte 互換。
+    orchestrated.companyOfficialContext,
     // P15-B: 自己分析/ES/マッチング/相談AI/企業研究の各ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
     `# この面接の狙い（${config.label}）\n${config.guidance}`,

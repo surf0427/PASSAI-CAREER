@@ -39,6 +39,10 @@ import {
   PREFETCH_FACT_GROUPS,
   type CompanyOfficialReadResult,
 } from '@/types/careerCompanyOfficial';
+import {
+  resolveInterviewCompanyOfficial,
+  interviewModeUsesCompanyOfficial,
+} from '@/app/api/career/interview/resolveCompanyOfficial';
 
 const ROOT = process.cwd();
 
@@ -418,9 +422,97 @@ console.log('[C-6] read repository の状態写像（静的契約）');
   );
 }
 
-console.log('');
-if (failures > 0) {
-  console.error(`company official context QA: ${failures} FAILED`);
-  process.exit(1);
+// ════════════════════════════════════════════════════════════════════
+// C-7: 面接側の A 層 resolver（server-only helper）の runtime 契約。
+//   read 本体は DI で差し替え、Supabase / 実データには接続しない。
+// ★ 本 harness は CJS へ transform されるため top-level await が使えない。async main で包む。
+async function runInterviewResolverChecks(): Promise<void> {
+  console.log('[C-7] 面接 resolver（mode gate / fail-open / identity 非依存）');
+  const target = (over: Record<string, unknown> = {}) =>
+    ({ companyName: 'テスト株式会社', industry: 'IT', jobType: '営業', selectionType: 'main', ...over }) as never;
+
+  // 呼び出し引数を記録する fake loader（実 read は行わない）。
+  let calls: Array<{ companyId: string | null; companyName: string | null }> = [];
+  const fakeLoad = async (q: { companyId?: string | null; companyName?: string | null }) => {
+    calls.push({ companyId: q.companyId ?? null, companyName: q.companyName ?? null });
+    return READY;
+  };
+  const reset = () => {
+    calls = [];
+  };
+
+  // C-7a ★ 自己分析モードは A 層を要求しない（read 自体を呼ばない＝I/O も発生しない）。
+  reset();
+  const selfRes = await resolveInterviewCompanyOfficial(target(), 'self_analysis', fakeLoad);
+  check(
+    'C-7a ★ 自己分析モードは A 層 read を呼ばない（null / I/O ゼロ）',
+    selfRes === null && calls.length === 0,
+  );
+  check(
+    'C-7b mode gate の判定関数も自己分析だけ false',
+    !interviewModeUsesCompanyOfficial('self_analysis') &&
+      interviewModeUsesCompanyOfficial('motivation') &&
+      interviewModeUsesCompanyOfficial('real') &&
+      interviewModeUsesCompanyOfficial('pressure'),
+  );
+
+  // C-7c 企業理解 / 本番 / 圧迫は同じ query で read する（圧迫専用経路が無いことの runtime 証明）。
+  reset();
+  for (const mode of ['motivation', 'real', 'pressure'] as const) {
+    await resolveInterviewCompanyOfficial(target({ companyId: 'cmp_1' }), mode, fakeLoad);
+  }
+  check(
+    'C-7c ★ 企業理解 / 本番 / 圧迫は同一 query（専用経路を作っていない）',
+    calls.length === 3 && new Set(calls.map((c) => JSON.stringify(c))).size === 1,
+  );
+
+  // C-7d Company Identity OFF 相当（companyId 無し）でも企業名で解決を試みる。
+  reset();
+  await resolveInterviewCompanyOfficial(target(), 'real', fakeLoad);
+  check(
+    'C-7d ★ companyId 無しでも企業名で read する（Identity を必須にしない）',
+    calls.length === 1 && calls[0].companyId === null && calls[0].companyName === 'テスト株式会社',
+  );
+
+  // C-7e 企業が特定できない（旧セッション等で companyName 欠損）なら read しない。
+  reset();
+  const noCompany = await resolveInterviewCompanyOfficial(target({ companyName: '  ' }), 'real', fakeLoad);
+  check(
+    'C-7e 企業名も companyId も無ければ read せず null（誤った企業を載せない）',
+    noCompany === null && calls.length === 0,
+  );
+  check(
+    'C-7f target 自体が null でも落ちない',
+    (await resolveInterviewCompanyOfficial(null, 'real', fakeLoad)) === null,
+  );
+
+  // C-7g ★ fail-open: read が throw しても面接を止めない（null に倒す）。
+  const throwingLoad = async () => {
+    throw new Error('boom');
+  };
+  check(
+    'C-7g ★ read が throw しても null（面接は継続できる）',
+    (await resolveInterviewCompanyOfficial(target(), 'real', throwingLoad)) === null,
+  );
+
+  // C-7h data を持つ status はそのまま素通しする（renderer 側が扱う）。
+  const passthrough = await resolveInterviewCompanyOfficial(target(), 'real', fakeLoad);
+  check('C-7h ready はそのまま返す（判断は renderer に委ねる）', passthrough?.status === 'ready');
+  const disabled = await resolveInterviewCompanyOfficial(target(), 'real', async () => ({
+    status: 'disabled' as const,
+    reason: 'flag_off' as const,
+  }));
+  check(
+    'C-7i disabled / unavailable も握り潰さず返す（renderer が空 block にする）',
+    disabled?.status === 'disabled',
+  );
 }
-console.log('company official context QA: ALL PASS');
+
+void runInterviewResolverChecks().then(() => {
+  console.log('');
+  if (failures > 0) {
+    console.error(`company official context QA: ${failures} FAILED`);
+    process.exit(1);
+  }
+  console.log('company official context QA: ALL PASS');
+});

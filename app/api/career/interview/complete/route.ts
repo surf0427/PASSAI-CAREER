@@ -37,6 +37,8 @@ import {
 } from '../interviewPrompt';
 // NEXT-6: base context（profile/activity/values）の由来解決。flag OFF なら request body のまま（byte 互換）。
 import { resolveInterviewContextInputs } from '../resolveContextInputs';
+// Company Data Spine A 層（公式情報）の read。未取得 / flag OFF / 企業未解決なら null（面接は成立）。
+import { resolveInterviewCompanyOfficial } from '../resolveCompanyOfficial';
 
 export const maxDuration = 80;
 
@@ -146,6 +148,9 @@ export async function POST(req: Request) {
   const interviewType = resolveInterviewType(b.interviewType);
   const companyResearch = ctx.companyResearch;
   const target = normalizeInterviewTarget(b.target);
+  // Company Data Spine A 層（公式情報）。評価も start / turn と同じ企業文脈の上で行う。
+  //   fetch / crawl は起動しない（既存 snapshot の read のみ）。
+  const companyOfficial = await resolveInterviewCompanyOfficial(target, interviewType);
   const system = [
     buildInterviewBaseSystem({
       profile: ctx.profile,
@@ -156,6 +161,7 @@ export async function POST(req: Request) {
       matching: ctx.matching,
       consultationInsights: ctx.consultationInsights,
       companyResearch,
+      companyOfficial,
       target,
       interviewType,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',
