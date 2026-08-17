@@ -27,26 +27,15 @@ export type CareerPresentationMode = 'voice' | 'text';
 // 就活・選考で出される「お題」に対して発表する形式へ寄せるための追加設定。
 // すべて任意（後方互換）。最重要は「お題（theme）」と「発表時間（timeLimitSec）」で、
 // 以下はお題を補強する任意コンテキスト。既存履歴には無いので UI/プロンプトは欠損に耐える。
+//
+// ★ 入力項目の整理により、次の 3 項目はプレゼン機能から**概念ごと廃止**した:
+//     - 想定シーン（scenario）  : 選考種別（selectionType）と重複していたため
+//     - 発表形式（format）      : 出力に効いていなかったため
+//     - 企業メモ（companyMemo）: 企業情報は Company Data Spine / 企業分析側が担当するため
+//   旧ログ（localStorage / Supabase）には残っている可能性があるが、normalize が読み捨てるため
+//   型・UI・プロンプトのどこにも再登場しない（幽霊フィールドを作らない）。
 
-// 想定シーン（選考の場面）。評価の重心を出し分ける。
-export type CareerPresentationScenario =
-  | 'main_selection' // 本選考
-  | 'internship' // インターン選考
-  | 'gd_followup' // グループディスカッション後の発表
-  | 'case' // ケース面接
-  | 'self_pr' // 自己PRプレゼン
-  | 'company_proposal' // 企業課題提案
-  | 'unspecified'; // 指定なし
-
-// 発表形式。
-export type CareerPresentationFormat =
-  | 'individual' // 個人発表
-  | 'group_rep' // グループ代表発表
-  | 'with_materials' // 資料あり
-  | 'without_materials' // 資料なし
-  | 'unspecified'; // 指定なし
-
-// 選考種別（本選考 / インターン）。未指定は「指定なし」。
+// 選考種別（本選考 / インターン選考）。任意（未選択のままでもよい）。
 export type CareerPresentationSelectionType = 'main' | 'internship';
 
 // お題生成の前段（/career/presentation/target）で入力する「選考文脈」。
@@ -59,11 +48,7 @@ export type CareerPresentationTarget = {
   companyId?: string;
   industry?: string;
   jobType?: string;
-  scenario?: CareerPresentationScenario;
   selectionType?: CareerPresentationSelectionType;
-  format?: CareerPresentationFormat;
-  // 企業について分かっていること・メモ（AIの企業情報は本メモを最優先根拠にする）。
-  companyMemo?: string;
   // 特に練習したいこと。
   focusPoint?: string;
   // AIお題生成の難易度（'standard' は標準）。
@@ -72,7 +57,6 @@ export type CareerPresentationTarget = {
 
 // お題ベースプレゼンの任意設定（session / result に optional で持つ）。
 export type CareerPresentationConfig = {
-  scenario?: CareerPresentationScenario;
   companyName?: string;
   // Company Data Spine の canonical key（Phase A / R6・optional）。target 由来。
   // ★ target と config で companyName が複製されているため companyId も両方に持たせ、
@@ -80,11 +64,8 @@ export type CareerPresentationConfig = {
   companyId?: string;
   industry?: string;
   jobType?: string;
-  format?: CareerPresentationFormat;
   // 選考種別（target 由来。任意）。
   selectionType?: CareerPresentationSelectionType;
-  // 企業について分かっていること・メモ（target 由来。AIの企業情報の最優先根拠）。
-  companyMemo?: string;
   // 特に練習したいこと（target 由来。任意）。
   focusPoint?: string;
   // 評価してほしい観点（CAREER_PRESENTATION_EVAL_FOCUS の key 群）。
@@ -156,7 +137,7 @@ export type CareerPresentationSession = {
   status: 'in_progress' | 'completed';
   presentationType: CareerPresentationType;
   mode: CareerPresentationMode;
-  // お題ベースプレゼンの任意設定（想定シーン・企業名・観点など）。古い履歴には無い。
+  // お題ベースプレゼンの任意設定（企業名・職種・観点など）。古い履歴には無い。
   config?: CareerPresentationConfig;
   // 発表テーマ（＝お題）。
   theme: string;

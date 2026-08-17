@@ -94,9 +94,10 @@ const META_DISPLAY: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'mode', label: 'モード' },
   { key: 'interviewType', label: '面接種別' },
   { key: 'selectionType', label: '選考種別' },
-  { key: 'scenario', label: 'シーン' }, // P9-C: presentation の想定シーン
+  // scenario は presentation の「想定シーン」廃止で新規書き込みは無い（旧イベント行の描画用に残す）。
+  { key: 'scenario', label: 'シーン' },
   { key: 'sourceType', label: '情報源' }, // P9-C: company_research の情報源
-  { key: 'format', label: '形式' },
+  { key: 'format', label: '形式' }, // GD の議論形式（presentation の発表形式は廃止済み）
   { key: 'participationMode', label: '参加形態' },
   { key: 'charLimit', label: '文字数上限' },
   { key: 'timeLimitSec', label: '制限時間(秒)' },

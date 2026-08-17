@@ -102,7 +102,6 @@ const values = cast<CareerPresentationContextInput['values']>({
 });
 
 const cfg = (over: Partial<CareerPresentationConfig>): CareerPresentationConfig => ({
-  scenario: 'self_pr',
   useCareerContext: true,
   ...over,
 });
@@ -130,7 +129,6 @@ const FIXTURES: Fixture[] = [
         companyName: 'サンプル株式会社',
         industry: 'IT・通信',
         jobType: 'プロダクトマネージャー',
-        companyMemo: '主力事業はBtoB SaaS。直近は海外展開に注力している。',
         focusPoint: '結論ファーストで話す練習',
         note: '緊張すると早口になりがち',
         evaluationFocus: ['structure', 'persuasion'],
@@ -200,13 +198,14 @@ const FIXTURES: Fixture[] = [
   },
   {
     // company research は presentation の cross-feature には無い（companyContext:'exclude'）。
-    // config.companyMemo（企業について分かっていること）＝ presentation の企業情報経路を代表させる。
+    // ★ 旧 config.companyMemo（企業について分かっていること）は廃止したため、
+    //   企業情報経路は config.companyName（＋業界/職種）が代表する。
     name: 'company-research',
     input: {
       theme: '企業情報あり',
       config: cfg({
         companyName: 'サンプル株式会社',
-        companyMemo: '主力事業はBtoB SaaS。直近は海外展開に注力している。',
+        industry: 'IT・通信',
       }),
       matching: matching('C'),
     },
@@ -219,7 +218,6 @@ const FIXTURES: Fixture[] = [
         companyName: 'サンプル株式会社',
         industry: 'IT・通信',
         jobType: 'エンジニア',
-        companyMemo: '主力事業はBtoB SaaS。',
         focusPoint: '構成',
         note: 'メモ',
         evaluationFocus: ['structure', 'clarity', 'persuasion'],

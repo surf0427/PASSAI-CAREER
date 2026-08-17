@@ -26,8 +26,7 @@ import type {
   CareerPresentationConfig,
 } from '@/types/careerPresentation';
 import {
-  getScenarioConfig,
-  getFormatLabel,
+  CAREER_PRESENTATION_PROMPT_BASE,
   getSelectionTypeLabel,
   evalFocusLabels,
   resolveDifficulty,
@@ -63,14 +62,12 @@ export type CareerPresentationPromptContext = {
   presentationType?: CareerPresentationType;
 };
 
-// お題・想定シーン・企業/業界/職種・発表形式・評価観点・補足メモを条件ブロックに整形する。
+// お題・企業/業界/職種・選考種別・評価観点・補足メモを条件ブロックに整形する。
 function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   const cfg = ctx.config ?? undefined;
-  const scenarioCfg = getScenarioConfig(cfg?.scenario);
   const lines: string[] = [];
   lines.push(`【お題】${(ctx.theme ?? '').trim() || '（未入力）'}`);
-  lines.push(`【想定シーン】${scenarioCfg.label}`);
-  lines.push(scenarioCfg.guidance);
+  lines.push(CAREER_PRESENTATION_PROMPT_BASE.guidance);
 
   const conds: string[] = [];
   if (cfg?.companyName?.trim()) conds.push(`企業名: ${cfg.companyName.trim()}`);
@@ -78,8 +75,6 @@ function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   if (cfg?.jobType?.trim()) conds.push(`職種: ${cfg.jobType.trim()}`);
   const selectionLabel = getSelectionTypeLabel(cfg?.selectionType);
   if (selectionLabel) conds.push(`選考種別: ${selectionLabel}`);
-  const formatLabel = getFormatLabel(cfg?.format);
-  if (formatLabel) conds.push(`発表形式: ${formatLabel}`);
   if (conds.length > 0) {
     lines.push('', '【発表条件】' + conds.join(' / '));
   }
@@ -88,12 +83,6 @@ function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   const jobLine = buildJobTypeEmphasisLine(cfg?.jobType);
   if (jobLine) lines.push(jobLine);
 
-  if (cfg?.companyMemo?.trim()) {
-    lines.push(
-      `【企業について分かっていること（ユーザー提供）】${cfg.companyMemo.trim()}`,
-      '※企業情報はこのメモを最優先の根拠にする。メモに無い事業内容・課題を断定・捏造しない。',
-    );
-  }
   if (cfg?.focusPoint?.trim()) {
     lines.push(`【特に練習したいこと】${cfg.focusPoint.trim()}`);
   }
@@ -108,12 +97,7 @@ function buildConditionLines(ctx: CareerPresentationPromptContext): string[] {
   return lines;
 }
 
-// このシーンで特に重視する観点（instruction 用）。
-function scenarioEmphasis(ctx: CareerPresentationPromptContext): string {
-  return getScenarioConfig(ctx.config?.scenario).evaluationEmphasis;
-}
-
-// 面接官・採用担当としての評価者人格（お題ベース・全シーン共通の土台）。
+// 面接官・採用担当としての評価者人格（お題ベース・全セッション共通の土台）。
 function buildEvaluatorPersona(ctx: CareerPresentationPromptContext): string {
   return [
     'あなたは新卒採用の選考でプレゼンを評価する、企業の採用担当（人事・現場社員・役員クラス）です。',
@@ -148,7 +132,7 @@ export type CareerPresentationContextInput = {
   interview?: CareerInterviewFinalResult | null;
   matching?: CareerMatchEngineResult | null;
   consultationInsights?: string[] | null;
-  // お題ベースプレゼンの条件（想定シーン・企業名・観点など）。
+  // お題ベースプレゼンの条件（企業名・職種・観点など）。
   config?: CareerPresentationConfig | null;
   // お題（発表テーマ）。
   theme?: string;
@@ -200,7 +184,7 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
     .join('\n\n');
 }
 
-// AIお題生成の user プロンプト（想定シーン・企業/業界/職種・発表時間・難易度・補足メモ・
+// AIお題生成の user プロンプト（企業/業界/職種・選考種別・発表時間・難易度・
 // 直近お題(excludeThemes)を考慮。連続生成で似すぎないよう切り口を変える）。
 export function buildThemeUserPrompt(params: {
   config?: CareerPresentationConfig | null;
@@ -209,7 +193,6 @@ export function buildThemeUserPrompt(params: {
   excludeThemes?: string[];
 }): string {
   const cfg = params.config ?? undefined;
-  const scenarioCfg = getScenarioConfig(cfg?.scenario);
   const difficulty = resolveDifficulty(params.difficulty);
   const diffCfg = CAREER_PRESENTATION_DIFFICULTIES.find((d) => d.key === difficulty);
   const timeLimitSec = typeof params.timeLimitSec === 'number' ? params.timeLimitSec : 0;
@@ -233,17 +216,17 @@ export function buildThemeUserPrompt(params: {
 
   return [
     '新卒就活の選考プレゼン練習用に、本番でありそうな「お題（プレゼンテーマ）」を1つだけ提案してください。',
-    `想定シーン: ${scenarioCfg.label} — ${scenarioCfg.themeFocus}`,
+    `狙い: ${CAREER_PRESENTATION_PROMPT_BASE.themeFocus}`,
     `発表時間: ${fmtTime}（この時間で発表しきれる粒度にする）`,
     `難易度: ${diffCfg?.label ?? '標準'}（${diffCfg?.hint ?? ''}）`,
     conds.length > 0 ? `考慮する条件: ${conds.join(' / ')}` : '',
     buildJobTypeThemeLine(cfg?.jobType),
-    `切り口の例（この中から選ぶ／別の切り口でもよい）: ${scenarioCfg.angles.join('、')}`,
+    `切り口の例（この中から選ぶ／別の切り口でもよい）: ${CAREER_PRESENTATION_PROMPT_BASE.angles.join('、')}`,
     exclude.length > 0
       ? [
           '次のお題は既に出したものです。これらと似すぎる内容・論点は避けてください:',
           ...exclude.map((t) => `- ${t}`),
-          '同じ想定シーンでも切り口を変え、前回とは異なる論点のお題にしてください。',
+          '切り口を変え、前回とは異なる論点のお題にしてください。',
         ].join('\n')
       : '',
     cfg?.companyName?.trim()
@@ -252,9 +235,9 @@ export function buildThemeUserPrompt(params: {
     cfg?.industry?.trim() && !cfg?.companyName?.trim()
       ? 'その業界で出やすいテーマに寄せる。特定企業の事実は出さない。'
       : '',
-    cfg?.companyMemo?.trim()
-      ? `企業情報は次のユーザー提供メモを最優先の根拠にする（メモに無い事実は断定しない）: ${cfg.companyMemo.trim()}`
-      : '企業メモが無い場合は、一般的な業界課題・職種理解・選考文脈として扱う。',
+    // 企業情報の確度に関わらず常に置く hallucination ガード
+    //（旧「企業メモが無い場合は…」という companyMemo 前提の分岐を、無条件の指示に置き換えた）。
+    '企業・業界の具体的な事実は断定せず、情報が不足する範囲は一般的な業界課題・職種理解・選考文脈として扱う。',
     '出力はお題の文そのものだけ（前置き・説明・記号・引用符・コードブロックは付けない）。',
   ]
     .filter((s) => s !== '')
@@ -285,7 +268,7 @@ export function buildEvaluateUserPrompt(params: {
   ].join('\n');
 }
 
-// 評価レポートの出力スキーマ・採点基準（想定シーン別の重視点を足す）。
+// 評価レポートの出力スキーマ・採点基準。
 export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): string {
   const axisList = CAREER_PRESENTATION_AXES.map(
     (a) => `    { "key": "${a.key}", "label": "${a.label}", "score": 0〜100の整数, "comment": "${a.hint}に関する具体的な所見" }`,
@@ -294,7 +277,7 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
   return [
     '# 最終レポート（出力形式・厳守）',
     'このお題に対する発表を、新卒就活・選考プレゼンの観点で評価し、最終レポートを作成してください。',
-    `今回の想定シーンで特に重視する観点: ${scenarioEmphasis(ctx)}`,
+    `今回特に重視する観点: ${CAREER_PRESENTATION_PROMPT_BASE.evaluationEmphasis}`,
     jobEmphasis
       ? `${jobEmphasis} この職種観点は companyFit・expectedQuestions・interviewerConcerns にも反映する。`
       : '',
@@ -352,10 +335,9 @@ export function buildQaUserPrompt(params: {
   config?: CareerPresentationConfig | null;
 }): string {
   const { theme, transcript, turns, config } = params;
-  const scenarioCfg = getScenarioConfig(config?.scenario);
   const isKickoff = turns.length === 0;
   const lines: string[] = [
-    `これは「${scenarioCfg.label}」のプレゼン発表後の質疑応答（想定: 採用担当からの質問）です。`,
+    'これはプレゼン発表後の質疑応答（想定: 採用担当からの質問）です。',
     `お題: ${theme || '（未入力）'}`,
     '',
     '発表の文字起こし:',
@@ -365,14 +347,14 @@ export function buildQaUserPrompt(params: {
     lines.push('', 'これまでの質疑応答:', buildQaTranscript(turns));
   }
   const jobQaLine = buildJobTypeQaLine(config?.jobType);
-  lines.push('', `このシーンで本番聞かれやすい深掘りの方向: ${scenarioCfg.qaFocus}`);
+  lines.push('', `本番聞かれやすい深掘りの方向: ${CAREER_PRESENTATION_PROMPT_BASE.qaFocus}`);
   if (jobQaLine) lines.push(jobQaLine);
   lines.push(
     isKickoff
       ? '発表内容に対して、採用担当が実際に聞きそうな鋭い質問を1つだけ作ってください。最初の reaction は空文字で構いません。'
       : '学生の直前の回答に対して、まず一言リアクション（最大1文・甘すぎない）をし、それを踏まえて次の質問を1つだけ作ってください。',
     '抽象的な回答には具体例・数字・根拠を求める質問にし、発表の弱点や一貫性を確認する。Yes/Noで終わる質問・人格否定は避ける。',
-    '想定シーン・職種の方向は本番で聞かれそうな深掘りの手掛かりに留め、発表内容に無い前提を作り込みすぎない。',
+    '職種の方向は本番で聞かれそうな深掘りの手掛かりに留め、発表内容に無い前提を作り込みすぎない。',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '{ "reaction": string, "question": string }',
   );

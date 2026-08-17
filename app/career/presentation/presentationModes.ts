@@ -8,8 +8,6 @@
 
 import type {
   CareerPresentationType,
-  CareerPresentationScenario,
-  CareerPresentationFormat,
   CareerPresentationSelectionType,
   CareerPresentationTarget,
   CareerPresentationConfig,
@@ -157,147 +155,39 @@ export function getPresentationModeConfig(v: unknown): CareerPresentationModeCon
 }
 
 // ════════════════════════════════════════════════════════════════════
-// お題ベース（プロンプト型）プレゼン — 想定シーン / 発表形式 / 評価観点 / 難易度
+// お題ベース（プロンプト型）プレゼン — 評価観点 / 難易度
 //
 // 受験版プレゼン機能と同じ「お題に対して発表する」形式へ寄せるための定義。
 // 旧「PASSAI 機能別プレゼン種別（MODES）」は履歴表示の後方互換のために残す。
-// 新規セッションは scenario（想定シーン）を主軸にし、presentationType は
-// legacyType でマッピングして埋める（Supabase mirror 列・旧ラベル表示のため）。
+//
+// ★ 旧「想定シーン（scenario）」による出し分けは廃止した。選考種別（selectionType）と
+//   意味が重複しており、ユーザーに同じことを 2 回選ばせていたため。
+//   分岐を無くし、下の CAREER_PRESENTATION_PROMPT_BASE（旧 scenario='unspecified' 相当＝
+//   既定値だった汎用プレゼンの文言）を全セッション共通の土台として使う。
 // ════════════════════════════════════════════════════════════════════
 
-export type CareerPresentationScenarioConfig = {
-  scenario: CareerPresentationScenario;
-  label: string;
-  emoji: string;
-  // 旧 presentationType へのマッピング（後方互換のためセッションに埋める）。
-  legacyType: CareerPresentationType;
+// 新規セッションに埋める presentationType。
+// presentationType 自体は旧履歴の表示と Supabase の presentation_type 列のために残るが、
+// 新規フローでは分岐に使わないため「本番選考プレゼン（総合）」に固定する
+// （旧 scenario 既定値 'unspecified' の legacyType と同じ値なので、既存挙動と一致する）。
+export const CAREER_PRESENTATION_NEW_SESSION_TYPE: CareerPresentationType = 'real';
+
+// 全セッション共通のプロンプト土台（お題生成 / 評価 / 発表後Q&A が参照する）。
+export const CAREER_PRESENTATION_PROMPT_BASE = {
   // AIお題生成の狙い。
-  themeFocus: string;
+  themeFocus: '就活・選考で出されそうな、汎用的なプレゼンのお題。',
   // 評価者（採用担当）としての姿勢・見どころ。
-  guidance: string;
-  // このシーンで特に重視する観点。
-  evaluationEmphasis: string;
-  // 発表後Q&Aで、このシーンだと本番で聞かれやすい深掘りの方向。
-  qaFocus: string;
+  guidance:
+    '就活・選考プレゼンとして、結論ファースト・論理構成・根拠の具体性・説得力・聞き手への伝わりやすさ・時間配分を総合的に見る。',
+  // 特に重視する観点。
+  evaluationEmphasis:
+    '構成の分かりやすさ、主張の明確さ、根拠の具体性、説得力、聞き手意識、時間配分。',
+  // 発表後Q&Aで本番聞かれやすい深掘りの方向。
+  qaFocus: '発表の弱い部分・主張の一貫性・根拠の具体性への、汎用的な深掘り。',
   // AIお題生成の「切り口」候補（多様性のため。連続生成で切り口を変える手掛かり）。
-  angles: string[];
-};
+  angles: ['自分の強み', '学生時代の経験', '関心のあるテーマ', '課題提案', '将来のビジョン'],
+} as const;
 
-const SCENARIOS: Record<CareerPresentationScenario, CareerPresentationScenarioConfig> = {
-  main_selection: {
-    scenario: 'main_selection',
-    label: '本選考',
-    emoji: '🎯',
-    legacyType: 'real',
-    themeFocus: '本選考のプレゼン選考を想定した、入社後の貢献・志望度・自分の経験との接続を語れるお題。',
-    guidance:
-      '本選考のプレゼンとして、入社後にどう貢献するか・志望度の高さ・企業理解・自分の具体的な経験との接続が伝わるかを見る。採用担当として「採用したい理由」が伝わるかを重視する。',
-    evaluationEmphasis: '入社後の貢献、志望度、企業理解、具体的な経験との接続、採用する理由が伝わるか。',
-    qaFocus: 'なぜこの会社か、入社後に何をしたいか、他社比較、強みの再現性、キャリア観。',
-    angles: ['入社後に挑戦したいこと', '自分の強みをどう活かすか', '企業課題への仮説提案', 'キャリア観', '志望度や企業理解'],
-  },
-  internship: {
-    scenario: 'internship',
-    label: 'インターン選考',
-    emoji: '🌱',
-    legacyType: 'real',
-    themeFocus: 'インターン選考を想定した、参加目的・学びたいこと・活かしたい強みを語れるお題。',
-    guidance:
-      'インターン選考のプレゼンとして、参加目的・学習意欲・業界/企業への関心・主体性・成長ポテンシャルが伝わるかを見る。完成度より伸びしろと熱量を重視する。',
-    evaluationEmphasis: '参加目的、学習意欲、業界・企業への関心、主体性、成長ポテンシャル。',
-    qaFocus: 'なぜこのインターンか、何を学びたいか、検証したい仮説、どの経験を活かせるか。',
-    angles: ['参加目的', '学びたいこと', '活かしたい強み', '現場で検証したい仮説', '業界理解'],
-  },
-  gd_followup: {
-    scenario: 'gd_followup',
-    label: 'GD後の発表',
-    emoji: '🤝',
-    legacyType: 'real',
-    themeFocus: 'グループディスカッション後の代表発表を想定した、チームの結論を簡潔に伝えるお題。',
-    guidance:
-      'グループディスカッション後の代表発表として、チームの議論を整理できているか・結論ファーストか・論点と根拠が簡潔か・代表発表として分かりやすいかを見る。',
-    evaluationEmphasis: 'チーム議論の整理、結論ファースト、論点と根拠の簡潔さ、代表発表としての分かりやすさ。',
-    qaFocus: 'なぜその結論か、他の案とどう比較したか、反対意見をどう扱ったか、実行上のリスク。',
-    angles: ['議論の結論整理', '提案内容の代表発表', '論点比較', '合意形成プロセス', '実行案の説明'],
-  },
-  case: {
-    scenario: 'case',
-    label: 'ケース面接',
-    emoji: '🧩',
-    legacyType: 'case',
-    themeFocus: 'ケース面接・ケース課題を想定した、課題設定→分析→解決策を筋道立てて提案するお題。',
-    guidance:
-      'ケース面接のプレゼンとして、課題設定→仮説→分析→解決策→実行可能性→施策の優先順位が論理的に組み立てられているかを見る。きれいなフレームより筋の通った結論と根拠を評価する。',
-    evaluationEmphasis: '課題設定、仮説、分析、解決策、実行可能性、施策の優先順位。',
-    qaFocus: '前提の置き方、なぜその課題を選んだか、代替案、どう実行するか、失敗リスク。',
-    angles: ['新規事業', '課題解決', '既存サービス改善', '市場拡大', '顧客体験改善', '施策の優先順位'],
-  },
-  self_pr: {
-    scenario: 'self_pr',
-    label: '自己PRプレゼン',
-    emoji: '💪',
-    legacyType: 'self_pr',
-    themeFocus: '自己PRプレゼンを想定した、自分の強みと裏づけとなる経験を語れるお題。',
-    guidance:
-      '自己PRプレゼンとして、強みの明確さ・エピソードの具体性・再現性（企業でどう活きるか）が伝わるかを見る。抽象的な強みの羅列ではなく具体に裏づけられているかを重視する。',
-    evaluationEmphasis: '強みの明確さ、エピソードの具体性、再現性、企業でどう活きるか。',
-    qaFocus: 'その強みを発揮した具体例、他の場面での再現性、弱みとの関係、企業でどう活かすか。',
-    angles: ['一番の強み', '困難を乗り越えた経験', '主体的に動いた経験', 'チームでの役割', '価値観・大切にしていること'],
-  },
-  company_proposal: {
-    scenario: 'company_proposal',
-    label: '企業課題提案',
-    emoji: '🏢',
-    legacyType: 'case',
-    themeFocus:
-      '企業課題提案を想定した、企業/業界が抱えそうな課題を1つ挙げ解決策を提案するお題（企業の事実は断定しない）。',
-    guidance:
-      '企業課題提案のプレゼンとして、課題の捉え方・解決策の説得力・企業理解・実現可能性・リスク認識が伝わるかを見る。企業名だけを根拠に事業課題を捏造せず、情報が不足する場合は一般的な業界課題・仮説として扱えているかも見る。',
-    evaluationEmphasis: '課題の捉え方、解決策の説得力、企業理解、実現可能性、リスク認識。',
-    qaFocus: 'なぜその課題か、根拠は何か、実行コスト、競合や既存施策との違い、リスク。',
-    angles: ['売上・成長の課題', '採用・組織の課題', '顧客獲得・定着の課題', '新規領域への展開', 'デジタル活用・業務効率'],
-  },
-  unspecified: {
-    scenario: 'unspecified',
-    label: '指定なし',
-    emoji: '🎤',
-    legacyType: 'real',
-    themeFocus: '就活・選考で出されそうな、汎用的なプレゼンのお題。',
-    guidance:
-      '就活・選考プレゼンとして、結論ファースト・論理構成・根拠の具体性・説得力・聞き手への伝わりやすさ・時間配分を総合的に見る。',
-    evaluationEmphasis: '構成の分かりやすさ、主張の明確さ、根拠の具体性、説得力、聞き手意識、時間配分。',
-    qaFocus: '発表の弱い部分・主張の一貫性・根拠の具体性への、汎用的な深掘り。',
-    angles: ['自分の強み', '学生時代の経験', '関心のあるテーマ', '課題提案', '将来のビジョン'],
-  },
-};
-
-// setup 画面のシーン選択の並び順。
-export const CAREER_PRESENTATION_SCENARIO_ORDER: CareerPresentationScenario[] = [
-  'main_selection',
-  'internship',
-  'gd_followup',
-  'case',
-  'self_pr',
-  'company_proposal',
-  'unspecified',
-];
-
-export const CAREER_PRESENTATION_SCENARIOS: CareerPresentationScenarioConfig[] =
-  CAREER_PRESENTATION_SCENARIO_ORDER.map((s) => SCENARIOS[s]);
-
-export const DEFAULT_CAREER_PRESENTATION_SCENARIO: CareerPresentationScenario = 'unspecified';
-
-export function isCareerPresentationScenario(v: unknown): v is CareerPresentationScenario {
-  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SCENARIOS, v);
-}
-
-export function resolveScenario(v: unknown): CareerPresentationScenario {
-  return isCareerPresentationScenario(v) ? v : DEFAULT_CAREER_PRESENTATION_SCENARIO;
-}
-
-export function getScenarioConfig(v: unknown): CareerPresentationScenarioConfig {
-  return SCENARIOS[resolveScenario(v)];
-}
 
 // ════════════════════════════════════════════════════════════════════
 // 職種（jobType）別の出力分岐
@@ -490,19 +380,8 @@ export function buildJobTypeQaLine(jobType: string | null | undefined): string {
   return `職種「${c.raw}」（${c.label}系）で本番聞かれそうな深掘り: ${c.qaFocus}`;
 }
 
-// 発表形式の選択肢。
-export const CAREER_PRESENTATION_FORMATS: Array<{ key: CareerPresentationFormat; label: string }> = [
-  { key: 'individual', label: '個人発表' },
-  { key: 'group_rep', label: 'グループ代表発表' },
-  { key: 'with_materials', label: '資料あり' },
-  { key: 'without_materials', label: '資料なし' },
-  { key: 'unspecified', label: '指定なし' },
-];
-
-export function getFormatLabel(v: unknown): string | null {
-  const found = CAREER_PRESENTATION_FORMATS.find((f) => f.key === v);
-  return found && found.key !== 'unspecified' ? found.label : null;
-}
+// ★ 発表形式（format）の選択肢は廃止した（個人発表 / グループ代表発表 / 資料あり・なし / 指定なし）。
+//   条件行に文字列を1つ足すだけで、お題生成・評価・Q&A のどの分岐にも効いていなかったため。
 
 // 「評価してほしい観点」の選択肢（任意・複数選択）。
 export const CAREER_PRESENTATION_EVAL_FOCUS: Array<{ key: string; label: string }> = [
@@ -539,20 +418,19 @@ export function resolveDifficulty(v: unknown): CareerPresentationDifficulty {
   return v === 'easy' || v === 'standard' || v === 'hard' ? v : 'standard';
 }
 
-// 選考種別の選択肢・ラベル。
+// 選考種別の選択肢・ラベル（本選考 / インターン選考 の 2 種類のみ）。
+// ★「指定なし」の選択肢は持たない。ただし入力自体は任意のままなので、
+//   選択中のものを再度押すと未選択に戻せる（UI 側でトグルする）。
 export const CAREER_PRESENTATION_SELECTION_TYPES: Array<{
-  value: CareerPresentationSelectionType | null;
+  value: CareerPresentationSelectionType;
   label: string;
 }> = [
-  { value: null, label: '指定なし' },
   { value: 'main', label: '本選考' },
-  { value: 'internship', label: 'インターン' },
+  { value: 'internship', label: 'インターン選考' },
 ];
 
 export function getSelectionTypeLabel(v: unknown): string | null {
-  if (v === 'main') return '本選考';
-  if (v === 'internship') return 'インターン';
-  return null;
+  return CAREER_PRESENTATION_SELECTION_TYPES.find((o) => o.value === v)?.label ?? null;
 }
 
 // ── お題生成の前段 target（選考文脈）─────────────────────────────────
@@ -577,15 +455,11 @@ export function normalizePresentationTarget(raw: unknown): CareerPresentationTar
   if (industry) target.industry = industry;
   const jobType = trimStr(r.jobType);
   if (jobType) target.jobType = jobType;
-  if (isCareerPresentationScenario(r.scenario)) target.scenario = r.scenario;
   if (r.selectionType === 'main' || r.selectionType === 'internship') {
     target.selectionType = r.selectionType;
   }
-  if (CAREER_PRESENTATION_FORMATS.some((f) => f.key === r.format)) {
-    target.format = r.format as CareerPresentationFormat;
-  }
-  const companyMemo = trimStr(r.companyMemo);
-  if (companyMemo) target.companyMemo = companyMemo;
+  // ★ 旧下書き・旧ログの scenario / format / companyMemo はここで読み捨てる（target に載せない）。
+  //   廃止した項目が古い localStorage から復活しないようにするための、意図的な no-op。
   const focusPoint = trimStr(r.focusPoint);
   if (focusPoint) target.focusPoint = focusPoint;
   if (r.difficulty === 'easy' || r.difficulty === 'standard' || r.difficulty === 'hard') {
@@ -597,10 +471,7 @@ export function normalizePresentationTarget(raw: unknown): CareerPresentationTar
     !!target.companyName ||
     !!target.industry ||
     !!target.jobType ||
-    !!target.scenario ||
     !!target.selectionType ||
-    !!target.format ||
-    !!target.companyMemo ||
     !!target.focusPoint;
   return hasContent ? target : null;
 }
@@ -612,15 +483,12 @@ export function presentationConfigFromTarget(
 ): CareerPresentationConfig {
   const cfg: CareerPresentationConfig = {};
   if (!target) return cfg;
-  if (target.scenario) cfg.scenario = target.scenario;
   if (target.companyName) cfg.companyName = target.companyName;
   // Company Identity（R6）: companyName と一緒に写す（片方だけ残さない）。
   if (target.companyId) cfg.companyId = target.companyId;
   if (target.industry) cfg.industry = target.industry;
   if (target.jobType) cfg.jobType = target.jobType;
-  if (target.format) cfg.format = target.format;
   if (target.selectionType) cfg.selectionType = target.selectionType;
-  if (target.companyMemo) cfg.companyMemo = target.companyMemo;
   if (target.focusPoint) cfg.focusPoint = target.focusPoint;
   return cfg;
 }

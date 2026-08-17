@@ -20,7 +20,6 @@ import {
   upsertPresentationSession,
   appendPresentationResult,
 } from '../presentationStorage';
-import { getScenarioConfig } from '../presentationModes';
 import { useVoice } from '@/app/career/interview/useVoice';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
@@ -76,7 +75,6 @@ export default function CareerPresentationSessionPage() {
 
   const isVoice = session?.mode === 'voice';
   const timeLimitSec = session?.timeLimitSec ?? 0;
-  const scenarioCfg = getScenarioConfig(session?.config?.scenario);
   const remaining = timeLimitSec > 0 ? timeLimitSec - elapsed : 0;
 
   // 録音中は経過時間を加算（durationSec の実測に使う）。制限時間に達したら自動停止。
@@ -166,10 +164,6 @@ export default function CareerPresentationSessionPage() {
           jobType: cfg?.jobType || null,
           metadata: {
             mode: resultLog.mode,
-            ...(cfg?.scenario && cfg.scenario !== 'unspecified'
-              ? { scenario: cfg.scenario }
-              : {}),
-            ...(cfg?.format && cfg.format !== 'unspecified' ? { format: cfg.format } : {}),
             ...(cfg?.selectionType ? { selectionType: cfg.selectionType } : {}),
           },
         });
@@ -206,9 +200,7 @@ export default function CareerPresentationSessionPage() {
 
       {/* テーマ・条件 */}
       <Card variant="soft" padding="md" className="mb-5">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
-          {scenarioCfg.emoji} {scenarioCfg.label}
-        </p>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">お題</p>
         <p className="text-base font-bold text-slate-900 leading-relaxed whitespace-pre-wrap">
           {session.theme}
         </p>

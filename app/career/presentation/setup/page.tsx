@@ -1,7 +1,7 @@
 'use client';
 
 // PASSAI 就活版 — プレゼン対策AI setup 画面（お題ベース）。
-// 選考文脈（企業/業界/職種/想定シーンなど）は前段 /career/presentation/target で入力し、
+// 選考文脈（企業/業界/職種/選考種別など）は前段 /career/presentation/target で入力し、
 // 本画面はその要約を表示するに留める。setup の主役は「お題」「発表時間」「評価してほしい観点」。
 // お題は手動入力 or AIに提案してもらう。セッションを作成して session へ。
 
@@ -26,16 +26,14 @@ import {
   CAREER_PRESENTATION_TIME_LIMITS,
   CAREER_PRESENTATION_EVAL_FOCUS,
   presentationConfigFromTarget,
-  getScenarioConfig,
-  getFormatLabel,
   getSelectionTypeLabel,
   resolveDifficulty,
+  CAREER_PRESENTATION_NEW_SESSION_TYPE,
 } from '../presentationModes';
 import type {
   CareerPresentationSession,
   CareerPresentationConfig,
   CareerPresentationTarget,
-  CareerPresentationType,
 } from '@/types/careerPresentation';
 
 const subscribeMount = () => () => {};
@@ -88,7 +86,6 @@ export default function CareerPresentationSetupPage() {
   // target（選考文脈）＋ setup（評価観点）から最終 config を組み立てる。
   function buildConfig(): CareerPresentationConfig {
     const cfg = presentationConfigFromTarget(target);
-    if (!cfg.scenario) cfg.scenario = 'unspecified';
     if (evaluationFocus.length > 0) cfg.evaluationFocus = evaluationFocus;
     if (useCareerContext) cfg.useCareerContext = true;
     return cfg;
@@ -143,15 +140,15 @@ export default function CareerPresentationSetupPage() {
     setLoading(true);
     setError(null);
     const config = buildConfig();
-    // presentationType は後方互換のため scenario からマッピングして埋める（Supabase 列・旧表示用）。
-    const presentationType: CareerPresentationType = getScenarioConfig(config.scenario).legacyType;
     const now = new Date().toISOString();
     const session: CareerPresentationSession = {
       id: newId(),
       createdAt: now,
       updatedAt: now,
       status: 'in_progress',
-      presentationType,
+      // presentationType は後方互換（Supabase の presentation_type 列・旧履歴のラベル表示）のみで使う。
+      // 新規フローでは分岐に使わないため固定値。
+      presentationType: CAREER_PRESENTATION_NEW_SESSION_TYPE,
       config,
       // プレゼンは音声・録音で発表する形式のみ（テキスト発表は廃止）。
       // 音声認識に未対応の端末では session 側でテキスト入力にフォールバックする。
@@ -304,9 +301,6 @@ function TargetSummary({
       const l = getSelectionTypeLabel(target.selectionType);
       if (l) items.push(l);
     }
-    if (target.scenario) items.push(getScenarioConfig(target.scenario).label);
-    const fmt = getFormatLabel(target.format);
-    if (fmt) items.push(fmt);
   }
 
   return (
@@ -335,7 +329,7 @@ function TargetSummary({
         </div>
       ) : (
         <p className="text-xs text-slate-500 leading-relaxed">
-          企業・業界・シーンは未設定です（汎用のお題で練習します）。
+          企業・業界・職種は未設定です（汎用のお題で練習します）。
           <Link href="/career/presentation/target" className="ml-1 text-blue-600 hover:underline">
             選考文脈を設定する
           </Link>

@@ -26,16 +26,10 @@ import { normalizePresentationTarget } from '../presentationModes';
 import { CompanyPicker } from '@/components/career/CompanyPicker';
 import { loadCompanyApplicationDefaults } from '@/app/career/company/applicationStorage';
 import {
-  CAREER_PRESENTATION_SCENARIOS,
-  CAREER_PRESENTATION_FORMATS,
   CAREER_PRESENTATION_SELECTION_TYPES,
   CAREER_PRESENTATION_DIFFICULTIES,
 } from '../presentationModes';
-import type {
-  CareerPresentationScenario,
-  CareerPresentationFormat,
-  CareerPresentationSelectionType,
-} from '@/types/careerPresentation';
+import type { CareerPresentationSelectionType } from '@/types/careerPresentation';
 
 const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
@@ -56,11 +50,8 @@ export default function CareerPresentationTargetPage() {
   const [companyId, setCompanyId] = useState<string | undefined>(undefined);
   const [industry, setIndustry] = useState('');
   const [jobType, setJobType] = useState('');
-  const [scenario, setScenario] = useState<CareerPresentationScenario | null>(null);
   const [selectionType, setSelectionType] = useState<CareerPresentationSelectionType | null>(null);
-  const [format, setFormat] = useState<CareerPresentationFormat | null>(null);
   const [difficulty, setDifficulty] = useState<'easy' | 'standard' | 'hard'>('standard');
-  const [companyMemo, setCompanyMemo] = useState('');
   const [focusPoint, setFocusPoint] = useState('');
 
   // 下書きの初期反映は 1 度だけ（マウント時）。
@@ -72,11 +63,8 @@ export default function CareerPresentationTargetPage() {
       setCompanyId(draft.companyId);
       setIndustry(draft.industry ?? '');
       setJobType(draft.jobType ?? '');
-      setScenario(draft.scenario ?? null);
       setSelectionType(draft.selectionType ?? null);
-      setFormat(draft.format ?? null);
       setDifficulty(draft.difficulty ?? 'standard');
-      setCompanyMemo(draft.companyMemo ?? '');
       setFocusPoint(draft.focusPoint ?? '');
     }
     setHydrated(true);
@@ -87,10 +75,7 @@ export default function CareerPresentationTargetPage() {
     companyName.trim() !== '' ||
     industry.trim() !== '' ||
     jobType.trim() !== '' ||
-    scenario !== null ||
     selectionType !== null ||
-    format !== null ||
-    companyMemo.trim() !== '' ||
     focusPoint.trim() !== '';
 
   /**
@@ -113,11 +98,8 @@ export default function CareerPresentationTargetPage() {
       companyId,
       industry,
       jobType,
-      scenario: scenario ?? undefined,
       selectionType: selectionType ?? undefined,
-      format: format ?? undefined,
       difficulty,
-      companyMemo,
       focusPoint,
     });
     // 文脈が空なら null。ボタンは disabled だが念のため弾く。
@@ -136,7 +118,7 @@ export default function CareerPresentationTargetPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
         title="どの選考向けに練習しますか？"
-        description="企業名・業界・職種・想定シーンを入れておくと、その選考で出されそうなお題をAIが作りやすくなります。企業名だけ・業界だけでも始められます。"
+        description="企業名・業界・職種・選考種別を入れておくと、その選考で出されそうなお題をAIが作りやすくなります。企業名だけ・業界だけでも始められます。"
       />
 
       {/* 企業名・業界（目立たせる） */}
@@ -165,23 +147,9 @@ export default function CareerPresentationTargetPage() {
         </p>
       </Card>
 
-      {/* 想定シーン・職種など */}
+      {/* 職種・選考種別など */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">想定シーン・職種</p>
-
-        <label className="block text-sm font-bold text-slate-800 mb-2">想定シーン</label>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {CAREER_PRESENTATION_SCENARIOS.map((s) => (
-            <Pill
-              key={s.scenario}
-              label={`${s.emoji} ${s.label}`}
-              active={scenario === s.scenario}
-              onClick={() =>
-                setScenario((prev) => (prev === s.scenario ? null : s.scenario))
-              }
-            />
-          ))}
-        </div>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">職種・選考種別</p>
 
         <label className="block text-sm font-bold text-slate-800 mb-2">職種（任意）</label>
         <Input
@@ -195,22 +163,11 @@ export default function CareerPresentationTargetPage() {
         <div className="flex flex-wrap gap-2 mb-4">
           {CAREER_PRESENTATION_SELECTION_TYPES.map((o) => (
             <Pill
-              key={o.label}
+              key={o.value}
               label={o.label}
               active={selectionType === o.value}
-              onClick={() => setSelectionType(o.value)}
-            />
-          ))}
-        </div>
-
-        <label className="block text-sm font-bold text-slate-800 mb-2">発表形式（任意）</label>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {CAREER_PRESENTATION_FORMATS.map((f) => (
-            <Pill
-              key={f.key}
-              label={f.label}
-              active={format === (f.key === 'unspecified' ? null : f.key)}
-              onClick={() => setFormat(f.key === 'unspecified' ? null : f.key)}
+              // 任意入力のため、選択中のものをもう一度押すと未選択に戻せる。
+              onClick={() => setSelectionType((prev) => (prev === o.value ? null : o.value))}
             />
           ))}
         </div>
@@ -228,23 +185,9 @@ export default function CareerPresentationTargetPage() {
         </div>
       </Card>
 
-      {/* メモ・練習したいこと */}
+      {/* 練習したいこと */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">メモ（任意）</p>
-        <label className="block text-sm font-bold text-slate-800 mb-2">
-          企業について分かっていること・メモ
-        </label>
-        <Textarea
-          value={companyMemo}
-          onChange={(e) => setCompanyMemo(e.target.value)}
-          placeholder="例: 事業内容、求める人物像、志望理由の軸など（あなたが調べた範囲でOK）"
-          rows={3}
-          className="mb-4"
-        />
-        <p className="-mt-2 mb-4 text-[11px] text-slate-400 leading-relaxed">
-          メモを入れると、AIはこの内容を根拠にお題を作ります。空欄なら一般的な業界課題・職種理解として扱います。
-        </p>
-
         <label className="block text-sm font-bold text-slate-800 mb-2">特に練習したいこと</label>
         <Textarea
           value={focusPoint}

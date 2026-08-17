@@ -25,8 +25,6 @@ import {
 } from '../presentationStorage';
 import {
   getPresentationModeConfig,
-  getScenarioConfig,
-  getFormatLabel,
   getSelectionTypeLabel,
   evalFocusLabels,
 } from '../presentationModes';
@@ -422,9 +420,9 @@ function formatDate(iso: string): string {
   return d.toLocaleString('ja-JP');
 }
 
-// 想定シーンのラベル。新履歴は config.scenario から、旧履歴は presentationType から解決する。
+// 履歴 1 件のラベル。presentationType は新旧すべての履歴が必ず持つため、これだけで解決できる
+// （旧「想定シーン」由来のラベルは廃止した）。
 function resultLabel(r: CareerPresentationResult): string {
-  if (r.config?.scenario) return getScenarioConfig(r.config.scenario).label;
   return getPresentationModeConfig(r.presentationType).label;
 }
 
@@ -435,18 +433,15 @@ function formatSeconds(sec: number): string {
   return s > 0 ? `${m}分${s}秒` : `${m}分`;
 }
 
-// お題以外の発表条件（想定シーン・企業/業界/職種・発表時間・観点）を1行にまとめて表示。
+// お題以外の発表条件（企業/業界/職種・選考種別・発表時間・観点）を1行にまとめて表示。
 function ConditionRow({ result }: { result: CareerPresentationResult }) {
   const cfg = result.config;
   const parts: string[] = [];
-  parts.push(`想定シーン: ${resultLabel(result)}`);
   if (cfg?.companyName) parts.push(`企業: ${cfg.companyName}`);
   if (cfg?.industry) parts.push(`業界: ${cfg.industry}`);
   if (cfg?.jobType) parts.push(`職種: ${cfg.jobType}`);
   const sel = getSelectionTypeLabel(cfg?.selectionType);
   if (sel) parts.push(`選考種別: ${sel}`);
-  const fmt = getFormatLabel(cfg?.format);
-  if (fmt) parts.push(`形式: ${fmt}`);
   parts.push(
     `発表時間: ${formatSeconds(result.timeLimitSec)}${
       result.durationSec > 0 ? `（実測 ${formatSeconds(result.durationSec)}）` : ''

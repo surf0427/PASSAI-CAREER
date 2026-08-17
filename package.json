@@ -54,6 +54,7 @@
     "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "qa:careerPresentationOrchestratorParity": "npx tsx scripts/career-presentation-orchestrator-parity-qa.ts",
+    "qa:careerPresentationTargetSlimdown": "npx tsx scripts/career-presentation-target-slimdown-qa.ts",
     "qa:careerInterviewOrchestratorParity": "npx tsx scripts/career-interview-orchestrator-parity-qa.ts",
     "qa:careerInterviewTargetOperative": "npx tsx scripts/career-interview-target-operative-qa.ts",
     "qa:careerConsultationOrchestratorParity": "npx tsx scripts/career-consultation-orchestrator-parity-qa.ts",

@@ -37,7 +37,9 @@ const ALLOWED_METADATA_KEYS: ReadonlySet<string> = new Set([
   'charLimit',
   'threadCount',
   // P9-C: presentation / company_research wiring 用の低リスク enum（本文なし・denylist は不変で継続適用）。
-  'scenario', // presentation の想定シーン enum（main_selection / internship / gd_followup 等）
+  // ★ scenario は「想定シーン」廃止により**新規の書き込み元が無い**。既に記録済みの
+  //   イベント行を timeline が描画できるよう、read 互換のためだけに allowlist へ残す。
+  'scenario',
   'sourceType', // company_research の情報源 enum（file / paste / manual / mixed）
   // P9-E: GD wiring 用の低リスク カウント（本文なし・小さな整数）。
   'participantCount', // GD の総参加者数（人間＋AI）
