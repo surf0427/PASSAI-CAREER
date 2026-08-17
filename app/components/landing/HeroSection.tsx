@@ -1,14 +1,11 @@
 import Image from 'next/image';
-import Link from 'next/link';
-import { LinkButton } from '@/components/ui/LinkButton';
 
 // First View（ヒーロー）— PASSAI CAREER（新卒就活向け AI 就活準備サービス）。
 // PC: 左右 2 カラム（左=テキスト / 右=画像）、スマホ: テキストの下に画像。
 // 淡い青→白のグラデ背景。右の画像は角丸＋軽いシャドウ。
 //
-// 主 CTA は /career/profile（基本情報入力）。ログイン不要で開始でき、入力後に
-// /career/home へ着地する導線に合わせている（app/career/home/page.tsx 参照）。
-// 副導線としてログイン（/career/login）を控えめに置く。
+// ★ Hero 内に CTA / ログイン導線は置かない（サービス説明に専念する）。
+//   開始・ログイン導線は Header 右上と、ページ下部の Closing CTA が担う。
 //
 // 画像は public/hero-passai-interview.png（AI面接練習の利用シーン）。
 // 元画像の下部には机上の書籍が写り込んでいるため、aspect-[21/10] + object-cover +
@@ -43,29 +40,6 @@ export function HeroSection() {
               入力した内容は次の対策にも引き継がれるので、
               毎回いちから自分の説明をやり直す必要がありません。
             </p>
-
-            <div className="mt-8 sm:mt-10 flex flex-col items-center gap-3 lg:items-start">
-              <LinkButton
-                href="/career/profile"
-                variant="primary"
-                size="hero"
-                className="w-full sm:w-auto font-bold"
-              >
-                PASSAI CAREERを始める
-                <span aria-hidden="true" className="ml-2">
-                  →
-                </span>
-              </LinkButton>
-              <p className="text-xs text-slate-500">
-                基本情報の入力から始められます／
-                <Link
-                  href="/career/login?redirect=%2Fcareer%2Fprofile"
-                  className="font-semibold text-brand-600 hover:text-brand-700 underline underline-offset-2"
-                >
-                  ログインはこちら
-                </Link>
-              </p>
-            </div>
           </div>
 
           {/* 右：ヒーロー画像（角丸＋軽いシャドウ。画像上に文字は重ねない） */}
