@@ -71,6 +71,22 @@ import {
 import { extractJsonLdOrganization, extractLinks, extractTitle, htmlToText } from '../lib/careerCompanyPrefetch/htmlText';
 import { runCompanyPrefetch, type PrefetchDeps, type SiteDocument } from '../lib/careerCompanyPrefetch/prefetchJobService';
 import type { RegistryCompanyCandidate } from '../lib/careerCompanyPrefetch/providers/types';
+import { COMPANY_FACT_SCHEMA_REVISION } from '../lib/careerCompanyPrefetch/constants';
+import type { CompanyFactGroup, CompanyFactGroupState } from '../types/careerCompanyOfficial';
+
+/**
+ * prefetch 対象 group がすべて「現行 schema 世代で ISO 時点に取得済み」の状態を作る。
+ * ★ schemaRevision を現行世代にしておかないと、schema 世代のズレで stale と判定され
+ *   freshness short-circuit の検証（P-8）が意図と別の理由で通ってしまう。
+ */
+function freshMap(iso: string): Map<CompanyFactGroup, CompanyFactGroupState> {
+  const state = { fetchedAt: iso, schemaRevision: COMPANY_FACT_SCHEMA_REVISION };
+  return new Map<CompanyFactGroup, CompanyFactGroupState>([
+    ['identity', state],
+    ['profile', state],
+    ['navigation', state],
+  ]);
+}
 
 const ROOT = process.cwd();
 
@@ -595,7 +611,15 @@ console.log('[P-7] fact mapping（出典必須 / 優先順 / null を保存し�
   check('P-7e fact_group が identity', identityFacts.every((f) => f.factGroup === 'identity'));
 
   const navFacts = buildNavigationFacts(
-    { about: null, recruit: 'https://x.com/recruit', ir: null, news: null, midTermPlan: null },
+    {
+      about: null,
+      recruit: 'https://x.com/recruit',
+      ir: null,
+      news: null,
+      midTermPlan: null,
+      philosophy: null,
+      financialResults: null,
+    },
     'https://x.com/',
     '2026-08-16T00:00:00.000Z',
   );
@@ -690,7 +714,7 @@ type FakeState = {
   sources: number;
   finished: { status: string; errorCode: string | null } | null;
   failed: string | null;
-  freshness: Map<string, string>;
+  freshness: Map<CompanyFactGroup, CompanyFactGroupState>;
   registered: string[];
 };
 
@@ -748,7 +772,7 @@ function makeDeps(over: Partial<PrefetchDeps> = {}, state?: FakeState): Prefetch
       return { status: 'registered', companyId: 'cmp_sony', displayName, created: true };
     },
     resolveExistingCompany: async () => null,
-    loadFreshness: async () => s.freshness as Map<never, string>,
+    loadFreshness: async () => s.freshness,
     claimJob: async () => {
       s.claims += 1;
       return {
@@ -791,7 +815,7 @@ void (async () => {
 
   {
     // 全 group が fresh → **claim すらしない**（cost 0）。
-    const s: FakeState = { claims: 0, claimOutcome: 'CLAIMED_NEW', facts: 0, sources: 0, finished: null, failed: null, freshness: new Map([['identity', ISO], ['profile', ISO], ['navigation', ISO]]), registered: [] };
+    const s: FakeState = { claims: 0, claimOutcome: 'CLAIMED_NEW', facts: 0, sources: 0, finished: null, failed: null, freshness: freshMap(ISO), registered: [] };
     const out = await runCompanyPrefetch(makeDeps({}, s), 'ソニー');
     check('P-8f ★ fresh なら fresh を返す', out.kind === 'fresh', JSON.stringify(out));
     check('P-8g ★ fresh なら claim しない（外部 I/O ゼロ）', s.claims === 0);

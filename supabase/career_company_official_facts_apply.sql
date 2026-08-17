@@ -1,12 +1,17 @@
 -- ============================================================================
 -- career_company_official_facts — Company Data Spine / Global Official Company Data DDL
 --
--- ⚠ NOT APPLIED（本 slice ではファイル作成のみ。実環境への適用はしていない）
+-- ✅ 適用状態（2026-08-17 に Project B へ live probe で実測）: **全て適用済み**。
+--    v1 部分（sources / facts / derived / enrichment_jobs / claim RPC）: 適用済み。
+--    v2 差分（facts.schema_revision 列 / fact_group の 'developments'）: 適用済み。
+--      - schema_revision は text / nullable（既存 11 行は NULL のまま生存 = backfill 不要）
+--      - fact_group CHECK は 7 group を受理し、未知 group は 23514 で拒否する
+--    本ファイルは冪等なので、差分が増えたときは同じファイルを再実行すればよい。
 --    適用は operator が Supabase SQL Editor で手動実行する（Project B / CAREER 専用）。
 --
 -- 前提となる既存 DDL（**先に適用が必要**）:
 --   supabase/career_company_identity_apply.sql
---     → career_company_master / career_company_aliases（どちらも現在 NOT APPLIED）
+--     → career_company_master / career_company_aliases（どちらも **適用済み**）
 --
 -- 位置づけ:
 --   「その企業について、**出典 URL に遡れる形で**取得した公開事実」を全ユーザー共有で持つ。
@@ -142,13 +147,19 @@ CREATE TABLE IF NOT EXISTS public.career_company_official_facts (
   -- fact_group 別 TTL から導出（lib/careerCompanyOfficial/freshness.ts と同じ値）。
   valid_until       timestamptz,
 
+  -- ★ この行を書いた時点の fact schema 版（COMPANY_FACT_SCHEMA_REVISION）。
+  --   nullable: 列が無かった時代の行を壊さない。NULL は「v1 以前」を意味する。
+  --   用途: fact_key を増やしたとき、TTL 内の企業は freshness short-circuit で fresh と
+  --   判定され新 key が入らない。「最新 fact が旧世代」を stale 扱いするための材料。
+  schema_revision   text,
+
   -- 履歴を消さない（新しい事実で古い事実を上書き削除しない）。
   superseded_by     uuid        REFERENCES public.career_company_official_facts (id) ON DELETE SET NULL,
 
   created_at        timestamptz NOT NULL DEFAULT now(),
 
   CONSTRAINT career_company_official_facts_group_chk CHECK (
-    fact_group IN ('identity','profile','navigation','ir','recruiting','news')
+    fact_group IN ('identity','profile','navigation','ir','recruiting','developments','news')
   ),
   CONSTRAINT career_company_official_facts_method_chk CHECK (
     extraction_method IN ('structured_api','html_structured','llm_extraction')
@@ -163,6 +174,26 @@ CREATE TABLE IF NOT EXISTS public.career_company_official_facts (
   CONSTRAINT career_company_official_facts_natural_key
     UNIQUE (company_id, fact_key, fetched_at)
 );
+
+-- ── 既に本 DDL の旧版を適用済みの環境向け（新規適用では上の定義に含まれる）──────
+--
+--   ★ どちらも **非破壊**:
+--     - ADD COLUMN は nullable・default 無し（既存行を書き換えない / backfill 不要）
+--     - CHECK は許可値を **増やす**だけ（既存行はすべて新 CHECK も満たす）
+--   ★ 再実行安全: DROP CONSTRAINT IF EXISTS → ADD CONSTRAINT で冪等。
+--   ★ rollback は許可値を元の 6 つへ戻す DROP/ADD 1 組で足りる（列は残して無害）。
+ALTER TABLE public.career_company_official_facts
+  ADD COLUMN IF NOT EXISTS schema_revision text;
+
+ALTER TABLE public.career_company_official_facts
+  DROP CONSTRAINT IF EXISTS career_company_official_facts_group_chk;
+ALTER TABLE public.career_company_official_facts
+  ADD CONSTRAINT career_company_official_facts_group_chk CHECK (
+    fact_group IN ('identity','profile','navigation','ir','recruiting','developments','news')
+  );
+
+COMMENT ON COLUMN public.career_company_official_facts.schema_revision IS
+  'Fact schema generation that wrote this row (COMPANY_FACT_SCHEMA_REVISION). NULL means pre-v2. A group whose newest fact carries an older generation is treated as stale so that newly added fact_keys are fetched without waiting for the TTL.';
 
 COMMENT ON TABLE public.career_company_official_facts IS
   'Company Data Spine global official facts. source_id is NOT NULL: a fact without provenance cannot exist. AI-generated content MUST NOT be stored here (see career_company_derived). NO personal data. Writes are service_role only.';

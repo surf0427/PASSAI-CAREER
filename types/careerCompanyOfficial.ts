@@ -26,16 +26,19 @@ import type { CompanyCanonicalId } from '@/types/careerCompanyKnowledge';
 /**
  * 事実の鮮度特性による区分。TTL・取得 provider・prefetch 対象かがここで決まる。
  *
- * Phase 1 で実際に取得するのは `identity` / `profile` / `navigation` の 3 つだけ。
- * `ir` / `recruiting` / `news` は **契約だけ**先に固定する（将来 provider を足せる形を壊さない）。
+ * Phase 3 時点の実取得:
+ *   - **refresh cycle を駆動する** group（`PREFETCH_FACT_GROUPS`）: identity / profile / navigation
+ *   - **同一 job に便乗して取る** group（`OPPORTUNISTIC_FACT_GROUPS`）: ir / recruiting / developments
+ *   - `news` は契約のみ（volatile すぎるため保存対象にしない。都度取得が正しい）
  */
 export type CompanyFactGroup =
   | 'identity' // 法人 identity（登記名 / 法人番号 / 本社 / 設立）
-  | 'profile' // 会社概要（事業内容 / 規模 / 上場区分）
-  | 'navigation' // 公式サイト内の入口 URL（採用 / IR / ニュース）
-  | 'ir' // 決算・IR（Phase 1 では取得しない）
-  | 'recruiting' // 採用・選考（Phase 1 では取得しない）
-  | 'news'; // ニュース（Phase 1 では取得しない）
+  | 'profile' // 会社概要（事業内容 / 規模 / 上場区分 / 理念 / ビジネスモデル）
+  | 'navigation' // 公式サイト内の入口 URL（採用 / IR / ニュース / 理念）
+  | 'ir' // 決算・IR（売上・利益・中期経営計画・市場環境）
+  | 'recruiting' // 採用・選考（求める人物像 / 職種 / 社風 / 働き方）
+  | 'developments' // 最近の動向（プレスリリース由来のスナップショット）
+  | 'news'; // 個別ニュース（**保存しない**。契約のみ）
 
 export const COMPANY_FACT_GROUPS: readonly CompanyFactGroup[] = [
   'identity',
@@ -43,14 +46,49 @@ export const COMPANY_FACT_GROUPS: readonly CompanyFactGroup[] = [
   'navigation',
   'ir',
   'recruiting',
+  'developments',
   'news',
 ];
 
-/** Phase 1 の prefetch 対象（ここに無い group は自動取得しない）。 */
+/**
+ * **refresh cycle を駆動する** prefetch 対象 group。
+ *
+ * ★★ ここに group を足してはいけない ★★
+ *   1. `refreshCooldownIsConsistent()`（refreshPolicy.ts）が
+ *      `REFRESH_COOLDOWN_SECONDS <= min(TTL of PREFETCH_FACT_GROUPS)` を要求する。
+ *      TTL の短い group を足すと cooldown を短くせざるを得ず、全企業の再取得間隔が縮む。
+ *   2. job の terminal 判定は「対象 group を全部書けたか」（prefetchJobService Stage 6）。
+ *      多くの企業で埋まらない group を対象にすると **恒常的に partial** となり、
+ *      partial の failure cooldown（1 日）で毎日再取得が走る（refresh storm）。
+ *   よって「取れたら嬉しいが無くても正常」な group は下の
+ *   `OPPORTUNISTIC_FACT_GROUPS` へ入れる。
+ */
 export const PREFETCH_FACT_GROUPS: readonly CompanyFactGroup[] = [
   'identity',
   'profile',
   'navigation',
+];
+
+/**
+ * **refresh cycle を駆動しない**が、job が走ったときに便乗して取得する group。
+ *
+ * 性質:
+ *   - 取得できなくても job の status に影響しない（partial に落とさない）
+ *   - claim / cooldown / idempotency の意味を一切変えない
+ *   - 結果として実質 profile / navigation と同じ周期（90 日）で更新される
+ *   - 読み出し時の status（ready / partial / stale）判定にも参加しない
+ *     （`summarizeFreshness` は `PREFETCH_FACT_GROUPS` に対して評価する）
+ */
+export const OPPORTUNISTIC_FACT_GROUPS: readonly CompanyFactGroup[] = [
+  'ir',
+  'recruiting',
+  'developments',
+];
+
+/** 実際に保存対象となる group（prefetch + opportunistic）。 */
+export const PERSISTED_FACT_GROUPS: readonly CompanyFactGroup[] = [
+  ...PREFETCH_FACT_GROUPS,
+  ...OPPORTUNISTIC_FACT_GROUPS,
 ];
 
 // ── Source（出典）────────────────────────────────────────────────────
@@ -129,11 +167,17 @@ export const COMPANY_FACT_EXTRACTION_METHODS: readonly CompanyFactExtractionMeth
 ];
 
 /**
- * Phase 1 で扱う fact key。**列を増やさずに項目を増やせる**ようにするため EAV 形とし、
+ * 扱う fact key。**列を増やさずに項目を増やせる**ようにするため EAV 形とし、
  * key は union で固定する（自由文字列を許さない＝未知 key を保存しない）。
+ *
+ * ★★ すべて「出典に実在する記述」だけを入れる ★★
+ *   `selfDescribedStrengths` / `statedChallenges` / `marketPositionClaims` のように
+ *   **主観が入りうる項目は「企業が自ら述べていること」として key 名で明示**する。
+ *   AI が facts から導いた分析（我々の評価・競合比較・将来予測）は
+ *   `career_company_derived` 側の責務であり、この union には存在しない。
  */
 export type CompanyFactKey =
-  // identity group
+  // ── identity group ─────────────────────────────────────────────────
   | 'corporateNumber'
   | 'legalName'
   | 'legalNameKana'
@@ -142,7 +186,7 @@ export type CompanyFactKey =
   | 'headquartersAddress'
   | 'foundedYear'
   | 'registrationStatus'
-  // profile group
+  // ── profile group（会社概要 / 事業 / 理念）───────────────────────────
   | 'officialDomain'
   | 'officialUrl'
   | 'aboutPageUrl'
@@ -156,41 +200,56 @@ export type CompanyFactKey =
   | 'tickerCode'
   | 'parentCompanyName'
   | 'corporateGroupLabel'
-  // navigation group
+  | 'representativeName'
+  | 'representativeTitle'
+  | 'missionStatement'
+  | 'visionStatement'
+  | 'corporateValues'
+  | 'businessModel'
+  | 'targetCustomers'
+  | 'overseasPresence'
+  | 'groupCompanies'
+  | 'selfDescribedStrengths'
+  // ── navigation group（入口 URL）──────────────────────────────────────
   | 'recruitUrl'
   | 'irUrl'
   | 'newsroomUrl'
-  | 'midTermPlanUrl';
+  | 'midTermPlanUrl'
+  | 'philosophyPageUrl'
+  | 'financialResultsUrl'
+  // ── ir group（財務 / 戦略 / 市場環境）────────────────────────────────
+  | 'fiscalPeriodLabel'
+  | 'revenue'
+  | 'operatingProfit'
+  | 'netProfit'
+  | 'segmentPerformance'
+  | 'financialHighlights'
+  | 'midTermPlanSummary'
+  | 'growthStrategy'
+  | 'strategicInvestmentAreas'
+  | 'statedChallenges'
+  | 'businessRisks'
+  | 'marketEnvironment'
+  | 'marketPositionClaims'
+  | 'namedCompetitors'
+  // ── recruiting group（採用 / 組織文化）───────────────────────────────
+  | 'desiredCandidateProfile'
+  | 'recruitingOverview'
+  | 'jobCategories'
+  | 'organizationalCulture'
+  | 'workingStyle'
+  | 'trainingPrograms'
+  | 'careerDevelopment'
+  // ── developments group（最近の動向）─────────────────────────────────
+  | 'recentDevelopments'
+  | 'productLaunches'
+  | 'partnerships'
+  | 'mergersAcquisitions';
 
-export const COMPANY_FACT_KEYS: readonly CompanyFactKey[] = [
-  'corporateNumber',
-  'legalName',
-  'legalNameKana',
-  'legalNameEn',
-  'headquartersPrefecture',
-  'headquartersAddress',
-  'foundedYear',
-  'registrationStatus',
-  'officialDomain',
-  'officialUrl',
-  'aboutPageUrl',
-  'industryLabel',
-  'businessDescription',
-  'businessSegments',
-  'mainProducts',
-  'employeeCount',
-  'capital',
-  'listingStatus',
-  'tickerCode',
-  'parentCompanyName',
-  'corporateGroupLabel',
-  'recruitUrl',
-  'irUrl',
-  'newsroomUrl',
-  'midTermPlanUrl',
-];
-
-/** fact key → 所属 group（TTL 判定と部分成功の単位）。 */
+/**
+ * fact key → 所属 group（TTL 判定と部分成功の単位）。
+ * ★ `COMPANY_FACT_KEYS` はこの map の key から導出する（2 箇所で列挙して drift させない）。
+ */
 export const COMPANY_FACT_KEY_GROUP: Readonly<Record<CompanyFactKey, CompanyFactGroup>> = {
   corporateNumber: 'identity',
   legalName: 'identity',
@@ -200,6 +259,7 @@ export const COMPANY_FACT_KEY_GROUP: Readonly<Record<CompanyFactKey, CompanyFact
   headquartersAddress: 'identity',
   foundedYear: 'identity',
   registrationStatus: 'identity',
+
   officialDomain: 'profile',
   officialUrl: 'profile',
   aboutPageUrl: 'profile',
@@ -213,11 +273,61 @@ export const COMPANY_FACT_KEY_GROUP: Readonly<Record<CompanyFactKey, CompanyFact
   tickerCode: 'profile',
   parentCompanyName: 'profile',
   corporateGroupLabel: 'profile',
+  representativeName: 'profile',
+  representativeTitle: 'profile',
+  missionStatement: 'profile',
+  visionStatement: 'profile',
+  corporateValues: 'profile',
+  businessModel: 'profile',
+  targetCustomers: 'profile',
+  overseasPresence: 'profile',
+  groupCompanies: 'profile',
+  selfDescribedStrengths: 'profile',
+
   recruitUrl: 'navigation',
   irUrl: 'navigation',
   newsroomUrl: 'navigation',
   midTermPlanUrl: 'navigation',
+  philosophyPageUrl: 'navigation',
+  financialResultsUrl: 'navigation',
+
+  fiscalPeriodLabel: 'ir',
+  revenue: 'ir',
+  operatingProfit: 'ir',
+  netProfit: 'ir',
+  segmentPerformance: 'ir',
+  financialHighlights: 'ir',
+  midTermPlanSummary: 'ir',
+  growthStrategy: 'ir',
+  strategicInvestmentAreas: 'ir',
+  statedChallenges: 'ir',
+  businessRisks: 'ir',
+  marketEnvironment: 'ir',
+  marketPositionClaims: 'ir',
+  namedCompetitors: 'ir',
+
+  desiredCandidateProfile: 'recruiting',
+  recruitingOverview: 'recruiting',
+  jobCategories: 'recruiting',
+  organizationalCulture: 'recruiting',
+  workingStyle: 'recruiting',
+  trainingPrograms: 'recruiting',
+  careerDevelopment: 'recruiting',
+
+  recentDevelopments: 'developments',
+  productLaunches: 'developments',
+  partnerships: 'developments',
+  mergersAcquisitions: 'developments',
 };
+
+export const COMPANY_FACT_KEYS: readonly CompanyFactKey[] = Object.keys(
+  COMPANY_FACT_KEY_GROUP,
+) as CompanyFactKey[];
+
+/** 未知 key（旧 deploy / 手書き row）を保存・描画経路へ入れないための guard。 */
+export function isKnownCompanyFactKey(value: unknown): value is CompanyFactKey {
+  return typeof value === 'string' && value in COMPANY_FACT_KEY_GROUP;
+}
 
 /**
  * 1 事実 = 1 件。
@@ -277,6 +387,20 @@ export type CompanyFactGroupFreshness = {
   validUntil: string | null;
   /** 経過秒（missing なら null）。 */
   ageSeconds: number | null;
+};
+
+/**
+ * group 単位の「最後に何を、どの schema 世代で書いたか」。
+ *
+ * ★ `schemaRevision` を持つ理由:
+ *   fact key の集合を増やしたとき、TTL 内の企業は freshness short-circuit で
+ *   `fresh` と判定され、**新 key が永久に取得されない**（次の TTL 満了まで欠ける）。
+ *   「最新 fact が旧 schema 世代」なら stale として扱うことで、schema 拡張が
+ *   1 企業 1 回の再取得サイクルで行き渡る。旧行（列が無い時代の row）は null。
+ */
+export type CompanyFactGroupState = {
+  fetchedAt: string;
+  schemaRevision: string | null;
 };
 
 // ── 読み出し契約（Context Orchestrator の上流）────────────────────────

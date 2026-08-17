@@ -31,25 +31,66 @@
  *   「もう一度取ってよいか」の最終判定は job 台帳（claim RPC）が持つ。
  *   terminal 行は **永久禁止ではなく cooldown 付きの休止**である
  *   （`lib/careerCompanyPrefetch/refreshPolicy.ts` / DDL §7 の CLAIMED_REFRESH）。
+ *
+ * ── fact_group の 2 階層（コスト設計の中核）──────────────────────────
+ *   PREFETCH_FACT_GROUPS      identity / profile / navigation
+ *     → refresh cycle を **駆動する**。claim / cooldown / completed 判定の対象。
+ *   OPPORTUNISTIC_FACT_GROUPS ir / recruiting / developments
+ *     → job が走ったときに **便乗して取る**だけ。取れなくても status に影響しない。
+ *   多くの企業で埋まらない group（IR を公開していない中小企業など）を前者に入れると
+ *   恒常 partial → 1 日 cooldown で毎日再取得、という storm になる。
+ *
+ * ── fact schema 世代（新 key を既存企業へ行き渡らせる仕組み）──────────
+ *   key を増やしただけでは、TTL 内の企業は Stage 1b の short-circuit で `fresh` と
+ *   判定され新 key が入らない。そこで facts に `schema_revision` を持たせ、
+ *   「最新 fact が旧世代」なら stale とする（`isSchemaRevisionStale`）。
+ *   1 企業あたり 1 回だけ余分な取得サイクルが走り、その後は通常の TTL 判定へ戻る。
  */
 
 import type { CompanyRegisterResult } from '@/types/careerCompanyIdentity';
 import type {
   CompanyFactGroup,
+  CompanyFactGroupState,
   DraftOfficialCompanyFact,
 } from '@/types/careerCompanyOfficial';
 import { PREFETCH_FACT_GROUPS } from '@/types/careerCompanyOfficial';
 import { classifyGroupFreshness, shouldRefetchGroup } from '@/lib/careerCompanyOfficial/freshness';
-import { MAX_DOMAIN_CANDIDATES, type CompanyEnrichmentErrorCode } from './constants';
-import { discoverPages, sameSite, verifyOfficialDomain } from './domainVerification';
-import type { ExtractedCompanyProfile } from './extraction';
-import { isEmptyExtraction, rejectUngroundedValues } from './extraction';
 import {
+  COMPANY_FACT_SCHEMA_REVISION,
+  ENRICHMENT_DEADLINE_MS,
+  MAX_DOMAIN_CANDIDATES,
+  MAX_FETCHES_PER_JOB,
+  type CompanyEnrichmentErrorCode,
+} from './constants';
+import { discoverPages, sameSite, verifyOfficialDomain } from './domainVerification';
+import type {
+  ExtractedCompanyDevelopments,
+  ExtractedCompanyIr,
+  ExtractedCompanyPhilosophy,
+  ExtractedCompanyProfile,
+  ExtractedCompanyRecruiting,
+} from './extraction';
+import type { FieldSpecMap } from './extraction';
+import {
+  DEVELOPMENTS_SPEC,
+  IR_SPEC,
+  PHILOSOPHY_SPEC,
+  RECRUITING_SPEC,
+  isEmptyBySpec,
+  isEmptyExtraction,
+  rejectUngroundedBySpec,
+  rejectUngroundedValues,
+} from './extraction';
+import {
+  buildDevelopmentsFacts,
   buildDomainFacts,
   buildExtractedProfileFacts,
   buildIdentityFacts,
+  buildIrFacts,
   buildJsonLdFacts,
   buildNavigationFacts,
+  buildPhilosophyFacts,
+  buildRecruitingFacts,
   mergeFacts,
 } from './factMapping';
 import type { JsonLdOrganization } from './htmlText';
@@ -125,6 +166,17 @@ export type PrefetchDeps = {
   fetchSite: (url: string) => Promise<{ ok: true; document: SiteDocument } | { ok: false }>;
   /** LLM 抽出（**抽出器としてのみ**。失敗は null）。 */
   extractProfile: (sourceText: string) => Promise<ExtractedCompanyProfile | null>;
+  /**
+   * ページ別の追加抽出（理念 / IR / 採用 / 動向）。
+   *
+   * ★ optional にしている理由: deps 契約の後方互換。未注入なら「その group の fact を
+   *   作らない」だけで、既存の identity / profile / navigation の挙動は 1 バイトも変わらない。
+   *   実配線は `runtime.server.ts` が全て埋める（QA がそれを固定する）。
+   */
+  extractPhilosophy?: (sourceText: string) => Promise<ExtractedCompanyPhilosophy | null>;
+  extractIr?: (sourceText: string) => Promise<ExtractedCompanyIr | null>;
+  extractRecruiting?: (sourceText: string) => Promise<ExtractedCompanyRecruiting | null>;
+  extractDevelopments?: (sourceText: string) => Promise<ExtractedCompanyDevelopments | null>;
 
   /** 既存 Company Identity の企業登録（alias 込み dedupe。無改修で再利用）。 */
   registerCompany: (
@@ -136,8 +188,13 @@ export type PrefetchDeps = {
     rawName: string,
   ) => Promise<{ companyId: string; displayName: string } | null>;
 
-  /** fact_group 別の最終取得時刻。 */
-  loadFreshness: (companyId: string) => Promise<Map<CompanyFactGroup, string>>;
+  /**
+   * fact_group 別の「最終取得時刻 + その世代の fact schema 版」。
+   *
+   * ★ schema 版を併せて返すのが重要: fact key を増やしても TTL 内の企業は
+   *   `fresh` と判定され新 key が埋まらない。旧世代なら stale とするために使う。
+   */
+  loadFreshness: (companyId: string) => Promise<Map<CompanyFactGroup, CompanyFactGroupState>>;
   claimJob: (identity: CompanyEnrichmentIdentity) => Promise<{
     outcome: string;
     jobId: string;
@@ -282,6 +339,8 @@ type DiscoveryResult = {
   sources: ProviderSourceRef[];
   /** 検証で不採用になった候補数（観測用）。 */
   rejected: number;
+  /** 実際に消費した fetch 回数（1 job の fetch 予算から引く）。 */
+  fetchCount: number;
 };
 
 /**
@@ -298,16 +357,16 @@ export async function discoverOfficialSite(
   const sources: ProviderSourceRef[] = [];
 
   const query = buildOfficialSiteQuery(displayName, candidate?.legalName ?? null);
-  if (query === '') return { document: null, sources, rejected: 0 };
+  if (query === '') return { document: null, sources, rejected: 0, fetchCount: 0 };
 
   const search = await deps.search.searchOfficialSite(query);
   if (search.status === 'failed') {
     emit(deps, { stage: 'discovery', outcome: `search_${search.reason}` });
-    return { document: null, sources, rejected: 0 };
+    return { document: null, sources, rejected: 0, fetchCount: 0 };
   }
   if (search.status === 'empty') {
     emit(deps, { stage: 'discovery', outcome: 'search_empty' });
-    return { document: null, sources, rejected: 0 };
+    return { document: null, sources, rejected: 0, fetchCount: 0 };
   }
   // ★ 検索応答そのものも出典として残す（候補がどこから来たかを追跡できる）。
   sources.push(search.source);
@@ -320,7 +379,9 @@ export async function discoverOfficialSite(
   };
 
   let rejected = 0;
+  let fetchCount = 0;
   for (const hit of search.hits.slice(0, MAX_DOMAIN_CANDIDATES)) {
+    fetchCount += 1;
     const fetched = await deps.fetchSite(hit.url);
     if (!fetched.ok) {
       rejected += 1;
@@ -345,23 +406,64 @@ export async function discoverOfficialSite(
 
     sources.push(doc.source);
     emit(deps, { stage: 'discovery', outcome: `verified_${verdict.reason}` });
-    return { document: doc, sources, rejected };
+    return { document: doc, sources, rejected, fetchCount };
   }
 
   emit(deps, { stage: 'discovery', outcome: 'no_verified_domain', count: rejected });
-  return { document: null, sources, rejected };
+  return { document: null, sources, rejected, fetchCount };
 }
 
-// ── Stage 3: minimal profile prefetch ───────────────────────────────
+// ── Stage 3: 公式サイトからの harvest ────────────────────────────────
+/** ISO → epoch ms（不正なら null）。never-throw。 */
+function toEpochMs(iso: string | null | undefined): number | null {
+  if (typeof iso !== 'string' || iso === '') return null;
+  const ms = new Date(iso).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /**
- * 公式サイト（トップ + 会社概要）から profile / navigation facts を組む。
+ * 締切を過ぎたか（pure）。どちらかが読めなければ「過ぎていない」（取得を止めない）。
  *
- * LLM は **抽出器としてのみ**使い、抽出値は必ず `rejectUngroundedValues` で
- * 原文に実在するか検証してから fact 化する。
+ * ★ ページ別抽出で LLM call が最大 5 回になったため、**各ページの前に**必ず確認する。
+ *   打ち切っても既に取れた fact は保存される（partial として成立する）。
+ */
+export function isDeadlineExceeded(nowIso: string, deadlineIso: string | null): boolean {
+  const now = toEpochMs(nowIso);
+  const deadline = toEpochMs(deadlineIso);
+  if (now === null || deadline === null) return false;
+  return now >= deadline;
+}
+
+/** 1 job の外部取得予算（fetch 回数と締切）。 */
+export type HarvestBudget = {
+  /** ISO。これを過ぎたら残りのページを取りに行かない。null で無制限。 */
+  deadlineAt: string | null;
+  /** 残り fetch 回数。 */
+  remainingFetches: number;
+};
+
+/**
+ * 公式サイトから profile / navigation / ir / recruiting / developments facts を組む。
+ *
+ * ── ページ構成（1 ページ = 1 抽出 = 1 出典）────────────────────────────
+ *   トップ        : navigation（リンク検出）/ officialDomain
+ *   会社概要      : profile（規模・事業・代表者・ビジネスモデル・強み）
+ *   理念          : profile（理念 / ビジョン / 価値観）※無ければ会社概要本文で代替
+ *   決算 or IR    : ir（売上・利益・中期計画・市場環境）
+ *   採用          : recruiting（求める人物像・職種・社風・働き方）
+ *   ニュース      : developments（最近の動向）
+ *
+ * ★ 不変条件:
+ *   1. LLM は **抽出器としてのみ**使い、抽出値は必ずその **ページの本文**に対して
+ *      grounding 検証してから fact 化する（別ページの本文で検証しない）。
+ *   2. 取れないページは黙って skip する（欠損は正常。null を「事実」として保存しない）。
+ *   3. 追加ページは同一登録ドメイン配下のみ（外部媒体を公式情報として保存しない）。
+ *   4. fetch 予算・締切を超えたら打ち切る（既取得分は捨てない）。
  */
 export async function buildProfileAndNavigationFacts(
   deps: PrefetchDeps,
   top: SiteDocument,
+  budget?: HarvestBudget,
 ): Promise<{ facts: DraftOfficialCompanyFact[][]; sources: ProviderSourceRef[]; aboutFetched: boolean }> {
   const fetchedAt = deps.now();
   const sources: ProviderSourceRef[] = [];
@@ -371,18 +473,44 @@ export async function buildProfileAndNavigationFacts(
   const registrable = host.split('.').slice(-2).join('.');
   const pages = discoverPages(top.links, host);
 
+  let remainingFetches = budget ? budget.remainingFetches : Number.POSITIVE_INFINITY;
+  const deadlineAt = budget?.deadlineAt ?? null;
+
+  /** 予算内なら 1 ページ取得する（同一サイト・重複 URL を除く）。 */
+  const fetchPage = async (
+    url: string | null,
+    seen: ReadonlySet<string>,
+  ): Promise<SiteDocument | null> => {
+    if (!url || seen.has(url) || !sameSite(url, registrable)) return null;
+    if (remainingFetches <= 0) {
+      emit(deps, { stage: 'discovery', outcome: 'fetch_budget_exhausted' });
+      return null;
+    }
+    if (isDeadlineExceeded(deps.now(), deadlineAt)) {
+      emit(deps, { stage: 'discovery', outcome: 'deadline_reached' });
+      return null;
+    }
+    remainingFetches -= 1;
+    const res = await deps.fetchSite(url);
+    if (!res.ok) return null;
+    sources.push(res.document.source);
+    return res.document;
+  };
+
+  const visited = new Set<string>([top.url]);
+
   // navigation（リンク検出のみ。AI 不使用）。
   factGroups.push(buildNavigationFacts(pages, top.source.sourceUrl, fetchedAt));
 
-  // 会社概要ページ。無ければトップページ本文を対象にする。
+  // ── 会社概要ページ。無ければトップページ本文を対象にする ─────────────
   let aboutDoc: SiteDocument = top;
   let aboutFetched = false;
-  if (pages.about && pages.about !== top.url && sameSite(pages.about, registrable)) {
-    const res = await deps.fetchSite(pages.about);
-    if (res.ok) {
-      aboutDoc = res.document;
+  {
+    const doc = await fetchPage(pages.about, visited);
+    if (doc) {
+      aboutDoc = doc;
       aboutFetched = true;
-      sources.push(res.document.source);
+      visited.add(doc.url);
     }
   }
 
@@ -394,33 +522,133 @@ export async function buildProfileAndNavigationFacts(
   // JSON-LD（構造化・AI 不使用・LLM より優先）。
   factGroups.push(buildJsonLdFacts(aboutDoc.jsonLd, aboutDoc.source.sourceUrl, fetchedAt));
 
-  // LLM 抽出（★ 最後。かつ検証を通ったものだけ）。
-  const extracted = await deps.extractProfile(aboutDoc.text);
-  if (extracted) {
-    const { profile, report } = rejectUngroundedValues(extracted, aboutDoc.text);
+  // ── 会社概要の LLM 抽出（★ 検証を通ったものだけ）──────────────────
+  if (!isDeadlineExceeded(deps.now(), deadlineAt)) {
+    const extracted = await deps.extractProfile(aboutDoc.text);
+    if (extracted) {
+      const { profile, report } = rejectUngroundedValues(extracted, aboutDoc.text);
+      emit(deps, {
+        stage: 'extraction',
+        outcome: report.rejectedKeys.length > 0 ? 'partially_rejected' : 'grounded',
+        count: report.kept,
+      });
+      if (!isEmptyExtraction(profile)) {
+        factGroups.push(
+          buildExtractedProfileFacts(profile, aboutDoc.text, aboutDoc.source.sourceUrl, fetchedAt),
+        );
+      }
+    } else {
+      emit(deps, { stage: 'extraction', outcome: 'unavailable' });
+    }
+  }
+
+  /**
+   * ページ別抽出の共通手順（取得 → 抽出 → grounding 検証 → fact 化）。
+   *
+   * ★ 検証は **抽出に使った本文**に対して行う（`doc.text`）。
+   *   ページと検証対象がズレると grounding が意味を失うため、ここで 1 対 1 に束ねる。
+   */
+  const harvest = async <T>(args: {
+    label: string;
+    doc: SiteDocument | null;
+    extract: ((sourceText: string) => Promise<T | null>) | undefined;
+    spec: FieldSpecMap<T>;
+    toFacts: (value: T, sourceText: string, sourceUrl: string) => DraftOfficialCompanyFact[];
+  }): Promise<void> => {
+    const { label, doc, extract } = args;
+    if (!doc || !extract) return;
+    if (isDeadlineExceeded(deps.now(), deadlineAt)) {
+      emit(deps, { stage: 'extraction', outcome: `${label}_deadline` });
+      return;
+    }
+    const raw = await extract(doc.text);
+    if (!raw) {
+      emit(deps, { stage: 'extraction', outcome: `${label}_unavailable` });
+      return;
+    }
+    const { value, report } = rejectUngroundedBySpec<T>(raw, args.spec, doc.text);
     emit(deps, {
       stage: 'extraction',
-      outcome: report.rejectedKeys.length > 0 ? 'partially_rejected' : 'grounded',
+      outcome: report.rejectedKeys.length > 0 ? `${label}_partially_rejected` : `${label}_grounded`,
       count: report.kept,
     });
-    if (!isEmptyExtraction(profile)) {
-      factGroups.push(
-        buildExtractedProfileFacts(profile, aboutDoc.text, aboutDoc.source.sourceUrl, fetchedAt),
-      );
-    }
-  } else {
-    emit(deps, { stage: 'extraction', outcome: 'unavailable' });
+    if (isEmptyBySpec(value)) return;
+    factGroups.push(args.toFacts(value, doc.text, doc.source.sourceUrl));
+  };
+
+  // ── 理念（無ければ会社概要本文から取る。別ページ取得はしない）─────────
+  {
+    const philosophyDoc = (await fetchPage(pages.philosophy, visited)) ?? aboutDoc;
+    if (philosophyDoc !== aboutDoc) visited.add(philosophyDoc.url);
+    await harvest<ExtractedCompanyPhilosophy>({
+      label: 'philosophy',
+      doc: philosophyDoc,
+      extract: deps.extractPhilosophy,
+      spec: PHILOSOPHY_SPEC,
+      toFacts: (value, text, url) => buildPhilosophyFacts(value, text, url, fetchedAt),
+    });
+  }
+
+  // ── IR / 決算（決算ページを優先。IR トップはリンク集のことが多い）──────
+  {
+    const irDoc =
+      (await fetchPage(pages.financialResults, visited)) ?? (await fetchPage(pages.ir, visited));
+    if (irDoc) visited.add(irDoc.url);
+    await harvest<ExtractedCompanyIr>({
+      label: 'ir',
+      doc: irDoc,
+      extract: deps.extractIr,
+      spec: IR_SPEC,
+      toFacts: (value, text, url) => buildIrFacts(value, text, url, fetchedAt),
+    });
+  }
+
+  // ── 採用 ────────────────────────────────────────────────────────────
+  {
+    const recruitDoc = await fetchPage(pages.recruit, visited);
+    if (recruitDoc) visited.add(recruitDoc.url);
+    await harvest<ExtractedCompanyRecruiting>({
+      label: 'recruiting',
+      doc: recruitDoc,
+      extract: deps.extractRecruiting,
+      spec: RECRUITING_SPEC,
+      toFacts: (value, text, url) => buildRecruitingFacts(value, text, url, fetchedAt),
+    });
+  }
+
+  // ── 最近の動向（ニュース一覧）────────────────────────────────────────
+  {
+    const newsDoc = await fetchPage(pages.news, visited);
+    if (newsDoc) visited.add(newsDoc.url);
+    await harvest<ExtractedCompanyDevelopments>({
+      label: 'developments',
+      doc: newsDoc,
+      extract: deps.extractDevelopments,
+      spec: DEVELOPMENTS_SPEC,
+      toFacts: (value, _text, url) => buildDevelopmentsFacts(value, url, fetchedAt),
+    });
   }
 
   return { facts: factGroups, sources, aboutFetched };
 }
 
 // ── 本体 ─────────────────────────────────────────────────────────────
-/** fact_group 別の鮮度をまとめて評価する（DB read 1 回）。 */
+/**
+ * fact_group 別の鮮度をまとめて評価する（DB read 1 回）。
+ *
+ * ★ TTL に加えて **fact schema 世代**も見る。key 集合を増やしたとき、TTL 内の企業を
+ *   `fresh` のまま放置すると新 key が最長 90 日入らないため、旧世代を stale とする。
+ */
 async function loadGroupStates(deps: PrefetchDeps, companyId: string) {
   const latest = await deps.loadFreshness(companyId);
   const now = deps.now();
-  return PREFETCH_FACT_GROUPS.map((g) => classifyGroupFreshness(g, latest.get(g) ?? null, now));
+  return PREFETCH_FACT_GROUPS.map((g) => {
+    const state = latest.get(g) ?? null;
+    return classifyGroupFreshness(g, state?.fetchedAt ?? null, now, {
+      factSchemaRevision: state?.schemaRevision ?? null,
+      currentSchemaRevision: COMPANY_FACT_SCHEMA_REVISION,
+    });
+  });
 }
 
 /**
@@ -540,10 +768,19 @@ export async function runCompanyPrefetch(
     if (!needsOfficialSite) {
       emit(deps, { stage: 'discovery', outcome: 'skipped_fresh' });
     } else if (deps.externalFetchEnabled()) {
+      // 1 job の外部取得予算（fetch 回数と締切）。ページ別抽出が増えたため明示的に持つ。
+      const deadlineAt = (() => {
+        const base = toEpochMs(fetchedAt);
+        return base === null ? null : new Date(base + ENRICHMENT_DEADLINE_MS).toISOString();
+      })();
+
       const discovery = await discoverOfficialSite(deps, displayName, candidate);
       sources.push(...discovery.sources);
       if (discovery.document) {
-        const profile = await buildProfileAndNavigationFacts(deps, discovery.document);
+        const profile = await buildProfileAndNavigationFacts(deps, discovery.document, {
+          deadlineAt,
+          remainingFetches: Math.max(0, MAX_FETCHES_PER_JOB - discovery.fetchCount),
+        });
         factGroups.push(...profile.facts);
         sources.push(...profile.sources);
       } else {
@@ -579,6 +816,10 @@ export async function runCompanyPrefetch(
     // 対象 group をすべて満たしたか（部分成功を completed と偽らない）。
     // ★ 判定は **今回の refresh scope** に対して行う。fresh だったので取りに行かなかった
     //   group を「欠けている」とは数えない（正しい scoped refresh を partial と偽らない）。
+    // ★★ `OPPORTUNISTIC_FACT_GROUPS`（ir / recruiting / developments）は
+    //   targetGroups に入らないため、**取れなくても partial に落ちない**。
+    //   ここを取り違えると「IR ページを持たない企業」が恒常的に partial となり、
+    //   failure cooldown（1 日）で毎日再取得が走る（refresh storm）。
     const writtenGroups = new Set(merged.map((f) => f.factGroup));
     const complete = targetGroups.every((g) => writtenGroups.has(g));
     const status: 'completed' | 'partial' = complete && !externalFailure ? 'completed' : 'partial';

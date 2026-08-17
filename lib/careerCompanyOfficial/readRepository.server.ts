@@ -37,8 +37,14 @@ import { buildCompanyOfficialContext, type FactRow } from './projection';
 const FACTS = CAREER_COMPANY_OFFICIAL_TABLES.facts;
 const SOURCES = CAREER_COMPANY_OFFICIAL_TABLES.sources;
 
-/** 1 企業あたり読む fact の上限（暴走防止。key 数の数倍で十分）。 */
-const MAX_FACT_ROWS = 200;
+/**
+ * 1 企業あたり読む fact の上限（暴走防止。key 数の数倍で十分）。
+ *
+ * ★ fact は世代ごとに append される（上書き削除しない）ので、
+ *   `COMPANY_FACT_KEYS` の数（61）× 数世代を覆う値にする。
+ *   `fetched_at DESC` で読むため、最新世代は必ずこの窓に入る。
+ */
+const MAX_FACT_ROWS = 400;
 
 function isUndefinedTable(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;

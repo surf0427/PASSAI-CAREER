@@ -18,7 +18,13 @@ import type {
 } from '@/types/careerCompanyOfficial';
 import { COMPANY_FACT_KEY_GROUP } from '@/types/careerCompanyOfficial';
 import { CONFIDENCE_BY_METHOD } from './constants';
-import type { ExtractedCompanyProfile } from './extraction';
+import type {
+  ExtractedCompanyDevelopments,
+  ExtractedCompanyIr,
+  ExtractedCompanyPhilosophy,
+  ExtractedCompanyProfile,
+  ExtractedCompanyRecruiting,
+} from './extraction';
 import { findRawExcerpt } from './extraction';
 import type { DiscoveredPages } from './domainVerification';
 import type { JsonLdOrganization } from './htmlText';
@@ -148,6 +154,8 @@ export function buildNavigationFacts(
     buildFact({ ...base, key: 'irUrl', value: pages.ir }),
     buildFact({ ...base, key: 'newsroomUrl', value: pages.news }),
     buildFact({ ...base, key: 'midTermPlanUrl', value: pages.midTermPlan }),
+    buildFact({ ...base, key: 'philosophyPageUrl', value: pages.philosophy }),
+    buildFact({ ...base, key: 'financialResultsUrl', value: pages.financialResults }),
   ]);
 }
 
@@ -215,6 +223,208 @@ export function buildExtractedProfileFacts(
       value: profile.corporateGroupLabel,
       rawExcerpt: excerpt(profile.corporateGroupLabel),
     }),
+    buildFact({
+      ...base,
+      key: 'representativeName',
+      value: profile.representativeName,
+      rawExcerpt: excerpt(profile.representativeName),
+    }),
+    buildFact({
+      ...base,
+      key: 'representativeTitle',
+      value: profile.representativeTitle,
+      rawExcerpt: excerpt(profile.representativeTitle),
+    }),
+    buildFact({
+      ...base,
+      key: 'businessModel',
+      value: profile.businessModel,
+      rawExcerpt: excerpt(profile.businessModel),
+    }),
+    buildFact({ ...base, key: 'targetCustomers', value: profile.targetCustomers }),
+    buildFact({
+      ...base,
+      key: 'overseasPresence',
+      value: profile.overseasPresence,
+      rawExcerpt: excerpt(profile.overseasPresence),
+    }),
+    buildFact({ ...base, key: 'groupCompanies', value: profile.groupCompanies }),
+    buildFact({ ...base, key: 'selfDescribedStrengths', value: profile.selfDescribedStrengths }),
+  ]);
+}
+
+// ── 理念 / IR / 採用 / 動向（LLM 抽出由来・**検証済みのみ**）─────────────
+/**
+ * 理念ページの抽出結果 → profile facts。
+ *
+ * ★ 理念は「企業が掲げている文」そのものであり、我々の解釈ではない。
+ *   `rawExcerpt` を付けることで、prompt 上の値が原文由来だと後から検証できる。
+ */
+export function buildPhilosophyFacts(
+  philosophy: ExtractedCompanyPhilosophy,
+  sourceText: string,
+  sourceUrl: string,
+  fetchedAt: string,
+): DraftOfficialCompanyFact[] {
+  const base = { sourceUrl, method: 'llm_extraction' as const, fetchedAt };
+  const excerpt = (value: string | null): string | null =>
+    value === null ? null : findRawExcerpt(value, sourceText);
+
+  return collect([
+    buildFact({
+      ...base,
+      key: 'missionStatement',
+      value: philosophy.missionStatement,
+      rawExcerpt: excerpt(philosophy.missionStatement),
+    }),
+    buildFact({
+      ...base,
+      key: 'visionStatement',
+      value: philosophy.visionStatement,
+      rawExcerpt: excerpt(philosophy.visionStatement),
+    }),
+    buildFact({ ...base, key: 'corporateValues', value: philosophy.corporateValues }),
+  ]);
+}
+
+/**
+ * IR ページの抽出結果 → ir facts。
+ *
+ * ★ 金額は `rawExcerpt` を必ず添える（原文に無い数字が入っていないことを事後検証できる）。
+ *   非上場企業・IR ページ非公開の企業ではすべて null になり、fact は 1 件も作られない。
+ *   これは **正常**（欠損 ≠ 「業績が無い」）。
+ */
+export function buildIrFacts(
+  ir: ExtractedCompanyIr,
+  sourceText: string,
+  sourceUrl: string,
+  fetchedAt: string,
+): DraftOfficialCompanyFact[] {
+  const base = { sourceUrl, method: 'llm_extraction' as const, fetchedAt };
+  const excerpt = (value: string | null): string | null =>
+    value === null ? null : findRawExcerpt(value, sourceText);
+  // 決算期は「その数値がいつの実績か」なので asOf として全 financial fact に添える。
+  const asOf = ir.fiscalPeriodLabel;
+
+  return collect([
+    buildFact({
+      ...base,
+      key: 'fiscalPeriodLabel',
+      value: ir.fiscalPeriodLabel,
+      rawExcerpt: excerpt(ir.fiscalPeriodLabel),
+    }),
+    buildFact({ ...base, key: 'revenue', value: ir.revenue, asOf, rawExcerpt: excerpt(ir.revenue) }),
+    buildFact({
+      ...base,
+      key: 'operatingProfit',
+      value: ir.operatingProfit,
+      asOf,
+      rawExcerpt: excerpt(ir.operatingProfit),
+    }),
+    buildFact({
+      ...base,
+      key: 'netProfit',
+      value: ir.netProfit,
+      asOf,
+      rawExcerpt: excerpt(ir.netProfit),
+    }),
+    buildFact({ ...base, key: 'segmentPerformance', value: ir.segmentPerformance, asOf }),
+    buildFact({
+      ...base,
+      key: 'financialHighlights',
+      value: ir.financialHighlights,
+      asOf,
+      rawExcerpt: excerpt(ir.financialHighlights),
+    }),
+    buildFact({
+      ...base,
+      key: 'midTermPlanSummary',
+      value: ir.midTermPlanSummary,
+      rawExcerpt: excerpt(ir.midTermPlanSummary),
+    }),
+    buildFact({
+      ...base,
+      key: 'growthStrategy',
+      value: ir.growthStrategy,
+      rawExcerpt: excerpt(ir.growthStrategy),
+    }),
+    buildFact({ ...base, key: 'strategicInvestmentAreas', value: ir.strategicInvestmentAreas }),
+    buildFact({ ...base, key: 'statedChallenges', value: ir.statedChallenges }),
+    buildFact({ ...base, key: 'businessRisks', value: ir.businessRisks }),
+    buildFact({
+      ...base,
+      key: 'marketEnvironment',
+      value: ir.marketEnvironment,
+      rawExcerpt: excerpt(ir.marketEnvironment),
+    }),
+    buildFact({ ...base, key: 'marketPositionClaims', value: ir.marketPositionClaims }),
+    buildFact({ ...base, key: 'namedCompetitors', value: ir.namedCompetitors }),
+  ]);
+}
+
+/** 採用ページの抽出結果 → recruiting facts。 */
+export function buildRecruitingFacts(
+  recruiting: ExtractedCompanyRecruiting,
+  sourceText: string,
+  sourceUrl: string,
+  fetchedAt: string,
+): DraftOfficialCompanyFact[] {
+  const base = { sourceUrl, method: 'llm_extraction' as const, fetchedAt };
+  const excerpt = (value: string | null): string | null =>
+    value === null ? null : findRawExcerpt(value, sourceText);
+
+  return collect([
+    buildFact({
+      ...base,
+      key: 'desiredCandidateProfile',
+      value: recruiting.desiredCandidateProfile,
+      rawExcerpt: excerpt(recruiting.desiredCandidateProfile),
+    }),
+    buildFact({
+      ...base,
+      key: 'recruitingOverview',
+      value: recruiting.recruitingOverview,
+      rawExcerpt: excerpt(recruiting.recruitingOverview),
+    }),
+    buildFact({ ...base, key: 'jobCategories', value: recruiting.jobCategories }),
+    buildFact({
+      ...base,
+      key: 'organizationalCulture',
+      value: recruiting.organizationalCulture,
+      rawExcerpt: excerpt(recruiting.organizationalCulture),
+    }),
+    buildFact({
+      ...base,
+      key: 'workingStyle',
+      value: recruiting.workingStyle,
+      rawExcerpt: excerpt(recruiting.workingStyle),
+    }),
+    buildFact({ ...base, key: 'trainingPrograms', value: recruiting.trainingPrograms }),
+    buildFact({
+      ...base,
+      key: 'careerDevelopment',
+      value: recruiting.careerDevelopment,
+      rawExcerpt: excerpt(recruiting.careerDevelopment),
+    }),
+  ]);
+}
+
+/**
+ * ニュースページの抽出結果 → developments facts。
+ *
+ * ★ 「ニュースの羅列」にしないための件数上限は `DEVELOPMENTS_SPEC`（最大 6 件）が持つ。
+ */
+export function buildDevelopmentsFacts(
+  developments: ExtractedCompanyDevelopments,
+  sourceUrl: string,
+  fetchedAt: string,
+): DraftOfficialCompanyFact[] {
+  const base = { sourceUrl, method: 'llm_extraction' as const, fetchedAt };
+  return collect([
+    buildFact({ ...base, key: 'recentDevelopments', value: developments.recentDevelopments }),
+    buildFact({ ...base, key: 'productLaunches', value: developments.productLaunches }),
+    buildFact({ ...base, key: 'partnerships', value: developments.partnerships }),
+    buildFact({ ...base, key: 'mergersAcquisitions', value: developments.mergersAcquisitions }),
   ]);
 }
 

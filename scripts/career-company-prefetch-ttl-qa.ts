@@ -38,6 +38,7 @@ import {
 } from '@/lib/careerCompanyOfficial/freshness';
 import { buildCompanyOfficialContext } from '@/lib/careerCompanyOfficial/projection';
 import {
+  COMPANY_FACT_SCHEMA_REVISION,
   FAILURE_COOLDOWN_SECONDS,
   LEASE_SECONDS,
   MAX_ATTEMPTS,
@@ -59,7 +60,7 @@ import {
   type CompanyJobLedgerState,
 } from '@/lib/careerCompanyPrefetch/refreshPolicy';
 import type { RegistryCompanyCandidate } from '@/lib/careerCompanyPrefetch/providers/types';
-import type { CompanyFactGroup } from '@/types/careerCompanyOfficial';
+import type { CompanyFactGroup, CompanyFactGroupState } from '@/types/careerCompanyOfficial';
 
 const ROOT = process.cwd();
 
@@ -285,12 +286,16 @@ function depsFor(world: World, opts: Options = {}): PrefetchDeps {
 
     loadFreshness: async (companyId) => {
       // group ごとの **最新** fetched_at（repository.server.ts と同じ規則）。
-      const map = new Map<CompanyFactGroup, string>();
+      // ★ schemaRevision は現行世代で埋める（この world の fact は現行 code が書いたもの）。
+      //   これにより「現行世代の fact は schema 理由では stale にならない」ことも同時に固定する。
+      const map = new Map<CompanyFactGroup, CompanyFactGroupState>();
       for (const f of world.facts) {
         if (f.companyId !== companyId) continue;
         const g = f.factGroup as CompanyFactGroup;
         const prev = map.get(g);
-        if (!prev || Date.parse(f.fetchedAt) > Date.parse(prev)) map.set(g, f.fetchedAt);
+        if (!prev || Date.parse(f.fetchedAt) > Date.parse(prev.fetchedAt)) {
+          map.set(g, { fetchedAt: f.fetchedAt, schemaRevision: COMPANY_FACT_SCHEMA_REVISION });
+        }
       }
       return map;
     },
@@ -662,6 +667,16 @@ void (async () => {
   // ══════════════════════════════════════════════════════════════════
   console.log('[T5] concurrent refresh → 外部取得は 1 回へ収束');
   {
+    // ★ 「1 セット」の実測値を先に取る（harvest するページ数が増えても自動追従する）。
+    //   固定値（旧: <= 3）だとページを増やすたびに嘘になる。
+    const singleDelta = await (async () => {
+      const baseline = await seedWorld();
+      baseline.world.nowMs = T0 + MIN_TTL_MS + SECOND;
+      const from = baseline.world.externalCalls;
+      await runCompanyPrefetch(depsFor(baseline.world), 'ソニー');
+      return baseline.world.externalCalls - from;
+    })();
+
     const s = await seedWorld();
     const { world } = s;
     const before = world.externalCalls;
@@ -685,8 +700,8 @@ void (async () => {
     );
     check(
       'T5d ★ 外部取得は 1 セットだけ（3 倍にならない）',
-      world.externalCalls - before <= 3,
-      `delta=${world.externalCalls - before}`,
+      world.externalCalls - before === singleDelta,
+      `delta=${world.externalCalls - before} single=${singleDelta}`,
     );
     check('T5e 企業マスタは 1 社のまま', world.companies === 1, `companies=${world.companies}`);
 

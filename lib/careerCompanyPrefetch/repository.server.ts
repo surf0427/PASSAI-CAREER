@@ -24,11 +24,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   CAREER_COMPANY_OFFICIAL_TABLES,
   type CompanyFactGroup,
+  type CompanyFactGroupState,
   type DraftOfficialCompanyFact,
 } from '@/types/careerCompanyOfficial';
 import { computeValidUntil } from '@/lib/careerCompanyOfficial/freshness';
 import { devWarn } from '@/lib/devLog';
 import {
+  COMPANY_FACT_SCHEMA_REVISION,
   FAILURE_COOLDOWN_SECONDS,
   LEASE_SECONDS,
   MAX_ATTEMPTS,
@@ -77,6 +79,29 @@ function toStorageError(err: unknown, ctx: string): CompanyPrefetchStorageError 
   }
   // raw DB message は上位へ伝播させない。
   return new CompanyPrefetchStorageError('DB_ERROR', `${ctx}: storage error`);
+}
+
+/**
+ * 「`schema_revision` 列がまだ無い」エラーか（**deploy 順序の吸収**）。
+ *
+ * ★★ なぜ必要か ★★
+ *   本 repo の運用は「コードは Vercel で先に出る / DDL は operator が SQL Editor で後から適用」
+ *   であり、**順序が保証されない**。fact schema v2 のコードが v1 の DB に当たったとき、
+ *   `select(... schema_revision)` は 42703、insert は PGRST204 で失敗する。
+ *   これを握らないと、DDL 適用までの間 enrichment が **丸ごと停止**する
+ *   （freshness read が DB_ERROR → job が skipped に倒れる）。
+ *
+ *   実 DB（Project B）で v1 適用済み・v2 未適用・facts 11 件の状態を確認した上での対策。
+ *   列が無い間は「schema 世代が不明」＝ `null` として扱い、従来どおり TTL だけで判定する
+ *   （`isSchemaRevisionStale` は null を stale にしない）。
+ */
+function isMissingSchemaRevisionColumn(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; message?: unknown };
+  const message = typeof e.message === 'string' ? e.message : '';
+  // 42703 = undefined_column（SQL 直行時） / PGRST204 = schema cache に列が無い（insert 時）
+  const codeHit = e.code === '42703' || e.code === 'PGRST204';
+  return (codeHit || /schema_revision/.test(message)) && /schema_revision/.test(message);
 }
 
 // ── job claim / terminal ─────────────────────────────────────────────
@@ -219,28 +244,54 @@ export async function failCompanyEnrichmentJob(
 
 // ── freshness（外部 I/O の直前に呼ぶ short-circuit）─────────────────
 /**
- * company の fact_group ごとの **最新取得時刻**を返す。
+ * company の fact_group ごとの **最新取得時刻と、その世代の fact schema 版**を返す。
  * 1 件も無い group は Map に現れない（＝ missing）。
+ *
+ * ★ `schema_revision` を併せて返す理由:
+ *   fact key を増やしたとき、TTL 内の企業は freshness short-circuit で fresh と判定され
+ *   新 key が埋まらない。「最新 fact が旧世代」を stale 扱いするために必要
+ *   （`isSchemaRevisionStale` / `lib/careerCompanyOfficial/freshness.ts`）。
+ *   列が無い環境・v1 時代の行では null になり、その場合は従来どおり TTL のみで判定する。
  */
 export async function loadLatestFetchedAtByGroup(
   client: SupabaseClient,
   companyId: string,
-): Promise<Map<CompanyFactGroup, string>> {
-  const { data, error } = await client
-    .from(FACTS)
-    .select('fact_group, fetched_at')
-    .eq('company_id', companyId)
-    .order('fetched_at', { ascending: false })
-    .limit(500);
+): Promise<Map<CompanyFactGroup, CompanyFactGroupState>> {
+  const read = (columns: string) =>
+    client
+      .from(FACTS)
+      .select(columns)
+      .eq('company_id', companyId)
+      .order('fetched_at', { ascending: false })
+      .limit(500);
+
+  let { data, error } = await read('fact_group, fetched_at, schema_revision');
+
+  // ★ DDL 未適用（v1 DB に v2 コードが当たった）ときは列を落として読み直す。
+  //   ここで諦めると freshness read が落ち、enrichment が丸ごと止まる。
+  if (error && isMissingSchemaRevisionColumn(error)) {
+    devWarn('[companyPrefetch] schema_revision column absent — falling back to v1 read');
+    ({ data, error } = await read('fact_group, fetched_at'));
+  }
 
   if (error) throw toStorageError(error, 'freshness');
 
-  const out = new Map<CompanyFactGroup, string>();
-  for (const row of (data ?? []) as Array<{ fact_group: string; fetched_at: string }>) {
+  const out = new Map<CompanyFactGroup, CompanyFactGroupState>();
+  // ★ 2 種類の select（v2 / v1 fallback）を通るため、型は unknown 経由で受ける。
+  for (const row of (data ?? []) as unknown as Array<{
+    fact_group: string;
+    fetched_at: string;
+    schema_revision?: string | null;
+  }>) {
     const group = row?.fact_group as CompanyFactGroup;
     if (!group || typeof row.fetched_at !== 'string') continue;
     // order 済みなので最初に現れたものが最新。
-    if (!out.has(group)) out.set(group, row.fetched_at);
+    if (!out.has(group)) {
+      out.set(group, {
+        fetchedAt: row.fetched_at,
+        schemaRevision: typeof row.schema_revision === 'string' ? row.schema_revision : null,
+      });
+    }
   }
   return out;
 }
@@ -320,12 +371,25 @@ export async function insertFacts(
       confidence: fact.confidence,
       fetched_at: fact.fetchedAt,
       valid_until: computeValidUntil(fact.factGroup, fact.fetchedAt),
+      // ★ どの fact schema 世代で書いた行かを残す。これが無いと key 追加時に
+      //   「TTL 内なので fresh」と判定され、新 key が最長 TTL 分入らない。
+      schema_revision: COMPANY_FACT_SCHEMA_REVISION,
     });
   }
 
   if (rows.length === 0) return 0;
 
-  const { data, error } = await admin.from(FACTS).insert(rows).select('id');
+  let { data, error } = await admin.from(FACTS).insert(rows).select('id');
+
+  // ★ DDL 未適用なら `schema_revision` を落として書き直す（deploy 順序の吸収）。
+  //   ここで諦めると、DDL 適用までの間 **1 件も fact が書けない**。
+  //   世代不明の行として入るが、v2 適用後に schema 世代のズレとして 1 回だけ再取得される。
+  if (error && isMissingSchemaRevisionColumn(error)) {
+    devWarn('[companyPrefetch] schema_revision column absent — writing v1-shaped rows');
+    const v1Rows = rows.map(({ schema_revision: _omit, ...rest }) => rest);
+    ({ data, error } = await admin.from(FACTS).insert(v1Rows).select('id'));
+  }
+
   if (error) throw toStorageError(error, 'insertFacts');
   return Array.isArray(data) ? data.length : 0;
 }

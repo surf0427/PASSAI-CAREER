@@ -152,7 +152,7 @@ export function verifyOfficialDomain(input: {
 // ── 会社概要 / 採用 / IR ページの入口検出（pure）──────────────────────
 /** リンクラベル / URL のパターンで入口ページを見つける。 */
 const PAGE_PATTERNS: Readonly<
-  Record<'about' | 'recruit' | 'ir' | 'news' | 'midTermPlan', { label: RegExp; href: RegExp }>
+  Record<keyof DiscoveredPages, { label: RegExp; href: RegExp }>
 > = {
   about: {
     label: /(会社概要|企業情報|会社案内|company\s*profile|about\s*us|about)/i,
@@ -174,6 +174,16 @@ const PAGE_PATTERNS: Readonly<
     label: /(中期経営計画|中期計画|経営計画|mid[-\s]?term)/i,
     href: /\/(midterm|mid-term|chuki|management-plan)(\/|$|\?|#)/i,
   },
+  // 経営理念 / ミッション / パーパス（会社概要とは別ページに置かれることが多い）。
+  philosophy: {
+    label: /(経営理念|企業理念|理念|ミッション|パーパス|ビジョン|mission|vision|purpose|philosophy)/i,
+    href: /\/(philosophy|mission|vision|purpose|rinen|principle|identity|values?)(\/|$|\?|#)/i,
+  },
+  // 決算情報（IR トップがリンク集だけのとき、実数値はこちらにある）。
+  financialResults: {
+    label: /(決算(情報|短信|説明|資料)?|業績|財務(情報|ハイライト)?|financial|results|earnings)/i,
+    href: /\/(financial|results|earnings|kessan|library|highlight)(\/|$|\?|#)/i,
+  },
 };
 
 export type DiscoveredPages = {
@@ -182,6 +192,8 @@ export type DiscoveredPages = {
   ir: string | null;
   news: string | null;
   midTermPlan: string | null;
+  philosophy: string | null;
+  financialResults: string | null;
 };
 
 /**
@@ -200,6 +212,8 @@ export function discoverPages(
     ir: null,
     news: null,
     midTermPlan: null,
+    philosophy: null,
+    financialResults: null,
   };
   if (!Array.isArray(links) || links.length === 0) return result;
 
@@ -210,18 +224,46 @@ export function discoverPages(
 
   for (const key of Object.keys(PAGE_PATTERNS) as (keyof DiscoveredPages)[]) {
     const { label: labelRe, href: hrefRe } = PAGE_PATTERNS[key];
+    // ★ 決算ページにニュース記事を採用しない（上の isNewsArticleUrl 参照）。
+    const eligible = (l: { href: string; label: string }) =>
+      sameSite(l.href, registrable) && !(NEWS_EXCLUDED_KEYS.has(key) && isNewsArticleUrl(l.href));
+
     // ラベル一致を優先し、無ければ URL 形状で拾う（決定論のため配列順を保つ）。
-    const byLabel = links.find((l) => sameSite(l.href, registrable) && labelRe.test(l.label));
+    const byLabel = links.find((l) => eligible(l) && labelRe.test(l.label));
     if (byLabel) {
       result[key] = byLabel.href;
       continue;
     }
-    const byHref = links.find((l) => sameSite(l.href, registrable) && hrefRe.test(l.href));
+    const byHref = links.find((l) => eligible(l) && hrefRe.test(l.href));
     if (byHref) result[key] = byHref.href;
   }
 
   return result;
 }
+
+/**
+ * ニュース記事の URL か（pure）。
+ *
+ * ★ real smoke で見つかった誤検出への対策:
+ *   トヨタのトップには「業績」を含む文言のニュース記事リンクがあり、
+ *   `financialResults` の label 正規表現（業績 / 財務 / 決算）に一致して
+ *   **決算ページの代わりにニュース記事**が選ばれていた。
+ *
+ * ★ ただし除外は `financialResults` にだけ適用する（`NEWS_EXCLUDED_KEYS`）。
+ *   会社概要そのものを newsroom 配下に置く企業が実在するため
+ *   （トヨタの `/jp/newsroom/corporate/…` が実際の会社概要ページ。
+ *   全 key に除外を掛けたら会社概要を取り逃がし、実測で 13 → 6 fact へ減った）。
+ */
+function isNewsArticleUrl(href: string): boolean {
+  try {
+    return /\/(newsroom|news|press|release|topics)\//i.test(new URL(href).pathname);
+  } catch {
+    return false;
+  }
+}
+
+/** ニュース記事を入口として採用しない key。 */
+const NEWS_EXCLUDED_KEYS: ReadonlySet<keyof DiscoveredPages> = new Set(['financialResults']);
 
 /** URL が同一登録ドメイン配下か。 */
 export function sameSite(href: string, registrableDomain: string): boolean {

@@ -7,7 +7,7 @@
  *   適用前の SQL ファイルが、コード側の前提と一致していることをテキストで固定する。
  *
  * 何を守るか:
- *   Q-1 NOT APPLIED であることの明示 / 冪等性 / 破壊的変更が無いこと
+ *   Q-1 適用状態の明示 / 冪等性 / 破壊的変更が無いこと
  *   Q-2 出典必須（facts.source_id NOT NULL）
  *   Q-3 AI 派生物が facts と別 table
  *   Q-4 job 台帳が company-scoped（user_id を持たない）
@@ -69,7 +69,17 @@ function tableBody(table: string): string {
 // ════════════════════════════════════════════════════════════════════
 console.log('[Q-1] 適用状態 / 冪等性 / 非破壊');
 
-check('Q-1a NOT APPLIED を明示している', sql.includes('NOT APPLIED'));
+// ★ 2026-08-17: 実 DB（Project B）へ read-only probe した結果、v1 部分は **適用済み**で
+//   実データも入っていた。「NOT APPLIED」固定の assertion は事実と食い違うため、
+//   「適用状態が明記されていること」を守る形へ変える（operator が状態を読み違えないこと）。
+check(
+  'Q-1a 適用状態を冒頭で明示している（未適用 / 適用済みのどちらかを断定している）',
+  /適用状態|NOT APPLIED|適用済み/.test(sql.slice(0, 1200)),
+);
+check(
+  'Q-1a2 v2 差分（schema_revision / developments）の適用状態に言及している',
+  sql.slice(0, 1200).includes('schema_revision') && sql.slice(0, 1200).includes('developments'),
+);
 check('Q-1b 前提 DDL（identity apply）を明記', sql.includes('career_company_identity_apply.sql'));
 check(
   'Q-1c BEGIN / COMMIT で包む（トランザクション適用）',
@@ -93,13 +103,45 @@ check('Q-1g 関数は CREATE OR REPLACE', sql.includes('CREATE OR REPLACE FUNCTI
 check('Q-1h DROP TABLE を含まない', !/DROP TABLE/i.test(sql));
 check('Q-1i DROP COLUMN を含まない', !/DROP COLUMN/i.test(sql));
 check('Q-1j TRUNCATE / DELETE FROM を含まない', !/TRUNCATE|DELETE FROM/i.test(sql));
-check('Q-1k ALTER は ADD COLUMN IF NOT EXISTS / RLS 有効化のみ', (() => {
+check('Q-1k ALTER は非破壊な形だけ（列追加 / RLS / CHECK 差し替え）', (() => {
   const alters = sqlCode.match(/ALTER TABLE[\s\S]*?;/g) ?? [];
   return (
     alters.length > 0 &&
-    alters.every((a) => /ADD COLUMN IF NOT EXISTS/.test(a) || /ENABLE ROW LEVEL SECURITY/.test(a))
+    alters.every(
+      (a) =>
+        /ADD COLUMN IF NOT EXISTS/.test(a) ||
+        /ENABLE ROW LEVEL SECURITY/.test(a) ||
+        // CHECK の差し替え（許可値を増やす方向のみ。Q-1k2 / Q-1k3 が非縮小を固定する）。
+        /DROP CONSTRAINT IF EXISTS/.test(a) ||
+        /ADD CONSTRAINT \w+ CHECK/.test(a),
+    )
   );
 })());
+check(
+  'Q-1k2 CONSTRAINT の DROP は必ず IF EXISTS（再実行安全）',
+  (sqlCode.match(/DROP CONSTRAINT/g) ?? []).length ===
+    (sqlCode.match(/DROP CONSTRAINT IF EXISTS/g) ?? []).length,
+);
+check(
+  'Q-1k3 ★ 差し替えた fact_group CHECK は旧許可値をすべて含む（既存行を落とさない）',
+  (() => {
+    const readd = /ADD CONSTRAINT career_company_official_facts_group_chk CHECK \(([\s\S]*?)\);/.exec(
+      sqlCode,
+    );
+    if (!readd) return true; // 差し替えが無ければ非縮小を検査する対象も無い。
+    // v1 時代の 6 値。1 つでも欠けると既存行が CHECK 違反になり ADD CONSTRAINT が失敗する。
+    return ['identity', 'profile', 'navigation', 'ir', 'recruiting', 'news'].every((g) =>
+      readd[1].includes(`'${g}'`),
+    );
+  })(),
+);
+check(
+  // ★ facts 側の schema_revision は nullable。job 台帳側（既存）は NOT NULL のままなので
+  //   検査対象を facts の table body に限定する。
+  'Q-1k4 facts.schema_revision は nullable（既存行を壊さない / backfill 不要）',
+  sql.includes('ADD COLUMN IF NOT EXISTS schema_revision text') &&
+    !/schema_revision\s+text\s+NOT NULL/.test(tableBody('career_company_official_facts')),
+);
 check(
   'Q-1l corporate_number は nullable（既存行を壊さない）',
   sql.includes('ADD COLUMN IF NOT EXISTS corporate_number text') && !/corporate_number text NOT NULL/.test(sql),
@@ -353,9 +395,14 @@ check('Q-7c table 名がコードと一致（derived）', sql.includes(CAREER_CO
 check('Q-7d table 名がコードと一致（jobs）', sql.includes(CAREER_COMPANY_OFFICIAL_TABLES.jobs));
 
 check(
+  // ★ 期待文字列をコード側 enum から **生成**する（列挙を 2 箇所に書いて drift させない）。
   'Q-7e fact_group の CHECK がコードの enum と一致',
-  COMPANY_FACT_GROUPS.every((g) => sql.includes(`'${g}'`)) &&
-    sql.includes("fact_group IN ('identity','profile','navigation','ir','recruiting','news')"),
+  (() => {
+    const expected = `fact_group IN (${COMPANY_FACT_GROUPS.map((g) => `'${g}'`).join(',')})`;
+    // CREATE TABLE 内の定義と、既存環境向けの ADD CONSTRAINT の **両方**が一致すること。
+    return (sqlCode.match(new RegExp(expected.replace(/[()]/g, '\\$&'), 'g')) ?? []).length >= 2;
+  })(),
+  `expected fact_group IN (${COMPANY_FACT_GROUPS.map((g) => `'${g}'`).join(',')}) x2`,
 );
 check(
   'Q-7f extraction_method の CHECK がコードの enum と一致',

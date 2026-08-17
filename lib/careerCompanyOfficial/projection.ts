@@ -11,6 +11,7 @@
  */
 
 import type {
+  CompanyFactFreshness,
   CompanyFactGroup,
   CompanyFactGroupFreshness,
   CompanyFactKey,
@@ -20,6 +21,7 @@ import type {
   CompanySourceType,
 } from '@/types/careerCompanyOfficial';
 import {
+  COMPANY_FACT_GROUPS,
   COMPANY_FACT_KEY_GROUP,
   PREFETCH_FACT_GROUPS,
 } from '@/types/careerCompanyOfficial';
@@ -59,8 +61,7 @@ export function formatFactValue(raw: unknown): { display: string; unit: string |
 }
 
 function isKnownGroup(value: string): value is CompanyFactGroup {
-  return value in
-    ({ identity: 1, profile: 1, navigation: 1, ir: 1, recruiting: 1, news: 1 } as Record<string, number>);
+  return (COMPANY_FACT_GROUPS as readonly string[]).includes(value);
 }
 
 function isKnownMethod(value: string): value is CompanyFactExtractionMethod {
@@ -114,10 +115,30 @@ export function buildCompanyOfficialContext(params: {
     if (!current || row.fetchedAt > current) latestByGroup.set(group, row.fetchedAt);
   }
 
+  /**
+   * 返す `groups`（＝ 読み出し status の材料）は **targetGroups だけ**。
+   *
+   * ★ ここに opportunistic group（ir / recruiting / developments）を混ぜてはいけない。
+   *   `summarizeFreshness` は「対象 group のどれかが missing なら partial」と判定するため、
+   *   IR を公開していない企業がすべて partial になり、status の意味が壊れる。
+   */
   const groupStates: CompanyFactGroupFreshness[] = targetGroups.map((g) =>
     classifyGroupFreshness(g, latestByGroup.get(g) ?? null, nowIso),
   );
-  const freshnessByGroup = new Map(groupStates.map((s) => [s.factGroup, s.freshness] as const));
+
+  /**
+   * 一方 **1 件ごとの鮮度ラベル**は、行が実在する全 group について正しく評価する。
+   * ここを targetGroups だけにすると、ir / recruiting / developments の fact が
+   * 既定値の `'stale'` に落ちて［要再確認］が常時点灯する（marker の意味が失われる）。
+   */
+  const freshnessByGroup = new Map<CompanyFactGroup, CompanyFactFreshness>();
+  for (const group of latestByGroup.keys()) {
+    freshnessByGroup.set(
+      group,
+      classifyGroupFreshness(group, latestByGroup.get(group) ?? null, nowIso).freshness,
+    );
+  }
+  for (const state of groupStates) freshnessByGroup.set(state.factGroup, state.freshness);
 
   const facts: CompanyOfficialFactView[] = [];
   for (const row of latestByKey.values()) {

@@ -31,16 +31,24 @@ const DAY_SECONDS = 24 * 60 * 60;
  *   identity   : 商号変更・登記変更は稀。法人番号は不変。
  *   profile    : 事業内容・従業員数・資本金は年次更新が中心。
  *   navigation : 公式サイトの URL 構造変更はたまに起きる（404 検出時は即時再取得する）。
- *   ir         : 四半期決算。Phase 1 では取得しないが契約は先に固定する。
- *   recruiting : 選考年度・締切が動く。
- *   news       : volatile。**保存より都度取得が正しい**ため実質 prefetch 対象外。
+ *   news         : volatile。**保存より都度取得が正しい**ため保存対象にしない。
+ *
+ * ★ ir / recruiting / developments（`OPPORTUNISTIC_FACT_GROUPS`）は 90 日 ─────
+ *   これらは自前の refresh cycle を持たず、**profile / navigation の cycle に便乗**して
+ *   取り直される（`OPPORTUNISTIC_FACT_GROUPS` の doc 参照）。実現可能な再取得間隔は
+ *   したがって profile TTL（90 日）と等しい。
+ *   ここに 90 日より短い TTL を置くと、取り直せない期間ずっと `stale` になり
+ *   ［要再確認］が常時点灯して **marker の意味が失われる**。
+ *   逆に長くすると古い決算値を fresh と偽る。よって cycle と一致させる。
+ *   （内容そのものの基準日は `fiscalPeriodLabel` / `asOf` が原文表記で持つ。）
  */
 export const COMPANY_FACT_TTL_SECONDS: Readonly<Record<CompanyFactGroup, number>> = {
   identity: 180 * DAY_SECONDS,
   profile: 90 * DAY_SECONDS,
   navigation: 90 * DAY_SECONDS,
-  ir: 30 * DAY_SECONDS,
-  recruiting: 14 * DAY_SECONDS,
+  ir: 90 * DAY_SECONDS,
+  recruiting: 90 * DAY_SECONDS,
+  developments: 90 * DAY_SECONDS,
   news: 1 * DAY_SECONDS,
 };
 
@@ -73,10 +81,43 @@ export function computeValidUntil(
 }
 
 /**
+ * schema 世代のズレを判定する（pure）。
+ *
+ * ★ なぜ必要か（本 slice の中核）:
+ *   fact key の集合を増やしても、TTL 内の企業は freshness short-circuit で `fresh` と
+ *   判定され外部取得が走らない。結果として **新 key が次の TTL 満了まで（最長 90 日）
+ *   永久に欠ける**。そこで「最新 fact を書いた schema 版が現行版と違う」なら stale とし、
+ *   schema 拡張が 1 企業あたり 1 回の再取得サイクルで行き渡るようにする。
+ *
+ *   一度取り直せば group の schemaRevision は現行版になり、以降は通常の TTL 判定へ戻る
+ *   （＝ storm にならない。1 世代につき 1 回だけ余分に取得する）。
+ *
+ * 判定しないケース（安全側＝再取得を促さない）:
+ *   - どちらかが未指定（旧 row の null / 呼び出し側が世代を渡さない読み出し経路）
+ */
+export function isSchemaRevisionStale(
+  factSchemaRevision: string | null | undefined,
+  currentSchemaRevision: string | null | undefined,
+): boolean {
+  if (typeof currentSchemaRevision !== 'string' || currentSchemaRevision === '') return false;
+  if (typeof factSchemaRevision !== 'string' || factSchemaRevision === '') return false;
+  return factSchemaRevision !== currentSchemaRevision;
+}
+
+/** `classifyGroupFreshness` の任意入力（省略時は従来と完全に同じ挙動）。 */
+export type ClassifyFreshnessOptions = {
+  /** その group の最新 fact が書かれた fact schema 版（DB の `schema_revision`）。 */
+  factSchemaRevision?: string | null;
+  /** 現行の fact schema 版（`COMPANY_FACT_SCHEMA_REVISION`）。 */
+  currentSchemaRevision?: string | null;
+};
+
+/**
  * group 単位の鮮度を判定する（pure・never-throw）。
  *
  * @param fetchedAtIso その group で **最も新しい** fact の取得時刻。1 件も無ければ null。
  * @param nowIso 判定時刻（呼び出し側が渡す。関数内で now を読まない＝テスト可能）。
+ * @param opts schema 世代の比較材料（省略可）。旧 schema 世代なら TTL 内でも `stale`。
  *
  * 未来日付の fetchedAt は信用せず `fresh` として扱う（負の age で stale 判定しない）。
  */
@@ -84,9 +125,11 @@ export function classifyGroupFreshness(
   group: CompanyFactGroup,
   fetchedAtIso: string | null,
   nowIso: string,
+  opts: ClassifyFreshnessOptions = {},
 ): CompanyFactGroupFreshness {
   const fetched = toEpochMs(fetchedAtIso);
   const now = toEpochMs(nowIso);
+  const schemaStale = isSchemaRevisionStale(opts.factSchemaRevision, opts.currentSchemaRevision);
 
   if (fetched === null) {
     return {
@@ -101,10 +144,11 @@ export function classifyGroupFreshness(
   const validUntil = computeValidUntil(group, fetchedAtIso as string);
 
   // now が読めないときは「古いと決めつけない」（無用な再取得でコストを出さない）。
+  // ★ ただし schema 世代のズレは時刻に依存しないため、これだけは尊重する。
   if (now === null) {
     return {
       factGroup: group,
-      freshness: 'fresh',
+      freshness: schemaStale ? 'stale' : 'fresh',
       fetchedAt: fetchedAtIso,
       validUntil,
       ageSeconds: null,
@@ -113,7 +157,7 @@ export function classifyGroupFreshness(
 
   const ageSeconds = Math.floor((now - fetched) / 1000);
   const freshness: CompanyFactFreshness =
-    ageSeconds <= getFactGroupTtlSeconds(group) ? 'fresh' : 'stale';
+    !schemaStale && ageSeconds <= getFactGroupTtlSeconds(group) ? 'fresh' : 'stale';
 
   return {
     factGroup: group,

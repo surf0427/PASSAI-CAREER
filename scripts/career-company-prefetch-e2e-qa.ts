@@ -29,6 +29,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { normalizeCompanyName } from '@/lib/careerCompanyKnowledge/identity';
+import type { CompanyFactGroup, CompanyFactGroupState } from '@/types/careerCompanyOfficial';
+import { COMPANY_FACT_SCHEMA_REVISION } from '@/lib/careerCompanyPrefetch/constants';
 import { buildCompanyEnrichmentIdentity } from '@/lib/careerCompanyPrefetch/idempotency';
 import { normalizeExtractedProfile } from '@/lib/careerCompanyPrefetch/extraction';
 import { runCompanyPrefetch, type PrefetchDeps, type SiteDocument } from '@/lib/careerCompanyPrefetch/prefetchJobService';
@@ -278,11 +280,14 @@ function depsFor(world: World, opts: { externalFetch?: boolean } = {}): Prefetch
     resolveExistingCompany: async (raw) => world.master.get(normalizeCompanyName(raw)) ?? null,
 
     loadFreshness: async (companyId) => {
-      const map = new Map<never, string>();
+      // ★ schemaRevision は現行世代（この world の fact は現行 code が書いたもの）。
+      const map = new Map<CompanyFactGroup, CompanyFactGroupState>();
       for (const f of world.facts) {
         if (f.companyId !== companyId) continue;
-        const g = f.factGroup as never;
-        if (!map.has(g)) map.set(g, f.fetchedAt);
+        const g = f.factGroup as CompanyFactGroup;
+        if (!map.has(g)) {
+          map.set(g, { fetchedAt: f.fetchedAt, schemaRevision: COMPANY_FACT_SCHEMA_REVISION });
+        }
       }
       return map;
     },

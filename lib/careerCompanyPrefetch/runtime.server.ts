@@ -30,7 +30,23 @@ import {
   MAX_EXTRACTION_INPUT_CHARS,
   SINGLE_FETCH_TIMEOUT_MS,
 } from './constants';
-import { COMPANY_EXTRACTION_SYSTEM, normalizeExtractedProfile } from './extraction';
+import {
+  COMPANY_DEVELOPMENTS_EXTRACTION_SYSTEM,
+  COMPANY_EXTRACTION_SYSTEM,
+  COMPANY_IR_EXTRACTION_SYSTEM,
+  COMPANY_PHILOSOPHY_EXTRACTION_SYSTEM,
+  COMPANY_RECRUITING_EXTRACTION_SYSTEM,
+  DEVELOPMENTS_SPEC,
+  IR_SPEC,
+  PHILOSOPHY_SPEC,
+  RECRUITING_SPEC,
+  normalizeBySpec,
+  normalizeExtractedProfile,
+  type ExtractedCompanyDevelopments,
+  type ExtractedCompanyIr,
+  type ExtractedCompanyPhilosophy,
+  type ExtractedCompanyRecruiting,
+} from './extraction';
 import { isCompanyPrefetchExternalFetchEnabled } from './flags.server';
 import type { PrefetchDeps, SiteDocument } from './prefetchJobService';
 import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
@@ -42,14 +58,17 @@ import { devWarn } from '@/lib/devLog';
  * LLM 抽出（**抽出器としてのみ**）。
  *
  * ★ prompt は「本文に書かれている値だけを JSON で返す」契約
- *   （`COMPANY_EXTRACTION_SYSTEM`）。生成・推測・要約を禁じている。
+ *   （`COMPANY_EXTRACTION_SYSTEM` 等）。生成・推測・要約を禁じている。
  *   ただし prompt 指示は担保にならないため、呼び出し側が
- *   `rejectUngroundedValues` で **原文との突き合わせ**を必ず行う。
+ *   `rejectUngroundedValues` / `rejectUngroundedBySpec` で
+ *   **原文との突き合わせ**を必ず行う。
  *
- * ANTHROPIC_API_KEY 未設定・失敗・parse 不能はすべて null（＝ profile facts 無し）。
- * identity facts は別経路なので、ここが null でも job は partial として成立する。
+ * ANTHROPIC_API_KEY 未設定・失敗・parse 不能はすべて null（＝ その group の facts 無し）。
+ * 各 group は独立経路なので、1 つが null でも他の group の fact は書かれる。
+ *
+ * @param system そのページ用の抽出契約（ページごとに項目が違う）
  */
-async function extractProfileWithLlm(sourceText: string): Promise<unknown | null> {
+async function extractWithLlm(system: string, sourceText: string): Promise<unknown | null> {
   const text = typeof sourceText === 'string' ? sourceText.slice(0, MAX_EXTRACTION_INPUT_CHARS) : '';
   if (text.trim() === '') return null;
   if (!process.env.ANTHROPIC_API_KEY) return null;
@@ -61,7 +80,7 @@ async function extractProfileWithLlm(sourceText: string): Promise<unknown | null
         max_tokens: EXTRACTION_MAX_TOKENS,
         // 抽出は決定論であるべき（同じ本文からは同じ値）。
         temperature: 0,
-        system: COMPANY_EXTRACTION_SYSTEM,
+        system,
         messages: [
           {
             role: 'user',
@@ -74,6 +93,7 @@ async function extractProfileWithLlm(sourceText: string): Promise<unknown | null
       { signal: AbortSignal.timeout(SINGLE_FETCH_TIMEOUT_MS * 4) },
     );
 
+    // ★ 途中で切れた JSON は parse しない（半端な値を fact にしない）。
     if (message.stop_reason === 'max_tokens') return null;
     const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
     if (raw.trim() === '') return null;
@@ -121,8 +141,29 @@ export function buildCompanyPrefetchDeps(): PrefetchDeps {
     },
 
     async extractProfile(sourceText: string) {
-      const raw = await extractProfileWithLlm(sourceText);
+      const raw = await extractWithLlm(COMPANY_EXTRACTION_SYSTEM, sourceText);
       return raw === null ? null : normalizeExtractedProfile(raw);
+    },
+
+    // ── ページ別抽出（理念 / IR / 採用 / 動向）─────────────────────────
+    //   ★ 正規化は spec 駆動（`normalizeBySpec`）。未知 key を捨て、上限を掛ける。
+    async extractPhilosophy(sourceText: string) {
+      const raw = await extractWithLlm(COMPANY_PHILOSOPHY_EXTRACTION_SYSTEM, sourceText);
+      return raw === null ? null : normalizeBySpec<ExtractedCompanyPhilosophy>(raw, PHILOSOPHY_SPEC);
+    },
+    async extractIr(sourceText: string) {
+      const raw = await extractWithLlm(COMPANY_IR_EXTRACTION_SYSTEM, sourceText);
+      return raw === null ? null : normalizeBySpec<ExtractedCompanyIr>(raw, IR_SPEC);
+    },
+    async extractRecruiting(sourceText: string) {
+      const raw = await extractWithLlm(COMPANY_RECRUITING_EXTRACTION_SYSTEM, sourceText);
+      return raw === null ? null : normalizeBySpec<ExtractedCompanyRecruiting>(raw, RECRUITING_SPEC);
+    },
+    async extractDevelopments(sourceText: string) {
+      const raw = await extractWithLlm(COMPANY_DEVELOPMENTS_EXTRACTION_SYSTEM, sourceText);
+      return raw === null
+        ? null
+        : normalizeBySpec<ExtractedCompanyDevelopments>(raw, DEVELOPMENTS_SPEC);
     },
 
     // ★ 既存 Company Identity をそのまま再利用（無改修）。
