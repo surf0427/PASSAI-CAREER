@@ -2,7 +2,7 @@
 // UI 改ざん相当（API 直叩き）でも 4/6/8 以外を 400 で拒否すること、
 // 未指定は既定 4（後方互換）で受理することを、認証済み member の context.request で検証する。
 import { test, expect } from '@playwright/test';
-import { memberContext } from './helpers';
+import { memberContext, E2E_GD_THEME } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -16,7 +16,7 @@ test.describe('GD participant-count API validation', () => {
     try {
       for (const n of [4, 6, 8]) {
         const res = await context.request.post(LOBBY_CREATE, {
-          data: { format: 'free', plannedParticipantCount: n, timeLimitSec: 900 },
+          data: { format: 'free', plannedParticipantCount: n, timeLimitSec: 900, theme: E2E_GD_THEME },
         });
         expect(res.status(), `planned=${n}`).toBe(200);
         const body = await res.json();
@@ -34,7 +34,7 @@ test.describe('GD participant-count API validation', () => {
       const invalids: unknown[] = [3, 5, 7, 9, 10, 'six'];
       for (const v of invalids) {
         const res = await context.request.post(LOBBY_CREATE, {
-          data: { format: 'free', plannedParticipantCount: v, timeLimitSec: 900 },
+          data: { format: 'free', plannedParticipantCount: v, timeLimitSec: 900, theme: E2E_GD_THEME },
         });
         expect(res.status(), `planned=${JSON.stringify(v)}`).toBe(400);
         const body = await res.json();
@@ -50,13 +50,13 @@ test.describe('GD participant-count API validation', () => {
     const { context } = await memberContext(browser, 2);
     try {
       const omitted = await context.request.post(LOBBY_CREATE, {
-        data: { format: 'free', timeLimitSec: 900 },
+        data: { format: 'free', timeLimitSec: 900, theme: E2E_GD_THEME },
       });
       expect(omitted.status()).toBe(200);
       expect((await omitted.json()).ok).toBe(true);
 
       const nullish = await context.request.post(LOBBY_CREATE, {
-        data: { format: 'free', plannedParticipantCount: null, timeLimitSec: 900 },
+        data: { format: 'free', plannedParticipantCount: null, timeLimitSec: 900, theme: E2E_GD_THEME },
       });
       expect(nullish.status()).toBe(200);
       expect((await nullish.json()).ok).toBe(true);
@@ -70,13 +70,13 @@ test.describe('GD participant-count API validation', () => {
     const { context } = await memberContext(browser, 3);
     try {
       const ok = await context.request.post(ROOM_CREATE, {
-        data: { format: 'free', plannedParticipantCount: 8, timeLimitSec: 900, displayName: 'ApiCode' },
+        data: { format: 'free', plannedParticipantCount: 8, timeLimitSec: 900, displayName: 'ApiCode', theme: E2E_GD_THEME },
       });
       expect(ok.status()).toBe(200);
       expect(typeof (await ok.json()).roomId).toBe('string');
 
       const bad = await context.request.post(ROOM_CREATE, {
-        data: { format: 'free', plannedParticipantCount: 5, timeLimitSec: 900, displayName: 'ApiCode' },
+        data: { format: 'free', plannedParticipantCount: 5, timeLimitSec: 900, displayName: 'ApiCode', theme: E2E_GD_THEME },
       });
       expect(bad.status()).toBe(400);
       expect((await bad.json()).error).toBe('INVALID_COUNT');

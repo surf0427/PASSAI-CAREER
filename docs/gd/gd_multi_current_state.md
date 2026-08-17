@@ -26,6 +26,27 @@
 - ranking は参加者全員に共有。詳細 FB は本人のみ。AI も ranking に含めるが AI と明示する。
 - ターン進行は **2〜3 秒ポーリング＋手動更新**（Realtime は Phase3）。
 
+## お題（テーマ）の作り方 — mode 別ポリシー（確定）
+
+| モード | ユーザーがお題作成 | AIがお題作成 | GD形式の選択 |
+| --- | --- | --- | --- |
+| ソロ（`/career/gd/setup`） | YES | **YES**（`POST /api/career/gd/theme`） | あり（既存仕様） |
+| オンライン（公開GD部屋 `/career/gd/rooms/create`） | YES（必須） | NO | なし |
+| フレンド（合言葉 `/career/gd/room/create`） | YES（必須） | NO | なし |
+
+- **AIお題生成はソロ専用**。`POST /api/career/gd/theme` を呼ぶ client は
+  `app/career/gd/setup/page.tsx` **のみ**（静的 guard: `npm run qa:careerGdThemeMode`）。
+- オンライン／フレンドは作成ウィザード step2（`ThemeSetupStep`・manual 専用）で入力した
+  お題が canonical。create API（`lobby/create` / `room/create`）が `parseRoomThemeInput` で
+  検証し、未確定は **400 `THEME_REQUIRED`**（お題なしの部屋は作れない）。
+- **GD形式（自由討論/ケース/抽象）はマルチでは選ばせない**。値としては
+  `GD_DEFAULT_FORMAT='free'`（`lib/careerGd/roomThemeInput.ts`）を送り、既存の
+  `format` 列・prompt・役割割当の契約は変えない。マルチ UI では形式ラベルを表示しない。
+- ランダムマッチ room はホストが事前にお題を入力する画面を持たないため、従来どおり
+  start 時に `buildRoomTheme(roomId, format)`（**キュレーション済みプールからの決定的選択・AI 非依存**）
+  で補完する。invite / public_lobby は作成時にお題が確定しているので **この fallback は発火しない**。
+- 旧 room（お題未設定）は読み取り互換：一覧カードの見出しは既定文言、start 時は上記 fallback。
+
 ## AI persona（10 タイプ・STEP-GD-13）
 
 - 定義: [`app/api/career/gd/room/aiMembers.ts`](../../app/api/career/gd/room/aiMembers.ts) の `CAREER_GD_AI_PERSONAS`。
@@ -119,8 +140,10 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
   - `status='waiting'` 条件付き UPDATE を「開始権の取得」に使い、**同時開始レースに耐える**
     （取得できなかった側は 409）。開始権を取れた本人のみ AI を insert（二重補完しない）。
   - `planned_participant_count` まで `buildAiRoomMembers()` で補完（既存 AI persona_key は除外）。
-  - **STEP-GD-14**: 開始と同時に `buildRoomTheme(roomId, format)`（決定的キュレーション）で
-    `theme` を確定して UPDATE する（同じ room は同じテーマ。AI 生成は将来置換）。
+  - **STEP-GD-14**: 開始と同時に `theme` を確定して UPDATE する。
+    作成時にホストが入力したお題があればそれを保持（`isThemeConfirmed`）、
+    無い場合（ランダムマッチ room・旧 room）のみ `buildRoomTheme(roomId, format)`
+    （決定的キュレーション・AI 非依存）で補完する。
   - AI insert 失敗時は status を waiting に best-effort ロールバック。
   - 応答は GET room と同形（`{room, members, messages, isHost, currentUserMember, status}`）。
 - `GET/POST /api/career/gd/room/[roomId]/messages`（STEP-GD-14）— 発言の取得・投稿。
@@ -154,7 +177,13 @@ Phase2 でも型拡張は最小限。room DB 用の行→型変換は API route 
 
 ## UI（実装済み）
 
-- `/career/gd/room/create`（STEP-GD-11）— 作成→6桁コード表示。
+- `/career/gd/rooms/create` — 公開GD部屋（オンライン）作成ウィザード。
+  step1: 募集人数・制限時間・表示名 → step2: **お題を自分で入力**（AI生成・形式選択なし）→ 作成。
+- `/career/gd/rooms` — 募集中の公開GD部屋一覧。カード見出しは**作成者が設定したお題**。
+- `/career/gd/lobby` — 旧公開ロビー（ランダムマッチ パネル＋一覧＋参加）。
+  **作成フォームは廃止**し `/career/gd/rooms/create` へ導線を出す（お題入力を必ず通す）。
+- `/career/gd/room/create`（STEP-GD-11 → お題入力ウィザード化）— 合言葉ルーム作成。
+  step1: 参加人数・制限時間 → step2: **お題を自分で入力** → 作成→6桁コード表示。
 - `/career/gd/room/join`（STEP-GD-12）— 6桁コード入力→参加→ロビーへ。
 - `/career/gd/room/[roomId]`（STEP-GD-12 → STEP-GD-13 で開始対応）— ロビー。
   - room情報・参加者一覧（AIは persona 役回り・要約付き）・手動更新。

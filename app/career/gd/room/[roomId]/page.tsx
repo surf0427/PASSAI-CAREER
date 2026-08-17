@@ -24,7 +24,7 @@ import type {
   GdRealtimeConnectionState,
   GdRealtimeSelfIdentity,
 } from '@/lib/careerGd/realtimeRoom';
-import { GD_FORMAT_LABELS, GD_ROLE_LABELS } from '../../gdRoles';
+import { GD_ROLE_LABELS } from '../../gdRoles';
 import { GdEvaluationDetail } from '../../GdEvaluationDetail';
 import { GdRoomOverallDetail } from '../../GdRoomOverallDetail';
 import { appendGdRoomLog, loadGdRoomLogs } from '../../gdRoomLogStorage';
@@ -321,8 +321,8 @@ function WaitingView({
 
       <Card variant="soft" padding="md" className="mb-5">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">ルーム情報</p>
-        <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm">
-          <Info label="形式" value={GD_FORMAT_LABELS[room.format]} />
+        {/* GD形式は選択制ではないため表示しない（お題そのものが部屋の識別子）。 */}
+        <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
           <Info label="予定人数" value={`${room.plannedParticipantCount}人`} />
           <Info label="制限時間" value={`${Math.round(room.timeLimitSec / 60)}分`} />
         </div>

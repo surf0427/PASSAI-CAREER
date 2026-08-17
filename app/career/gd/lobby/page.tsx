@@ -4,10 +4,12 @@
 //
 // できること：
 //   1) 募集中の公開GDルーム一覧を見る（GET /api/career/gd/lobby/rooms・10秒ポーリング）
-//   2) 公開GDルームを作る（POST /api/career/gd/lobby/create）
-//   3) 公開GDルームに参加する（POST /api/career/gd/lobby/join）
-//   4) 作成・参加後は既存の /career/gd/room/[roomId] へ遷移するだけ（room 画面は不変）
-//   5) 0件時は「公開ルーム作成」「AIと今すぐ練習（/career/gd/setup）」の導線を出す
+//   2) 公開GDルームに参加する（POST /api/career/gd/lobby/join）
+//   3) 参加後は既存の /career/gd/room/[roomId] へ遷移するだけ（room 画面は不変）
+//   4) 0件時は「GD部屋を作る」「AIと今すぐ練習（/career/gd/setup）」の導線を出す
+//
+// ルーム作成はこの画面では行わない：オンラインマッチのお題は必ず作成者が入力するため、
+// お題入力ウィザードを持つ /career/gd/rooms/create に一本化する（AIお題生成は使わない）。
 //
 // 秘密（host_user_id / user_id / email / join_code_hash 等）は一切表示しない。
 // API レスポンスの公開項目（LobbyRoomSummary）のみを描画する。
@@ -19,29 +21,13 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { GD_FORMAT_LABELS } from '../gdRoles';
-import type { GdFormat } from '@/types/careerGd';
 import type {
-  LobbyCreateResponse,
   LobbyRoomSummary,
   LobbyRoomsResponse,
   LobbyJoinResponse,
 } from '@/lib/careerGd/publicLobbyTypes';
-import {
-  CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
-  DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
-} from '@/lib/careerGd/participantCount';
 import { RandomMatchPanel } from './RandomMatchPanel';
 
-const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
-// 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
-const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
-const TIME_OPTIONS = [
-  { sec: 600, label: '10分' },
-  { sec: 900, label: '15分' },
-  { sec: 1200, label: '20分' },
-  { sec: 1800, label: '30分' },
-];
 const POLL_INTERVAL_MS = 10_000;
 
 const DB_NOT_APPLIED_MESSAGE =
@@ -87,16 +73,8 @@ function formatCreatedAt(iso: string): string {
 export default function CareerGdLobbyPage() {
   const router = useRouter();
 
-  // ── 作成フォーム ──
-  const [format, setFormat] = useState<GdFormat>('free');
-  const [plannedParticipantCount, setPlannedParticipantCount] = useState<number>(
-    DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
-  );
-  const [timeLimitSec, setTimeLimitSec] = useState(900);
+  // 参加時に送る表示名（作成はこの画面では行わない）。
   const [displayName, setDisplayName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [createNotice, setCreateNotice] = useState<string | null>(null);
 
   // ── 一覧 ──
   const [rooms, setRooms] = useState<LobbyRoomSummary[]>([]);
@@ -151,40 +129,6 @@ export default function CareerGdLobbyPage() {
     };
   }, [fetchRooms]);
 
-  async function handleCreate() {
-    if (creating) return;
-    setCreating(true);
-    setCreateError(null);
-    setCreateNotice(null);
-    try {
-      const res = await fetch('/api/career/gd/lobby/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          format,
-          plannedParticipantCount,
-          timeLimitSec,
-          displayName: displayName.trim() || undefined,
-        }),
-      });
-      const data = (await res.json().catch(() => null)) as
-        | (LobbyCreateResponse & { error?: string; detail?: string })
-        | null;
-      if (!res.ok || !data?.ok || !data.redirectTo) {
-        setCreateError(friendlyError(res.status, data, 'ルームの作成に失敗しました。'));
-        return;
-      }
-      if (data.reused) {
-        setCreateNotice('既に募集中の公開ルームがあります。そちらへ移動します…');
-      }
-      router.push(data.redirectTo);
-    } catch {
-      setCreateError('ルームの作成に失敗しました。通信環境をご確認ください。');
-    } finally {
-      setCreating(false);
-    }
-  }
-
   async function handleJoin(roomId: string) {
     if (joiningRoomId) return;
     setJoiningRoomId(roomId);
@@ -224,75 +168,16 @@ export default function CareerGdLobbyPage() {
       {/* ── A. ランダムマッチ（公開ロビーとは分離した自動マッチ導線） ── */}
       <RandomMatchPanel />
 
-      {/* ── B. 公開ルーム作成フォーム ── */}
+      {/* ── B. ルーム作成の導線（お題入力ウィザードへ） ── */}
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <h2 className="text-sm font-bold text-slate-800 mb-3">公開ルームを作成</h2>
-
+        <h2 className="text-sm font-bold text-slate-800 mb-1">公開ルームを作成する</h2>
+        <p className="text-xs text-slate-500 leading-relaxed mb-3">
+          公開ルームの作成では、GDのお題をあなた自身が入力します（人数・制限時間もそこで設定します）。
+        </p>
         <div className="space-y-4">
           <div>
-            <p className="text-[11px] font-bold text-slate-500 mb-1.5">形式</p>
-            <div className="flex flex-wrap gap-2">
-              {FORMATS.map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFormat(f)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold ring-1 transition-colors ${
-                    format === f
-                      ? 'bg-blue-600 text-white ring-blue-600'
-                      : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  {GD_FORMAT_LABELS[f]}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="gd-lobby-count" className="block text-[11px] font-bold text-slate-500 mb-1.5">
-                参加人数
-              </label>
-              <select
-                id="gd-lobby-count"
-                value={plannedParticipantCount}
-                onChange={(e) => setPlannedParticipantCount(Number(e.target.value))}
-                className="w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-800 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                {COUNT_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}人
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-                実際の参加者が足りない場合は、AIメンバーが自動で補完されます。
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor="gd-lobby-time" className="block text-[11px] font-bold text-slate-500 mb-1.5">
-                制限時間
-              </label>
-              <select
-                id="gd-lobby-time"
-                value={timeLimitSec}
-                onChange={(e) => setTimeLimitSec(Number(e.target.value))}
-                className="w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-800 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              >
-                {TIME_OPTIONS.map((t) => (
-                  <option key={t.sec} value={t.sec}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
             <label htmlFor="gd-lobby-name" className="block text-[11px] font-bold text-slate-500 mb-1.5">
-              表示名（任意）
+              表示名（任意・参加時に使われます）
             </label>
             <input
               id="gd-lobby-name"
@@ -305,16 +190,12 @@ export default function CareerGdLobbyPage() {
             />
           </div>
 
-          {createError && (
-            <p className="text-xs font-semibold text-rose-600" role="alert">
-              {createError}
-            </p>
-          )}
-          {createNotice && <p className="text-xs font-semibold text-blue-700">{createNotice}</p>}
-
-          <Button variant="primary" onClick={handleCreate} disabled={creating} className="w-full sm:w-auto">
-            {creating ? '作成中…' : '公開ルームを作成'}
-          </Button>
+          <Link
+            href="/career/gd/rooms/create"
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+          >
+            GD部屋を作る（お題を入力）→
+          </Link>
         </div>
       </Card>
 
@@ -352,9 +233,12 @@ export default function CareerGdLobbyPage() {
             自分で公開ルームを作成して募集するか、AIと今すぐ練習を始められます。
           </p>
           <div className="flex flex-col sm:flex-row gap-2">
-            <Button variant="primary" onClick={handleCreate} disabled={creating} className="w-full sm:w-auto">
-              {creating ? '作成中…' : '自分で公開ルームを作成する'}
-            </Button>
+            <Link
+              href="/career/gd/rooms/create"
+              className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+            >
+              自分で公開ルームを作成する →
+            </Link>
             <Link
               href="/career/gd/setup"
               className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-blue-700 ring-1 ring-blue-200 shadow-sm transition-colors hover:bg-blue-50"
@@ -416,7 +300,8 @@ function RoomCard({
         data-joined={String(room.isJoined)}
       >
         <div className="min-w-0">
-          <p className="text-sm font-bold text-slate-900">{GD_FORMAT_LABELS[room.format]}</p>
+          {/* 作成者が設定したお題を見出しにする（お題未設定の旧 room は既定文言）。 */}
+          <p className="text-sm font-bold text-slate-900">{room.themeTitle || 'GDルーム'}</p>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>
               参加人数:{' '}

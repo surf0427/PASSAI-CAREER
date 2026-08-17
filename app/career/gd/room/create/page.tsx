@@ -1,8 +1,11 @@
 'use client';
 
 // PASSAI 就活版 — GD Phase2 マルチGD ルーム作成画面（STEP-GD-11）。
-// ホストが形式・予定人数・制限時間を選び、6桁参加コードを発行・表示する。
+// ホストが予定人数・制限時間を選び、GDのお題を自分で入力して、6桁参加コードを発行・表示する。
 // join / ロビー / 進行は後続 STEP（GD-12〜）。本画面はコード発行まで。
+//
+// フレンドマッチは「GD形式の選択」「AIにテーマを作ってもらう」を持たない：
+// お題は必ず作成者が自分で書く（AIお題生成はソロGD専用）。
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
@@ -11,9 +14,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { useAuthStatus, useIsMember } from '@/app/career/components/CareerAuthProvider';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { GD_FORMAT_LABELS, GD_FORMAT_DESCRIPTIONS } from '../../gdRoles';
 import { ThemeSetupStep } from '../../components/ThemeSetupStep';
-import type { CareerGdRoomCreateResponse, GdFormat, GdTheme } from '@/types/careerGd';
+import type { CareerGdRoomCreateResponse, GdTheme } from '@/types/careerGd';
+import { GD_DEFAULT_FORMAT } from '@/lib/careerGd/roomThemeInput';
 import {
   CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
   DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
@@ -23,7 +26,6 @@ const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
-const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
 // 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
 const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
 const TIME_OPTIONS = [
@@ -43,7 +45,6 @@ export default function CareerGdRoomCreatePage() {
   const isMember = useIsMember();
 
   const [step, setStep] = useState<'settings' | 'theme'>('settings');
-  const [format, setFormat] = useState<GdFormat>('free');
   const [participantCount, setParticipantCount] = useState<number>(
     DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
   );
@@ -68,7 +69,7 @@ export default function CareerGdRoomCreatePage() {
   async function handleCreate() {
     if (loading) return;
     if (!theme) {
-      setError('GDテーマを確定してください。');
+      setError('GDのお題を確定してください。');
       return;
     }
     setLoading(true);
@@ -77,7 +78,14 @@ export default function CareerGdRoomCreatePage() {
       const res = await fetch('/api/career/gd/room/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format, plannedParticipantCount: participantCount, timeLimitSec, displayName, theme }),
+        body: JSON.stringify({
+          // 形式は選ばせない（お題の文面で表現する）。既存 API 契約のため既定値を送る。
+          format: GD_DEFAULT_FORMAT,
+          plannedParticipantCount: participantCount,
+          timeLimitSec,
+          displayName,
+          theme,
+        }),
       });
       const data = (await res.json().catch(() => null)) as
         | (CareerGdRoomCreateResponse & { error?: string; detail?: string })
@@ -175,11 +183,16 @@ export default function CareerGdRoomCreatePage() {
 
         <Card variant="soft" padding="md" className="mb-5">
           <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">ルーム設定</p>
-          <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm">
-            <Info label="形式" value={GD_FORMAT_LABELS[created.format]} />
+          <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm">
             <Info label="予定人数" value={`${created.plannedParticipantCount}人`} />
             <Info label="制限時間" value={`${Math.round(created.timeLimitSec / 60)}分`} />
           </div>
+          {theme && (
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <p className="text-[11px] text-slate-500 mb-0.5">GDのお題</p>
+              <p className="text-sm font-semibold text-slate-800 leading-snug">{theme.title}</p>
+            </div>
+          )}
         </Card>
 
         {/* ルーム（ロビー）へ入り、参加者を待って手動で開始する（STEP-GD-28: 導線を実ルームへ接続）。 */}
@@ -209,15 +222,14 @@ export default function CareerGdRoomCreatePage() {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <PageHeader
-          title="GDテーマの設定"
-          description="待機部屋に進む前に、このルームで話し合うGDテーマを決めます。"
+          title="GDのお題を決める"
+          description="待機部屋に進む前に、このルームで話し合うお題をあなたが入力します。"
         />
 
         {/* step1 で決めた部屋設定の要約（重複入力させない） */}
         <Card variant="soft" padding="md" className="mb-5">
           <div className="flex items-start justify-between gap-3">
-            <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm flex-1">
-              <Info label="形式" value={GD_FORMAT_LABELS[format]} />
+            <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm flex-1">
               <Info label="参加人数" value={`${participantCount}人`} />
               <Info label="制限時間" value={`${Math.round(timeLimitSec / 60)}分`} />
             </div>
@@ -232,13 +244,7 @@ export default function CareerGdRoomCreatePage() {
         </Card>
 
         <Card variant="soft" padding="md" className="mb-5">
-          <ThemeSetupStep
-            format={format}
-            participantCount={participantCount}
-            timeLimitSec={timeLimitSec}
-            accent="blue"
-            onThemeChange={setTheme}
-          />
+          <ThemeSetupStep accent="blue" onThemeChange={setTheme} />
         </Card>
 
         {error && (
@@ -255,7 +261,7 @@ export default function CareerGdRoomCreatePage() {
             disabled={loading || !theme}
             className="w-full sm:w-auto"
           >
-            {loading ? '作成中…' : 'このテーマでルームを作成 →'}
+            {loading ? '作成中…' : 'このお題でルームを作成 →'}
           </Button>
           <button
             type="button"
@@ -267,7 +273,7 @@ export default function CareerGdRoomCreatePage() {
         </div>
         {!theme && (
           <p className="mt-2 text-[11px] text-slate-400">
-            テーマを確定すると「ルームを作成」に進めます。
+            お題を確定すると「ルームを作成」に進めます。
           </p>
         )}
       </div>
@@ -281,21 +287,6 @@ export default function CareerGdRoomCreatePage() {
         title="マルチGDルームを作成"
         description="友達・知人と合言葉でグループディスカッションを練習します。不足人数はAIが補完します。"
       />
-
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">GDの形式</p>
-        <div className="grid grid-cols-1 gap-3">
-          {FORMATS.map((f) => (
-            <Option
-              key={f}
-              label={GD_FORMAT_LABELS[f]}
-              description={GD_FORMAT_DESCRIPTIONS[f]}
-              active={format === f}
-              onClick={() => setFormat(f)}
-            />
-          ))}
-        </div>
-      </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">参加人数（自分を含む）</p>
@@ -320,7 +311,7 @@ export default function CareerGdRoomCreatePage() {
 
       <div className="flex flex-col sm:flex-row gap-3">
         <Button variant="primary" size="md" onClick={() => setStep('theme')} className="w-full sm:w-auto">
-          次へ（GDテーマの設定）→
+          次へ（GDのお題を決める）→
         </Button>
         <BackLink />
       </div>
@@ -345,29 +336,6 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] text-slate-500 mb-0.5">{label}</p>
       <p className="text-sm font-semibold text-slate-800">{value}</p>
     </div>
-  );
-}
-
-function Option({
-  label,
-  description,
-  active,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const base = 'w-full text-left rounded-xl ring-1 p-4 transition-colors';
-  const cls = active
-    ? `${base} ring-blue-500 bg-blue-50`
-    : `${base} ring-slate-200 bg-white hover:bg-slate-50`;
-  return (
-    <button type="button" onClick={onClick} className={cls}>
-      <p className="text-sm font-bold text-slate-900 mb-1">{label}</p>
-      <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
-    </button>
   );
 }
 

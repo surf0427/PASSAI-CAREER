@@ -3,14 +3,17 @@
 // このファイルは client / server 双方から import される想定なので server-only を付けない。
 // 秘密情報（join_code_hash / pepper / user_id / email）は一切含めないこと。
 
-import type { GdFormat } from '@/types/careerGd';
+import type { GdFormat, GdTheme } from '@/types/careerGd';
 
 // ── POST /api/career/gd/lobby/create ──────────────────────────
 export type LobbyCreateRequest = {
+  /** 形式は UI から選ばせない（作成者のお題で表現する）。互換のため任意で受ける。 */
   format?: GdFormat;
   plannedParticipantCount?: number;
   timeLimitSec?: number;
   displayName?: string;
+  /** 作成者が入力した GD のお題（必須。未確定だと 400 THEME_REQUIRED）。 */
+  theme: GdTheme;
 };
 
 export type LobbyCreateResponse = {
@@ -25,6 +28,8 @@ export type LobbyCreateResponse = {
 export type LobbyRoomSummary = {
   roomId: string;
   format: GdFormat;
+  /** 作成者が設定した GD のお題（タイトルのみ）。未設定の旧 room / ランダムマッチ room は ''。 */
+  themeTitle: string;
   timeLimitSec: number;
   plannedParticipantCount: number;
   currentHumanCount: number;

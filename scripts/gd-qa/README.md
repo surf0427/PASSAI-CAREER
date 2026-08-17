@@ -3,6 +3,12 @@
 外部 AI / Supabase / env に依存しない純ロジックの回帰テスト。CI・ローカルで再実行できる。
 
 ```bash
+# 3 本まとめて
+npm run qa:careerGd
+
+# お題モード（solo=AI生成あり / online・friend=手入力のみ・GD形式選択なし）
+npx tsx scripts/career-gd-theme-mode-qa.ts
+
 # テーマ入力検証（修正1: 作成時テーマ確定）
 npx tsx scripts/gd-qa/roomThemeInput.qa.ts
 
@@ -12,6 +18,8 @@ npx tsx scripts/gd-qa/roomClose.qa.ts
 
 いずれも失敗時は非0 exit で終了する。
 
+- `scripts/career-gd-theme-mode-qa.ts` — ソロは AIお題生成を維持し、オンライン／フレンドは
+  AIお題生成・GD形式選択を持たないことをソース静的検査で保証（`/api/career/gd/theme` の client 呼び出しは solo のみ）。
 - `roomThemeInput.qa.ts` — `lib/careerGd/roomThemeInput.ts` の `parseRoomThemeInput` / `isThemeConfirmed`。
 - `roomClose.qa.ts` — `lib/careerGd/roomCloseCore.ts` の `cancelRoomCore` を fake Supabase adapter で検証
   （部分障害後の再実行補正・冪等 cleanup・finished 保護・close/host-leave の収束・レース耐性）。

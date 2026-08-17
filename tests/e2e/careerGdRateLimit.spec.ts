@@ -5,7 +5,7 @@
 // create/join を上限まで消費した状態で UI 操作すると 429 の文言が role="alert" に出て、
 // ボタンが永久 disabled にならないこと、満員(ROOM_FULL)と混同しないことを確認する。
 import { test, expect } from '@playwright/test';
-import { memberContext, lobbyCard, roomIdFromUrl } from './helpers';
+import { memberContext, lobbyCard, roomIdFromUrl, E2E_GD_THEME, confirmGdTheme } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -22,21 +22,23 @@ test.describe('GD rate limit UI @ratelimit', () => {
       // context.request は同一 context の cookie を共有（= member0 として認証）。API で上限に到達させる。
       let hit429 = false;
       for (let i = 0; i < 8 && !hit429; i++) {
-        const r = await context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 4 } });
+        const r = await context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 4, theme: E2E_GD_THEME } });
         if (r.status() === 429) hit429 = true;
         else expect(r.status(), `pre-create ${i}`).toBe(200);
       }
       expect(hit429, 'create rate limit should trigger via API').toBeTruthy();
-      // 直後に UI から create → 429。
-      await page.goto('/career/gd/lobby');
-      const createBtn = page.getByRole('button', { name: '公開ルームを作成', exact: true });
+      // 直後に UI から create → 429（作成ウィザードでお題を入力して作成を押す）。
+      await page.goto('/career/gd/rooms/create');
+      await page.getByRole('button', { name: '4人', exact: true }).click();
+      await page.getByRole('button', { name: /次へ（GDのお題を決める）/ }).click();
+      await confirmGdTheme(page, 'E2Eお題（rate limit）');
+      const createBtn = page.getByRole('button', { name: /このお題でGD部屋を作成/ });
       await expect(createBtn).toBeVisible();
-      await page.selectOption('#gd-lobby-count', '4');
       await createBtn.click();
       // 429 の文言が role="alert" に出る。
       await expect(page.getByRole('alert').filter({ hasText: RL_MESSAGE })).toBeVisible();
-      // 遷移していない（lobby のまま）。
-      expect(page.url()).toContain('/career/gd/lobby');
+      // 遷移していない（作成画面のまま）。
+      expect(page.url()).toContain('/career/gd/rooms/create');
       // ボタンは永久 disabled にならない（再度押せる状態に戻る）。
       await expect(createBtn).toBeEnabled();
     } finally {
@@ -51,9 +53,9 @@ test.describe('GD rate limit UI @ratelimit', () => {
     const spammer = await memberContext(browser, 2);
     try {
       // 2 つの 8 人 room を別々の host で作成（満員にならない）。
-      const rj = await creatorJ.context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 8 } });
+      const rj = await creatorJ.context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 8, theme: E2E_GD_THEME } });
       const roomJ = (await rj.json()).roomId as string;
-      const rk = await creatorK.context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 8 } });
+      const rk = await creatorK.context.request.post(CREATE, { data: { format: 'free', plannedParticipantCount: 8, theme: E2E_GD_THEME } });
       const roomK = (await rk.json()).roomId as string;
       expect(roomJ && roomK).toBeTruthy();
 

@@ -2,7 +2,7 @@
 // 実際のクリック/遷移/polling/満員/開始/発言/終了/評価/履歴までブラウザで検証する。
 // 秘密（token/cookie/email）は扱わず、storageState 経由でログイン済み context を使う。
 import { test, expect } from '@playwright/test';
-import { memberContext, roomIdFromUrl, createPublicRoom, lobbyCard as card } from './helpers';
+import { memberContext, createPublicRoom, lobbyCard as card } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -22,7 +22,7 @@ test.describe('GD public lobby browser E2E', () => {
 
       const lobby = await page.goto('/career/gd/lobby');
       expect(lobby?.status()).toBe(200);
-      await expect(page.getByRole('button', { name: '公開ルームを作成', exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: /GD部屋を作る（お題を入力）/ })).toBeVisible();
 
       const view = await page.goto('/career/gd/view');
       expect(view?.status()).toBe(200);
@@ -53,10 +53,9 @@ test.describe('GD public lobby browser E2E', () => {
   test('B2. 同一hostの再作成は既存room再利用（同一room詳細へ）', async ({ browser }) => {
     const { context, page } = await memberContext(browser, 0);
     try {
-      await page.goto('/career/gd/lobby');
-      await page.getByRole('button', { name: '公開ルームを作成', exact: true }).click();
-      await page.waitForURL(/\/career\/gd\/room\/[0-9a-f-]{36}$/i);
-      expect(roomIdFromUrl(page.url())).toBe(hostRoomId);
+      // 同一 host が再度ウィザードから作成しても、既存の募集中 room に戻される。
+      const again = await createPublicRoom(page, 4, 'HostMain');
+      expect(again).toBe(hostRoomId);
     } finally {
       await context.close();
     }

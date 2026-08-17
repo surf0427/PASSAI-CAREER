@@ -3,7 +3,7 @@
 // および public_lobby ↔ invite の分離が保たれていることをブラウザで確認する。
 // 参加コードは DOM から読むが、値は一切ログ出力しない。
 import { test, expect } from '@playwright/test';
-import { memberContext, recordRoom, roomIdFromUrl } from './helpers';
+import { memberContext, recordRoom, roomIdFromUrl, confirmGdTheme } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -15,9 +15,11 @@ test.describe('GD invite (合言葉) room regression', () => {
     const joiner = await memberContext(browser, 1);
     const looker = await memberContext(browser, 2);
     try {
-      // 1) 合言葉 room 作成（デフォルト free / 4人）。
+      // 1) 合言葉 room 作成（4人・お題はホストが入力）。
       await host.page.goto('/career/gd/room/create');
-      await host.page.getByRole('button', { name: 'ルームを作成 →' }).click();
+      await host.page.getByRole('button', { name: /次へ（GDのお題を決める）/ }).click();
+      await confirmGdTheme(host.page, 'E2E合言葉のお題（4人）');
+      await host.page.getByRole('button', { name: /このお題でルームを作成/ }).click();
       await expect(host.page.getByText('参加コード（合言葉）')).toBeVisible();
       // 6桁コードを DOM から取得（値は出力しない）。
       const code = (await host.page.locator('p.select-all').innerText()).trim();
@@ -42,8 +44,10 @@ test.describe('GD invite (合言葉) room regression', () => {
 
       // 4) 分離: invite room は public lobby に出ない。
       await looker.page.goto('/career/gd/lobby');
-      // lobby が読み込まれるまで待つ（作成フォーム表示で確認）。
-      await expect(looker.page.getByRole('button', { name: '公開ルームを作成', exact: true })).toBeVisible();
+      // lobby が読み込まれるまで待つ（部屋作成導線の表示で確認）。
+      await expect(
+        looker.page.getByRole('link', { name: /GD部屋を作る（お題を入力）/ }),
+      ).toBeVisible();
       await expect(looker.page.locator(`[data-room-id="${inviteRoomId}"]`)).toHaveCount(0);
 
       // 5) host start（2 humans → AI 補完 → active・theme）。
@@ -81,9 +85,11 @@ test.describe('GD invite (合言葉) room regression', () => {
     const joiner = await memberContext(browser, 1);
     try {
       await host.page.goto('/career/gd/room/create');
-      // 参加人数チップで 8人 を選択して作成。
+      // 参加人数チップで 8人 を選択 → お題を入力して作成。
       await host.page.getByRole('button', { name: '8人', exact: true }).click();
-      await host.page.getByRole('button', { name: 'ルームを作成 →' }).click();
+      await host.page.getByRole('button', { name: /次へ（GDのお題を決める）/ }).click();
+      await confirmGdTheme(host.page, 'E2E合言葉のお題（8人）');
+      await host.page.getByRole('button', { name: /このお題でルームを作成/ }).click();
       await expect(host.page.getByText('参加コード（合言葉）')).toBeVisible();
       // 設定サマリに 8人 が反映されている。
       await expect(host.page.getByText('8人')).toBeVisible();

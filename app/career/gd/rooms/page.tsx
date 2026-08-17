@@ -19,7 +19,6 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { GD_FORMAT_LABELS } from '../gdRoles';
 import type {
   LobbyRoomSummary,
   LobbyRoomsResponse,
@@ -266,8 +265,9 @@ function RoomCard({
         data-joined={String(room.isJoined)}
       >
         <div className="min-w-0">
+          {/* 作成者が設定したお題を見出しにする（お題未設定の旧 room は既定文言）。 */}
           <p className="text-sm font-bold text-slate-900">
-            {GD_FORMAT_LABELS[room.format]}GD
+            {room.themeTitle || 'GD部屋'}
           </p>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>

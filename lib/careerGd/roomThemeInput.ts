@@ -14,8 +14,12 @@ export const GD_THEME_DESCRIPTION_MAX = 2000;
 export const GD_THEME_CONSTRAINT_MAX = 300;
 export const GD_THEME_CONSTRAINTS_MAX_COUNT = 8;
 
+// マルチGD（公開GD部屋 / 合言葉）では GD形式をユーザーに選ばせない（お題の文面で表現する）。
+// 既存の format 列・prompt・役割割当を壊さないため、値としてはこの既定値を使い続ける。
+export const GD_DEFAULT_FORMAT: GdFormat = 'free';
+
 function normalizeFormat(v: unknown): GdFormat {
-  return v === 'case' || v === 'abstract' ? v : 'free';
+  return v === 'case' || v === 'abstract' ? v : GD_DEFAULT_FORMAT;
 }
 
 // 確定条件: タイトルと説明の両方が非空。UI の「決定」ボタン活性判定・start 時の

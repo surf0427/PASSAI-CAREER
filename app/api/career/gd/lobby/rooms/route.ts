@@ -35,6 +35,12 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
+// theme（jsonb）からタイトルだけを取り出す。旧 room / ランダムマッチ room は theme={} なので ''。
+function themeTitle(v: unknown): string {
+  if (!v || typeof v !== 'object') return '';
+  return str((v as { title?: unknown }).title).trim().slice(0, 120);
+}
+
 export async function GET() {
   // ── 1) 認証（member 必須） ──
   const auth = await authenticateGdMember();
@@ -49,7 +55,7 @@ export async function GET() {
   // ── 3) 公開待機 room を取得（新しい順） ──
   const { data: roomRows, error: roomErr } = await admin
     .from('career_gd_rooms')
-    .select('id, format, time_limit_sec, planned_participant_count, host_user_id, created_at, updated_at')
+    .select('id, format, theme, time_limit_sec, planned_participant_count, host_user_id, created_at, updated_at')
     .eq('status', 'waiting')
     .eq('room_type', PUBLIC_ROOM_TYPE)
     .eq('join_policy', PUBLIC_JOIN_POLICY)
@@ -106,6 +112,7 @@ export async function GET() {
     return {
       roomId,
       format: asFormat(room.format),
+      themeTitle: themeTitle(room.theme),
       timeLimitSec: typeof room.time_limit_sec === 'number' ? room.time_limit_sec : 900,
       plannedParticipantCount: planned,
       currentHumanCount,

@@ -8,6 +8,9 @@
 // 既存 API を流用（新規 API・DB 追加なし）：POST /api/career/gd/lobby/create。
 // 合言葉（友達）ルームとは別物：こちらは公開一覧に載る room_type='public_lobby'。
 //
+// オンラインマッチは「GD形式の選択」「AIにテーマを作ってもらう」を持たない：
+// お題は必ず作成者が自分で書く（AIお題生成はソロGD専用）。
+//
 // 秘密（join_code_hash / user_id 等）は扱わない。
 
 import { useCallback, useEffect, useState } from 'react';
@@ -17,16 +20,15 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { GD_FORMAT_LABELS, GD_FORMAT_DESCRIPTIONS } from '../../gdRoles';
 import { ThemeSetupStep } from '../../components/ThemeSetupStep';
-import type { GdFormat, GdTheme } from '@/types/careerGd';
+import type { GdTheme } from '@/types/careerGd';
 import type { LobbyCreateResponse } from '@/lib/careerGd/publicLobbyTypes';
+import { GD_DEFAULT_FORMAT } from '@/lib/careerGd/roomThemeInput';
 import {
   CAREER_GD_ALLOWED_PARTICIPANT_COUNTS,
   DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
 } from '@/lib/careerGd/participantCount';
 
-const FORMATS: GdFormat[] = ['free', 'case', 'abstract'];
 // 参加人数は 4/6/8 の 3 択（正本: lib/careerGd/participantCount.ts）。
 const COUNT_OPTIONS = CAREER_GD_ALLOWED_PARTICIPANT_COUNTS;
 const TIME_OPTIONS = [
@@ -62,7 +64,6 @@ export default function CareerGdPublicRoomCreatePage() {
   const router = useRouter();
 
   const [step, setStep] = useState<'settings' | 'theme'>('settings');
-  const [format, setFormat] = useState<GdFormat>('free');
   const [plannedParticipantCount, setPlannedParticipantCount] = useState<number>(
     DEFAULT_CAREER_GD_PARTICIPANT_COUNT,
   );
@@ -85,7 +86,7 @@ export default function CareerGdPublicRoomCreatePage() {
   const handleCreate = useCallback(async () => {
     if (creating) return;
     if (!theme) {
-      setError('GDテーマを確定してください。');
+      setError('GDのお題を確定してください。');
       return;
     }
     setCreating(true);
@@ -96,7 +97,8 @@ export default function CareerGdPublicRoomCreatePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          format,
+          // 形式は選ばせない（お題の文面で表現する）。既存 API 契約のため既定値を送る。
+          format: GD_DEFAULT_FORMAT,
           plannedParticipantCount,
           timeLimitSec,
           displayName: displayName.trim() || undefined,
@@ -119,21 +121,20 @@ export default function CareerGdPublicRoomCreatePage() {
     } finally {
       setCreating(false);
     }
-  }, [creating, format, plannedParticipantCount, timeLimitSec, displayName, theme, router]);
+  }, [creating, plannedParticipantCount, timeLimitSec, displayName, theme, router]);
 
   // ── ウィザード step2: GDテーマの設定 ──
   if (step === 'theme') {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <PageHeader
-          title="GDテーマの設定"
-          description="公開GD部屋を募集する前に、このルームで話し合うGDテーマを決めます。"
+          title="GDのお題を決める"
+          description="公開GD部屋を募集する前に、このルームで話し合うお題をあなたが入力します。"
         />
 
         <Card variant="soft" padding="md" className="mb-5">
           <div className="flex items-start justify-between gap-3">
-            <div className="grid grid-cols-3 gap-y-2 gap-x-4 text-sm flex-1">
-              <SummaryItem label="形式" value={GD_FORMAT_LABELS[format]} />
+            <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-sm flex-1">
               <SummaryItem label="募集人数" value={`${plannedParticipantCount}人`} />
               <SummaryItem label="制限時間" value={`${Math.round(timeLimitSec / 60)}分`} />
             </div>
@@ -148,13 +149,7 @@ export default function CareerGdPublicRoomCreatePage() {
         </Card>
 
         <Card variant="soft" padding="md" className="mb-5">
-          <ThemeSetupStep
-            format={format}
-            participantCount={plannedParticipantCount}
-            timeLimitSec={timeLimitSec}
-            accent="teal"
-            onThemeChange={setTheme}
-          />
+          <ThemeSetupStep accent="teal" onThemeChange={setTheme} />
         </Card>
 
         {error && (
@@ -172,7 +167,7 @@ export default function CareerGdPublicRoomCreatePage() {
             disabled={creating || !theme}
             className="w-full sm:w-auto"
           >
-            {creating ? '作成中…' : 'このテーマでGD部屋を作成 →'}
+            {creating ? '作成中…' : 'このお題でGD部屋を作成 →'}
           </Button>
           <button
             type="button"
@@ -184,7 +179,7 @@ export default function CareerGdPublicRoomCreatePage() {
         </div>
         {!theme && (
           <p className="mt-2 text-[11px] text-slate-400">
-            テーマを確定すると「GD部屋を作成」に進めます。
+            お題を確定すると「GD部屋を作成」に進めます。
           </p>
         )}
       </div>
@@ -198,21 +193,6 @@ export default function CareerGdPublicRoomCreatePage() {
         title="GD部屋を作る"
         description="公開GD部屋を作成して参加者を募集します。人数が足りない場合は開始時にAIメンバーが自動で補完します（ログインが必要）。"
       />
-
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-teal-700 tracking-widest mb-3">GDの形式</p>
-        <div className="grid grid-cols-1 gap-3">
-          {FORMATS.map((f) => (
-            <Option
-              key={f}
-              label={GD_FORMAT_LABELS[f]}
-              description={GD_FORMAT_DESCRIPTIONS[f]}
-              active={format === f}
-              onClick={() => setFormat(f)}
-            />
-          ))}
-        </div>
-      </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <p className="text-[11px] font-bold text-teal-700 tracking-widest mb-3">募集人数（自分を含む）</p>
@@ -270,7 +250,7 @@ export default function CareerGdPublicRoomCreatePage() {
           onClick={() => setStep('theme')}
           className="w-full sm:w-auto"
         >
-          次へ（GDテーマの設定）→
+          次へ（GDのお題を決める）→
         </Button>
         <Link
           href="/career/gd/rooms"
@@ -286,29 +266,6 @@ export default function CareerGdPublicRoomCreatePage() {
         </Link>
       </div>
     </div>
-  );
-}
-
-function Option({
-  label,
-  description,
-  active,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const base = 'w-full text-left rounded-xl ring-1 p-4 transition-colors';
-  const cls = active
-    ? `${base} ring-teal-500 bg-teal-50`
-    : `${base} ring-slate-200 bg-white hover:bg-slate-50`;
-  return (
-    <button type="button" onClick={onClick} className={cls}>
-      <p className="text-sm font-bold text-slate-900 mb-1">{label}</p>
-      <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
-    </button>
   );
 }
 
