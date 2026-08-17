@@ -37,6 +37,9 @@ import {
 import {
   normalizeInterviewTarget,
   isInterviewTargetComplete,
+  getInterviewModeConfig,
+  CAREER_INTERVIEW_MODES,
+  CAREER_INTERVIEW_MODE_ORDER,
 } from '@/app/career/interview/interviewModes';
 import type { CareerInterviewTurn } from '@/types/careerInterview';
 
@@ -280,6 +283,88 @@ check(
   !turnRoute.includes('isInterviewTargetComplete') &&
     !completeRoute.includes('isInterviewTargetComplete'),
   'F-8 turn / complete には必須検証を課さない（進行中・旧セッションの完走互換）',
+);
+
+// ── ケースG: 音声のみ / 面接モード 4 種類の契約（静的） ──
+console.log('\n# G. 音声のみ・面接モード 4 種類');
+const setupPage = readFileSync(
+  join(process.cwd(), 'app/career/interview/setup/page.tsx'),
+  'utf8',
+);
+const setupPageCode = setupPage
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n');
+check(
+  CAREER_INTERVIEW_MODE_ORDER.length === 4 &&
+    CAREER_INTERVIEW_MODE_ORDER.join(',') === 'self_analysis,motivation,real,pressure',
+  'G-1 新規面接で選べるモードは 4 種類だけ（自己分析 / 企業理解 / 本番 / 圧迫面接）',
+);
+check(
+  CAREER_INTERVIEW_MODES.map((m) => m.label).join('・') ===
+    '自己分析モード・企業理解モード・本番モード・圧迫面接モード',
+  'G-2 4 モードの表示ラベルが本番 UX の名称になっている',
+);
+// 旧モードは UI から消えるが、過去ログのラベル解決は維持する（read 互換）。
+check(
+  getInterviewModeConfig('gakuchika').label === 'ガクチカ深掘り' &&
+    getInterviewModeConfig('self_pr').label === '自己PR深掘り',
+  'G-3 旧モード（gakuchika / self_pr）は過去ログ表示のため config を保持',
+);
+check(
+  /mode:\s*'voice'/.test(setupPageCode) && !/setMode\(/.test(setupPageCode),
+  'G-4 新規セッションは常に音声（テキスト / 音声の selector が無い）',
+);
+check(
+  !setupPageCode.includes('テキストで回答') && !setupPageCode.includes('回答モード'),
+  'G-5 テキスト面接の選択肢・回答モード選択 UI が存在しない',
+);
+const sessionPage = readFileSync(
+  join(process.cwd(), 'app/career/interview/session/page.tsx'),
+  'utf8',
+);
+const sessionPageCode = sessionPage
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n');
+check(
+  !/<Textarea/.test(sessionPageCode),
+  'G-6 面接中にキーボードで回答を入力する UI が存在しない',
+);
+// ★ 内部 text pipeline（STT transcript → LLM → AI 応答テキスト → TTS）は削除しない。
+check(
+  sessionPageCode.includes('onFinalTranscript') &&
+    sessionPageCode.includes('startListening') &&
+    sessionPageCode.includes('speak(') &&
+    sessionPageCode.includes("role: 'answer'"),
+  'G-7 内部 text pipeline（STT transcript / LLM 入力 / TTS 読み上げ）は維持されている',
+);
+check(
+  sessionPageCode.includes('voiceError') && sessionPageCode.includes('sttSupported'),
+  'G-8 マイク不可・音声認識エラー時に案内が出る（無反応にしない）',
+);
+// ── 音声モード UI（テキスト混在の解消）を固定する ──
+// 音声モードは「質問は耳で聞く / 回答は口で話す」に集中させる。質問本文の常時表示や
+// 小さすぎる録音 CTA へ逆戻りしないよう、条件分岐そのものを guard する。
+check(
+  /const isVoiceMode\s*=\s*session\?\.mode !== 'text'/.test(sessionPageCode) &&
+    /const showQuestionText\s*=\s*!isVoiceMode \|\| !ttsSupported/.test(sessionPageCode),
+  'G-9 音声モード判定と「質問本文を出すか」の条件が明示されている',
+);
+check(
+  /\{question && showQuestionText &&/.test(sessionPageCode) &&
+    /\{question && !showQuestionText &&/.test(sessionPageCode) &&
+    sessionPageCode.includes('もう一度聞く'),
+  'G-10 音声モードでは質問本文を出さず、聞き直し操作（もう一度聞く）だけを置く',
+);
+check(
+  /size=\{isVoiceMode \? 'lg' : 'sm'\}/.test(sessionPageCode) &&
+    sessionPageCode.includes('録音して回答'),
+  'G-11 音声モードの「録音して回答」は主役 CTA サイズ（テキスト時の sm より大きい）',
+);
+check(
+  /if \(isVoiceMode && ttsSupported/.test(sessionPageCode),
+  'G-12 質問の自動読み上げは音声モードでのみ走る（質問本文を消しても TTS は動く）',
 );
 
 

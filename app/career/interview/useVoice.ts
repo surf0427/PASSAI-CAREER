@@ -22,6 +22,8 @@ type SpeechRecognitionEventLike = {
   resultIndex: number;
   results: ArrayLike<SpeechRecognitionResultLike>;
 };
+// onerror に渡るイベント（`error` は 'not-allowed' などの短い識別子）。
+type SpeechRecognitionErrorEventLike = { error?: unknown };
 type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
@@ -44,6 +46,30 @@ function getRecognitionCtor(): SpeechRecognitionConstructor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+// 音声認識エラーをユーザーが次に取れる行動へ翻訳する。
+//
+// ★ 面接は音声のみで運用するため、マイクが使えないときに「無反応」で終わらせない
+//   （テキスト面接へは倒さない。案内と再試行だけを出す）。
+function describeRecognitionError(raw: unknown): string {
+  const code = typeof raw === 'string' ? raw : '';
+  switch (code) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return 'マイクの使用が許可されていません。ブラウザのアドレスバーのマイクアイコンから使用を許可し、もう一度「録音して回答」を押してください。';
+    case 'audio-capture':
+      return 'マイクが見つかりませんでした。マイクが接続されているかを確認して、もう一度お試しください。';
+    case 'no-speech':
+      return '音声が聞き取れませんでした。マイクに近づいて、もう一度「録音して回答」を押してください。';
+    case 'network':
+      return '音声認識の通信に失敗しました。通信環境を確認して、もう一度お試しください。';
+    case 'aborted':
+      // ユーザー操作・画面遷移による中断はエラー表示しない。
+      return '';
+    default:
+      return '音声認識を開始できませんでした。もう一度「録音して回答」を押してください。';
+  }
+}
+
 type UseVoiceOptions = {
   // 確定した発話テキストを 1 区切りごとに渡す（呼び出し側で回答欄に追記する）。
   onFinalTranscript?: (text: string) => void;
@@ -63,6 +89,8 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
   );
   const [listening, setListening] = useState(false);
   const [interimText, setInterimText] = useState('');
+  // マイク／音声認識のエラー文言（null = エラーなし）。UI がそのまま表示する。
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   // TTS が読み上げ中かどうか（面接官アバターの「話しています」状態表示に使う）。
   const [speaking, setSpeaking] = useState(false);
 
@@ -96,9 +124,13 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
       }
       setInterimText(interim);
     };
-    recognition.onerror = () => {
+    recognition.onerror = (e) => {
       setListening(false);
       setInterimText('');
+      const message = describeRecognitionError(
+        (e as SpeechRecognitionErrorEventLike | null)?.error,
+      );
+      if (message) setVoiceError(message);
     };
     recognition.onend = () => {
       setListening(false);
@@ -118,14 +150,23 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
 
   const startListening = useCallback(() => {
     const recognition = recognitionRef.current;
-    if (!recognition) return;
+    if (!recognition) {
+      setVoiceError(
+        'このブラウザは音声認識に対応していません。Chrome など対応ブラウザで開き直してください。',
+      );
+      return;
+    }
+    setVoiceError(null);
     try {
       recognition.start();
       setListening(true);
     } catch {
-      // 既に開始済みなどで start が throw する場合は無視。
+      // 既に開始済みなどで start が throw する場合は無視（録音状態は onend/onerror で整う）。
     }
   }, []);
+
+  // ユーザーが再試行したときにエラー表示を消す。
+  const clearVoiceError = useCallback(() => setVoiceError(null), []);
 
   const stopListening = useCallback(() => {
     const recognition = recognitionRef.current;
@@ -175,6 +216,8 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
     listening,
     interimText,
     speaking,
+    voiceError,
+    clearVoiceError,
     startListening,
     stopListening,
     speak,
