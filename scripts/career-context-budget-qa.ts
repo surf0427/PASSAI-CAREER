@@ -302,7 +302,10 @@ const PURPOSE_FIXTURES: PurposeFixture[] = [
       ];
     },
   },
-  // interview: targetConfig（companyMemo cap 無し）が変動要因。
+  // interview: targetConfig が変動要因。
+  //   ★ 旧 companyMemo（企業メモ・route 側 cap 無しの自由文）は面接フローから廃止したため、
+  //     現在の targetConfig は企業名 / 業界 / 職種 / 選考種別 / focusPoint に限られる。
+  //     下の heavy 見積もりは廃止前の上限をそのまま残した保守的な値（過大評価側）。
   {
     purpose: 'interview_practice',
     featureKey: 'career-interview',
@@ -314,7 +317,7 @@ const PURPOSE_FIXTURES: PurposeFixture[] = [
         { label: 'matching', text: txt('マッチング。', heavy ? 280 : 150) },
         { label: 'consultationInsights', text: heavy ? txt('相談気づき。', 250) : '' },
         { label: 'companyResearchFit', text: heavy ? txt('企業研究フィット。', 600) : '' },
-        // companyMemo に長文を貼ると膨らむ（route 側 cap 無し）。
+        // 廃止前の companyMemo 込みの上限を保守的に据え置く（現行は focusPoint のみが自由文）。
         { label: 'targetConfig', text: txt('面接設定（企業/職種/形式/メモ）。', heavy ? 1500 : 200) },
         { label: 'outputFormat', text: txt('出力フォーマット指示。', 2500) },
       ];

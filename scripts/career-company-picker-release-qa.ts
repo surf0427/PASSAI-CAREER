@@ -232,10 +232,35 @@ check(
   })(),
 );
 check(
-  'P8 面接 target は companyName だけで次へ進める',
-  read('app/career/interview/target/page.tsx').includes(
-    "const canProceed = companyName.trim() !== ''",
-  ),
+  // 面接 target は基本情報 4 項目（企業名/業界/職種/選考種別）を必須にしたが、
+  // ★ P8 の主題は「Company Identity（companyId）を必須にしていない」こと。
+  //   free-text の企業名だけで完走できる不変条件が保たれているかを見る。
+  'P8 面接 target は companyId を必須にしていない（free-text の企業名で進める）',
+  (() => {
+    // 行コメントを落として実コードだけを見る（「companyId は必須にしない」という
+    // 説明コメントを誤検知しないため）。
+    const codeOnly = (src: string) =>
+      src
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n');
+    const page = codeOnly(read('app/career/interview/target/page.tsx'));
+    const canProceed = /const canProceed =[\s\S]*?\n  \}\);/.exec(page)?.[0] ?? '';
+    // 必須判定は共有純関数（isInterviewTargetComplete）へ一本化済み。gate へ渡すのは
+    // companyName / industry / jobType / selectionType の 4 項目だけで、companyId は含まない。
+    const predicate =
+      /export function isInterviewTargetComplete[\s\S]*?\n\}/.exec(
+        codeOnly(read('app/career/interview/interviewModes.ts')),
+      )?.[0] ?? '';
+    return (
+      canProceed.includes('isInterviewTargetComplete(') &&
+      canProceed.includes('companyName') &&
+      !canProceed.includes('companyId') &&
+      // 述語側も companyId を見ていない（free-text の企業名だけで完走できる）。
+      predicate.includes('companyName') &&
+      !predicate.includes('companyId')
+    );
+  })(),
 );
 check(
   'P8 企業研究は companyName + 研究テキストだけで添削へ進める',
