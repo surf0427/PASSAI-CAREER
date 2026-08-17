@@ -11,7 +11,6 @@ import { loadInterviewResults } from '../interviewStorage';
 import {
   getInterviewModeConfig,
   interviewSelectionLabel,
-  interviewPhaseLabel,
 } from '../interviewModes';
 import type {
   CareerInterviewResult,
@@ -54,7 +53,7 @@ export default function CareerInterviewResultPage() {
             まだ面接の結果がありません。面接を実施してください。
           </p>
           <Link
-            href="/career/interview/setup"
+            href="/career/interview/target"
             className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline"
           >
             面接を始める →
@@ -114,7 +113,6 @@ export default function CareerInterviewResultPage() {
                       selected.target.industry,
                       selected.target.jobType,
                       interviewSelectionLabel(selected.target.selectionType),
-                      interviewPhaseLabel(selected.target.interviewPhase),
                     ].filter((s) => s);
                     return meta.length > 0 ? (
                       <p className="mt-1 text-xs text-slate-500 leading-relaxed break-words">
@@ -197,7 +195,7 @@ export default function CareerInterviewResultPage() {
 
       <div className="mt-8 flex flex-col sm:flex-row gap-3">
         <Link
-          href="/career/interview/setup"
+          href="/career/interview/target"
           className="inline-flex items-center justify-center gap-1 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg px-4 py-2 transition-colors"
         >
           もう一度面接する →
@@ -232,6 +230,7 @@ function TargetFeedbackCard({
     ['企業向けの評価', feedback.companyFitComment],
     ['職種向けの評価', feedback.jobFitComment],
     ['選考種別の評価', feedback.selectionTypeComment],
+    // 選考フェーズ入力は廃止済み。値を持つ過去ログのためだけに表示を残す（新規面接では常に空）。
     ['選考フェーズ別の評価', feedback.phaseSpecificComment],
   ];
   const lists: Array<[label: string, items?: string[]]> = [

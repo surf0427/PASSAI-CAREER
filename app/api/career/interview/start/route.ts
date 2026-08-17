@@ -18,6 +18,7 @@ import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import {
   resolveInterviewType,
   normalizeInterviewTarget,
+  isInterviewTargetComplete,
 } from '@/app/career/interview/interviewModes';
 import { normalizeInterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { anthropic } from '@/lib/ai';
@@ -80,6 +81,18 @@ export async function POST(req: Request) {
   const interviewType = resolveInterviewType(b.interviewType);
   // target は seed（初回質問の operative 指示）と system の両方で使うため一度だけ正規化する。
   const target = normalizeInterviewTarget(b.target);
+  // ★ 新規面接の必須 4 項目（企業名 / 業界 / 職種 / 選考種別）を開始 boundary でも検証する。
+  //   UI の disabled だけに頼らず、不完全な target で面接が始まらないようにする。
+  //   検証は **start（新規開始）だけ**。turn / complete は旧セッションを完走させるため課さない。
+  if (!isInterviewTargetComplete(target)) {
+    return Response.json(
+      {
+        error: 'CAREER_INTERVIEW_TARGET_INCOMPLETE',
+        detail: '企業名・業界・職種・選考種別を入力してください。',
+      },
+      { status: 400 },
+    );
+  }
   const system = buildInterviewBaseSystem({
     profile: ctx.profile,
     activity: ctx.activity,

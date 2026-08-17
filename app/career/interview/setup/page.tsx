@@ -1,7 +1,12 @@
 'use client';
 
-// PASSAI 就活版 — 面接AI setup 画面。
-// 入力データの確認 + モード選択（テキスト / 音声）→ start API → セッション作成 → session へ遷移。
+// PASSAI 就活版 — 面接AI「面接モード選択」画面（旧: setup / 回答モード選択）。
+//
+// 本番 UX: 基本情報（target）→ **面接モードを 4 種類から選ぶ** → start API → 音声面接へ直行。
+//   - ★ テキスト / 音声の選択 UI は廃止した。新規面接は常に音声（mode: 'voice'）。
+//   - ★ 企業研究ログの手動選択 UI も廃止した。企業情報は「面接画面で再入力・再選択させない」方針のため、
+//     前段で入力した企業（target）に対応する既存の企業研究ログを **自動で** 文脈に載せる。
+//     （Company Data Spine の User Private Evidence = 企業研究ログ。取得経路は既存のまま。）
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
@@ -18,10 +23,6 @@ import {
   upsertInterviewSession,
   loadInterviewTargetDraft,
 } from '../interviewStorage';
-import {
-  interviewSelectionLabel,
-  interviewPhaseLabel,
-} from '../interviewModes';
 import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
 import { buildCompanyResearchSnapshot } from '@/lib/careerCompanyResearch/context';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
@@ -30,17 +31,15 @@ import { useVoice } from '../useVoice';
 import {
   CAREER_INTERVIEW_MODES,
   DEFAULT_CAREER_INTERVIEW_TYPE,
+  interviewSelectionLabel,
+  isInterviewTargetComplete,
 } from '../interviewModes';
 import type {
-  CareerInterviewMode,
   CareerInterviewSession,
   CareerInterviewType,
   CareerInterviewTarget,
 } from '@/types/careerInterview';
-import {
-  CAREER_COMPANY_INTEREST_LABELS,
-  type CareerCompanyResearchLog,
-} from '@/types/careerCompanyResearch';
+import type { CareerCompanyResearchLog } from '@/types/careerCompanyResearch';
 import { withSourceSyncHeader } from '@/app/career/sourceSyncClient';
 import { BASE_CONTEXT_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
 
@@ -58,18 +57,38 @@ function newId(): string {
   return `cint-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+/**
+ * 前段で入力した企業（target）に対応する企業研究ログを自動で選ぶ（純粋なマッチングのみ）。
+ *
+ * ★ ここで新しい企業検索・企業マッチング機構は作らない。既存ログの中から
+ *   ① Company Identity の companyId 一致 → ② 企業名の完全一致 の順で 1 件選ぶだけ。
+ *   見つからなければ null（＝企業研究なしで面接。従来どおり成立する）。
+ */
+function pickCompanyResearchLog(
+  logs: CareerCompanyResearchLog[],
+  target: CareerInterviewTarget | null,
+): CareerCompanyResearchLog | null {
+  if (!target) return null;
+  if (target.companyId) {
+    const byId = logs.find((l) => l.companyId && l.companyId === target.companyId);
+    if (byId) return byId;
+  }
+  const name = target.companyName.trim();
+  if (!name) return null;
+  return logs.find((l) => (l.companyName ?? '').trim() === name) ?? null;
+}
+
 export default function CareerInterviewSetupPage() {
   const router = useRouter();
   const userId = useCurrentUserId();
-  const [mode, setMode] = useState<CareerInterviewMode>('text');
   const [interviewType, setInterviewType] = useState<CareerInterviewType>(
     DEFAULT_CAREER_INTERVIEW_TYPE,
   );
-  // 任意: 参照する企業研究ログ。null = 使わない（従来どおり）。
-  const [researchLogId, setResearchLogId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 音声面接が唯一の runtime path のため、STT 対応可否は開始 gate として使う
+  // （非対応でもテキスト面接へは倒さない。本番仕様は音声のみ）。
   const { sttSupported } = useVoice();
 
   const isMounted = useSyncExternalStore(
@@ -82,35 +101,37 @@ export default function CareerInterviewSetupPage() {
     () => (isMounted ? buildInterviewContextPayload() : null),
     [isMounted],
   );
-  // 前段（target 画面）で入力した受験先・選考の想定。未入力なら null（従来どおり）。
+  // 前段（基本情報画面）で入力した受験先・選考の想定。必須 4 項目が揃っている前提。
   const target = useMemo<CareerInterviewTarget | null>(
     () => (isMounted ? loadInterviewTargetDraft() : null),
     [isMounted],
   );
-  // 保存済み企業研究ログ（最新更新順）。面接で深掘りの根拠に使える。
-  const researchLogs = useMemo<CareerCompanyResearchLog[]>(() => {
-    if (!isMounted) return [];
-    return [...loadCompanyResearchLogs()].sort((a, b) =>
-      (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''),
-    );
-  }, [isMounted]);
-  const selectedResearchLog = useMemo<CareerCompanyResearchLog | null>(
-    () => researchLogs.find((l) => l.id === researchLogId) ?? null,
-    [researchLogs, researchLogId],
-  );
+  const targetReady = isInterviewTargetComplete(target);
+
+  // 企業研究ログ（保存済み）から、今回の企業に対応するものを自動選択する（UI 選択は無し）。
+  const selectedResearchLog = useMemo<CareerCompanyResearchLog | null>(() => {
+    if (!isMounted || !target) return null;
+    try {
+      return pickCompanyResearchLog(loadCompanyResearchLogs(), target);
+    } catch {
+      // 企業研究ログが読めなくても面接は成立する（企業研究なしで進む）。
+      return null;
+    }
+  }, [isMounted, target]);
 
   const profileReady = !!ctx?.profile;
   const activityReady = hasAnyActivity(ctx?.activity ?? null);
   const selfAnalysisReady = !!ctx?.selfAnalysis;
   const esReady = !!ctx?.es;
-  const canStart = profileReady || activityReady;
+  const canStart =
+    (profileReady || activityReady) && targetReady && sttSupported;
 
   async function handleStart() {
     if (!canStart || loading || !ctx) return;
     setLoading(true);
     setError(null);
-    // 企業研究ログ選択時は、その面接用コンテキストを含めて payload を作る（未選択なら null）。
-    const payload = buildInterviewContextPayload(researchLogId);
+    // 自動選択した企業研究ログがあれば、その面接用コンテキストを含めて payload を作る。
+    const payload = buildInterviewContextPayload(selectedResearchLog?.id ?? null);
     try {
       const res = await fetch('/api/career/interview/start', {
         method: 'POST',
@@ -128,21 +149,19 @@ export default function CareerInterviewSetupPage() {
       const data = (await res.json()) as { question: string };
 
       const now = new Date().toISOString();
-      // 音声モードは Web Speech 非対応なら text に倒す。
-      const effectiveMode: CareerInterviewMode =
-        mode === 'voice' && !sttSupported ? 'text' : mode;
       const session: CareerInterviewSession = {
         id: newId(),
         createdAt: now,
         updatedAt: now,
         status: 'in_progress',
-        mode: effectiveMode,
+        // ★ 新規面接は常に音声。ユーザーにテキスト / 音声を選ばせない。
+        mode: 'voice',
         interviewType,
         turns: [{ role: 'question', content: data.question }],
         maxTurns: MAX_TURNS,
-        // 受験先・選考の想定（前段入力・任意）。turn / complete でも同じ文脈に使う。
+        // 受験先・選考の想定（前段入力）。turn / complete でも同じ文脈に使う。
         ...(target ? { target } : {}),
-        // 企業研究ログ連携（選択時のみ）。turn / complete でも同じログを文脈に使う。
+        // 企業研究ログ連携（自動選択時のみ）。turn / complete でも同じログを文脈に使う。
         ...(selectedResearchLog
           ? {
               companyResearchLogId: selectedResearchLog.id,
@@ -162,22 +181,10 @@ export default function CareerInterviewSetupPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <PageHeader title="面接の準備" description="モードを選んで面接を始めます。" />
-
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">入力データ</p>
-        <div className="grid grid-cols-2 gap-y-3 gap-x-4">
-          <ReadyItem label="基本情報" ready={profileReady} href="/career/profile" />
-          <ReadyItem label="活動整理" ready={activityReady} href="/career/activity" />
-          <ReadyItem label="自己分析" ready={selfAnalysisReady} href="/career/self-analysis" />
-          <ReadyItem label="ES" ready={esReady} href="/career/es" />
-        </div>
-        {!canStart && (
-          <p className="mt-4 text-xs text-amber-700 leading-relaxed">
-            基本情報または活動整理のいずれかを入力すると面接を始められます。
-          </p>
-        )}
-      </Card>
+      <PageHeader
+        title="面接モードを選ぶ"
+        description="練習したい内容に合わせてモードを選ぶと、そのまま音声面接が始まります。"
+      />
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
         <div className="flex items-start justify-between gap-3">
@@ -195,15 +202,19 @@ export default function CareerInterviewSetupPage() {
                     target.industry,
                     target.jobType,
                     interviewSelectionLabel(target.selectionType),
-                    interviewPhaseLabel(target.interviewPhase),
                   ]
                     .filter((s) => s)
-                    .join('・') || '企業名のみ指定'}
+                    .join('・')}
                 </p>
+                {selectedResearchLog && (
+                  <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
+                    保存済みの企業研究（{selectedResearchLog.companyName}）を面接の文脈に使います。
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm text-slate-600 leading-relaxed">
-                企業は未指定です。特定の企業に合わせたい場合は設定できます。
+                受ける企業・選考が未入力です。
               </p>
             )}
           </div>
@@ -211,41 +222,34 @@ export default function CareerInterviewSetupPage() {
             href="/career/interview/target"
             className="shrink-0 text-xs font-semibold text-blue-600 hover:underline whitespace-nowrap"
           >
-            {target ? '変更する' : '企業を設定'}
+            {target ? '変更する' : '入力する'}
           </Link>
         </div>
+        {!targetReady && (
+          <p className="mt-3 text-xs text-amber-700 leading-relaxed">
+            企業名・業界・職種・選考種別の入力が必要です。「
+            {target ? '変更する' : '入力する'}」から入力してください。
+          </p>
+        )}
       </Card>
 
-      {researchLogs.length > 0 && (
-        <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
-            企業研究ログを使う（任意）
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">入力データ</p>
+        <div className="grid grid-cols-2 gap-y-3 gap-x-4">
+          <ReadyItem label="基本情報" ready={profileReady} href="/career/profile" />
+          <ReadyItem label="活動整理" ready={activityReady} href="/career/activity" />
+          <ReadyItem label="自己分析" ready={selfAnalysisReady} href="/career/self-analysis" />
+          <ReadyItem label="ES" ready={esReady} href="/career/es" />
+        </div>
+        {!profileReady && !activityReady && (
+          <p className="mt-4 text-xs text-amber-700 leading-relaxed">
+            基本情報または活動整理のいずれかを入力すると面接を始められます。
           </p>
-          <p className="text-xs text-slate-500 leading-relaxed mb-4">
-            保存した企業研究を選ぶと、面接官AIがその内容を前提に「なぜ興味を持ったか」「自分の経験との接続」「入社後の活かし方」を深掘りします（企業情報の暗記確認はしません）。
-          </p>
-          <div className="flex flex-col gap-2">
-            <ResearchOption
-              label="企業研究なしで進める"
-              sub="登録済みの基本情報・活動・自己分析・ESをもとに面接します。"
-              active={researchLogId === null}
-              onClick={() => setResearchLogId(null)}
-            />
-            {researchLogs.map((log) => (
-              <ResearchOption
-                key={log.id}
-                label={log.companyName || '（企業名なし）'}
-                sub={researchSummary(log)}
-                active={researchLogId === log.id}
-                onClick={() => setResearchLogId(log.id)}
-              />
-            ))}
-          </div>
-        </Card>
-      )}
+        )}
+      </Card>
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">面接の種類</p>
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">面接モード</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {CAREER_INTERVIEW_MODES.map((m) => (
             <TypeOption
@@ -262,28 +266,19 @@ export default function CareerInterviewSetupPage() {
         </div>
       </Card>
 
-      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">回答モード</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <ModeOption
-            label="テキストで回答"
-            description="キーボードで回答を入力します。"
-            active={mode === 'text'}
-            onClick={() => setMode('text')}
-          />
-          <ModeOption
-            label="音声で回答"
-            description={
-              sttSupported
-                ? 'マイクで話して回答します（ブラウザの音声認識）。'
-                : 'お使いのブラウザは音声認識に未対応のため、テキストで回答します。'
-            }
-            active={mode === 'voice'}
-            disabled={!sttSupported}
-            onClick={() => sttSupported && setMode('voice')}
-          />
-        </div>
-      </Card>
+      {/* 音声のみ運用のため、マイク（音声認識）が使えない環境では開始させない。
+          ここでテキスト面接へは倒さない（本番仕様は音声のみ）。 */}
+      {isMounted && !sttSupported && (
+        <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+          <p className="text-sm font-bold text-amber-700 mb-1">
+            この環境では音声面接を開始できません
+          </p>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            面接は音声で行います。お使いのブラウザが音声認識（マイク入力）に対応していないため開始できません。
+            Chrome など音声認識に対応したブラウザで開き直し、マイクの使用を許可してください。
+          </p>
+        </Card>
+      )}
 
       {error && (
         <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
@@ -299,7 +294,7 @@ export default function CareerInterviewSetupPage() {
           disabled={!canStart || loading}
           className="w-full sm:w-auto"
         >
-          {loading ? '準備中…' : '面接を始める →'}
+          {loading ? '準備中…' : '音声面接を始める →'}
         </Button>
         <Link
           href="/career/interview"
@@ -309,51 +304,6 @@ export default function CareerInterviewSetupPage() {
         </Link>
       </div>
     </div>
-  );
-}
-
-// 企業研究ログの 1 行サマリ（志望度・更新日・理解度スコア・メモ抜粋）。
-function researchSummary(log: CareerCompanyResearchLog): string {
-  const parts: string[] = [];
-  if (log.interestLevel) parts.push(CAREER_COMPANY_INTEREST_LABELS[log.interestLevel]);
-  const d = new Date(log.updatedAt || log.createdAt);
-  if (!Number.isNaN(d.getTime())) parts.push(`更新 ${d.toLocaleDateString('ja-JP')}`);
-  if (log.review?.overallScore) parts.push(`理解度${log.review.overallScore}点`);
-  return parts.join('・');
-}
-
-function ResearchOption({
-  label,
-  sub,
-  active,
-  onClick,
-}: {
-  label: string;
-  sub?: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`w-full text-left rounded-xl px-3 py-2.5 ring-1 transition-colors ${
-        active ? 'bg-blue-50 ring-blue-400' : 'bg-white ring-slate-200 hover:bg-slate-50'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-            active ? 'border-blue-600' : 'border-slate-300'
-          }`}
-        >
-          {active && <span className="h-2 w-2 rounded-full bg-blue-600" />}
-        </span>
-        <span className="text-sm font-semibold text-slate-800 truncate">{label}</span>
-      </div>
-      {sub && <p className="mt-1 pl-6 text-xs text-slate-500 leading-relaxed">{sub}</p>}
-    </button>
   );
 }
 
@@ -404,33 +354,6 @@ function TypeOption({
       </p>
       <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
       <p className="mt-1.5 text-[11px] text-slate-400">活きるデータ: {recommended}</p>
-    </button>
-  );
-}
-
-function ModeOption({
-  label,
-  description,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const base = 'w-full text-left rounded-xl ring-1 p-4 transition-colors';
-  const cls = disabled
-    ? `${base} ring-slate-200 bg-slate-50 opacity-60 cursor-not-allowed`
-    : active
-      ? `${base} ring-blue-500 bg-blue-50`
-      : `${base} ring-slate-200 bg-white hover:bg-slate-50`;
-  return (
-    <button type="button" onClick={onClick} disabled={disabled} className={cls}>
-      <p className="text-sm font-bold text-slate-900 mb-1">{label}</p>
-      <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
     </button>
   );
 }

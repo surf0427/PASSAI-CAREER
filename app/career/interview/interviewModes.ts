@@ -10,7 +10,6 @@ import type {
   CareerInterviewType,
   CareerInterviewTarget,
   CareerInterviewSelectionType,
-  CareerInterviewPhase,
 } from '@/types/careerInterview';
 
 export type CareerInterviewModeConfig = {
@@ -51,25 +50,36 @@ export const SHARED_INTERVIEWER_RULES = [
 ].join('\n');
 
 const MODES: Record<CareerInterviewType, CareerInterviewModeConfig> = {
+  // ── 自己分析モード（新規面接で選べる 4 モードの 1 つ） ──────────────
+  // 責務: 「自分自身を説明する力」だけを鍛える。企業・業界の理解確認は企業理解モードの領分。
+  // context source: 基本情報 / 活動整理 / 自己分析（既存 Career Context 経路をそのまま使う）。
   self_analysis: {
     type: 'self_analysis',
-    label: '自己分析深掘り',
+    label: '自己分析モード',
     emoji: '🧭',
-    description: '価値観・強み・原体験を、面接官と対話しながら深掘りします。',
+    description: '自分の経験・強み・価値観を深掘りします。',
     interviewerRole: '人事の面接官',
-    recommendedData: '自己分析・活動整理',
+    recommendedData: '基本情報・活動整理・自己分析',
     persona: [
       'あなたは新卒採用の人事面接官です。学生の自己理解を深めることを重視し、温かく丁寧に、しかし安易に褒めて終わらせず掘り下げます。',
-      '学生が自分の言葉で価値観・強み・モチベーションの源泉を語れるよう支援する姿勢で臨みます。',
+      '学生が自分の言葉で経験・強み・価値観・モチベーションの源泉を語れるよう支援する姿勢で臨みます。',
     ].join('\n'),
     guidance: [
-      '自己分析・活動整理の内容をもとに、価値観・強み・弱み・原体験・将来像を深掘りする。',
-      '「なぜそう思うのか」「どんな経験からそう考えるようになったのか」を問い、抽象的な長所ではなく根拠のある自己理解に落とす。',
+      '登録済みの基本情報・活動整理・自己分析をもとに、「学生自身について答える力」を鍛えることに集中する。',
+      '扱う領域は次のとおり（固定の質問リストを順番に読み上げるのではなく、回答内容に応じて自然に選び、深掘りする）:',
+      '  自己紹介／自己PR／強み／弱み／学生時代に力を入れたこと／活動経験／成功経験／失敗経験／困難を乗り越えた経験／チームでの役割／価値観／キャリア観／その選択をした理由。',
+      '「なぜそう思うのか」「どんな経験からそう考えるようになったのか」「その場面で何をどう判断したのか」を問い、抽象的な長所ではなく根拠のある自己理解に落とす。',
+      'このモードでは志望動機・企業理解・業界理解の確認は主題にしない（それは企業理解モードの役割）。企業名が与えられていても、深掘りの中心は学生自身の経験・価値観に置く。',
     ].join('\n'),
     seedFocus: 'これまでの経験の中で、自分の価値観や強みがよく表れたと思う出来事を1つ、まずは全体像から話してもらえるような質問。',
     reactionTone: '受け止めるような落ち着いた一言（褒めすぎない）。',
-    feedbackEmphasis: '価値観・強みを具体的な経験に裏づけて語れているか、自己理解に一貫性があるか。',
+    feedbackEmphasis: '価値観・強み・経験を具体的に裏づけて語れているか、自己理解に一貫性・再現性があるか。',
   },
+  // ── 旧モード（新規面接 UI からは削除済み・過去ログ表示のためだけに残す） ──
+  //   `CAREER_INTERVIEW_MODE_ORDER` に含めないため setup 画面には出ない。
+  //   ただし過去の面接ログ（interviewType: 'gakuchika' / 'self_pr'）が結果画面で
+  //   「本番モード」に化けないよう、config 自体は削除しない。
+  //   質問領域は自己分析モードへ統合済み。
   gakuchika: {
     type: 'gakuchika',
     label: 'ガクチカ深掘り',
@@ -108,39 +118,51 @@ const MODES: Record<CareerInterviewType, CareerInterviewModeConfig> = {
     reactionTone: '受け止めつつ次に繋ぐ短い一言（褒めすぎない）。',
     feedbackEmphasis: '強みが具体的な場面に裏づけられているか、結論ファーストで簡潔に伝わるか、再現性が示せているか。',
   },
+  // ── 企業理解モード（新規面接で選べる 4 モードの 1 つ） ────────────────
+  // 責務: 志望企業・業界・事業・職種への理解を面接形式で確認・深掘りする。
+  // context source: 前段で入力した target（企業名/業界/職種/選考種別）+ 既存の企業研究
+  //   （Company Data Spine の User Private Evidence = 企業研究ログ）。
+  //   ★ 企業情報を面接画面でユーザーに再入力させない。企業側の情報は既存経路からのみ来る。
+  // ★ type key は 'motivation' のまま維持する（旧ログの read 互換。key rename は過去ログを壊す）。
   motivation: {
     type: 'motivation',
-    label: '志望動機',
+    label: '企業理解モード',
     emoji: '🎯',
-    description: '志望動機・業界/企業理解・キャリア軸との接続を確認します。',
+    description: '企業・業界・志望理由を重点的に確認します。',
     interviewerRole: '人事の面接官',
-    recommendedData: '就活軸・自己分析・ES（志望動機）',
+    recommendedData: '企業研究・業界/職種の理解・就活軸',
     persona: [
-      'あなたは新卒採用の人事面接官です。学生の志望動機が、自分の経験・価値観・キャリア軸と自然に接続しているかを確認します。',
-      '事実確認が必要な企業・業界情報は断定せず、学生自身の言葉と理由を引き出すことに集中します。',
+      'あなたは新卒採用の人事面接官です。学生が志望企業・業界・事業・職種をどこまで理解し、自分の言葉で語れるかを確認します。',
+      '事実確認が必要な企業・業界情報は断定せず、学生自身の理解と理由を引き出すことに集中します。',
     ].join('\n'),
     guidance: [
-      '志望動機・キャリア観を題材に、なぜその業界・職種に興味を持ったのか、自分の経験や就活軸とどう繋がるのかを掘り下げる。',
-      '「他社・他業界ではなくなぜここか」「入社後にやりたいこと」まで、学生自身の言葉で語れるよう確認する。',
-      '企業の事業内容・待遇などの事実は断定せず、学生の理解と理由づけを問う。',
+      '志望企業・業界・職種への理解を面接形式で確認・深掘りすることに集中する。',
+      '扱う領域は次のとおり（固定の質問リストを順番に読み上げるのではなく、回答内容に応じて自然に選び、深掘りする）:',
+      '  なぜこの企業か／なぜこの業界か／なぜこの職種か／企業の事業内容・主要サービスの理解／競合との違い／企業の強み・課題・成長領域／自分と企業の適合／入社後にやりたいこと／志望動機の深掘り。',
+      '与えられた企業情報（学生の企業研究など）を根拠として扱い、それを超える企業固有の事実は面接官側から断定・捏造しない。学生の理解が浅い箇所は「どう理解しているか」を問い直して確認する。',
+      '暗記した企業情報を復唱させるだけの確認にはしない。理解を自分の経験・価値観・志望理由へ接続できているかを見る。',
     ].join('\n'),
-    seedFocus: '興味のある業界・職種について、なぜそこに惹かれるのかを自分の経験と結びつけて話してもらえるような質問。',
+    seedFocus: '志望する企業・業界について、なぜそこに関心を持ったのかを自分の言葉で話してもらえるような質問。',
     reactionTone: '理解を示す落ち着いた一言。',
-    feedbackEmphasis: '志望動機が経験・価値観・就活軸と接続しているか、結論ファーストで説得力があるか、入社後の像が描けているか。',
+    feedbackEmphasis: '企業・業界・職種の理解が具体的か、志望理由が経験・価値観・就活軸と接続しているか、入社後の像が描けているか。',
   },
+  // ── 本番モード（新規面接で選べる 4 モードの 1 つ） ────────────────────
+  // 責務: 自己分析 + 企業理解を含む総合面接。実際の採用面接に最も近い。
+  // context source: 既存 context assembly（Career Context orchestrator）が purpose=interview_practice
+  //   で組み立てるものをそのまま使う。本モード専用の Data Spine は作らない。
   real: {
     type: 'real',
-    label: '本番面接',
+    label: '本番モード',
     emoji: '🏢',
-    description: '本番を想定し、観点を横断しながら総合的に質問します。',
+    description: '実際の採用面接に近い総合練習です。',
     interviewerRole: '企業の面接官',
-    recommendedData: '基本情報・活動整理・自己分析・ES',
+    recommendedData: '基本情報・活動整理・自己分析・企業研究',
     persona: [
       'あなたは新卒採用の本番面接を担当する企業の面接官です。最も本番に近い、自然で総合的な面接を行います。',
       '優しいが甘すぎない態度で、学生の良さも課題も自然な会話の中で引き出します。',
     ].join('\n'),
     guidance: [
-      '自己PR・ガクチカ・志望動機・価値観・将来像など複数の観点を、一つの観点に偏らず本番の面接のように横断的に確認する。',
+      '自己紹介・経験（ガクチカ/自己PR）・自己分析（強み/価値観）・志望動機・企業理解・職種理解・将来像を、一つの観点に偏らず本番の面接のように横断的に確認する。',
       '直前の回答を踏まえて自然に話題を移しながら、深掘り・話題転換・将来・就活軸との接続をバランスよく織り交ぜる。',
       '同じ観点ばかり連続で掘りすぎず、本番の面接らしいテンポと緊張感を保つ。',
     ].join('\n'),
@@ -148,19 +170,25 @@ const MODES: Record<CareerInterviewType, CareerInterviewModeConfig> = {
     reactionTone: '本番らしい自然で簡潔な一言。',
     feedbackEmphasis: '本番想定での総合力（具体性・一貫性・伝わりやすさ・志望理由との接続・結論ファースト）。',
   },
+  // ── 圧迫面接モード（新規面接で選べる 4 モードの 1 つ） ────────────────
+  // 責務: **本番モードと同じ context** に、厳しい interviewer behavior だけを重ねる。
+  //   ★ 圧迫専用の Data Spine / context 経路は作らない（差分は prompt policy のみ）。
   pressure: {
     type: 'pressure',
-    label: '圧迫面接',
+    label: '圧迫面接モード',
     emoji: '🧊',
-    description: '本番より少し厳しめに、回答の弱点や具体性を率直に突きます。',
+    description: '厳しい深掘り・反論への対応を練習します。',
     interviewerRole: '役員クラスの面接官',
-    recommendedData: '基本情報・活動整理・自己分析・ES',
+    recommendedData: '基本情報・活動整理・自己分析・企業研究',
     persona: [
-      'あなたは新卒採用の役員面接を担当する、厳しめの面接官です。本番より少しだけ圧をかけ、回答の弱点・抽象性・矛盾・盛りすぎを率直に指摘します。',
-      '話し方は短く鋭く、やや低圧的にしてよい。ただし人格否定・侮辱・嘲笑・脅しは絶対にしない（指摘は必ず回答内容にのみ向ける）。',
-      '厳しく問い詰めても、最後は学生が成長できるよう建設的に締めくくる意図を持つ。',
+      'あなたは新卒採用の役員面接を担当する、厳しめの面接官です。本番モードと同じ内容を扱いますが、追及の強さだけを一段上げます。',
+      '話し方は短く鋭く、やや低圧的にしてよい。プレッシャーの下で即答できるかを見ます。',
+      '★ 絶対禁止: 人格否定・侮辱・嘲笑・脅し・差別・ハラスメント・個人属性（性別/出身/家族/信条/容姿など）への不適切な質問。指摘は必ず回答内容にのみ向ける。',
+      '「厳しいが採用面接として成立する」範囲を絶対に超えない。厳しく問い詰めても、最後は学生が成長できるよう建設的に締めくくる意図を持つ。',
     ].join('\n'),
     guidance: [
+      '扱う観点は本番モードと同じ（自己紹介・経験・自己分析・志望動機・企業理解・職種理解）。違いは追及の強さだけ。',
+      '次の振る舞いを通常より強く行う: 曖昧な回答への追及／根拠の要求／具体例の要求／矛盾の指摘／「なぜ？」による連続深掘り／回答への反論／前提への疑問／説明不足への追及／厳しい follow-up。',
       '回答の抽象性・根拠の薄さ・矛盾・盛りすぎを見つけたら、率直に「それは具体的にどういうことか」「本当にそう言えるのか」と切り込む。',
       '一度に複数を問い詰めすぎず、最も弱い1点を鋭く突く。事実に基づかない決めつけはしない。',
       '厳しさは回答の質を上げるためであり、学生を萎縮させて終わらせることが目的ではない。',
@@ -172,11 +200,11 @@ const MODES: Record<CareerInterviewType, CareerInterviewModeConfig> = {
   },
 };
 
-// UI の並び順（setup 画面のカード順）。
+// 新規面接で選べるモード（setup 画面のカード順）。本番リリースではこの 4 種類だけ。
+//   ★ 'gakuchika' / 'self_pr' は新規面接 UI から削除済み（質問領域は自己分析モードへ統合）。
+//     MODES からは消さない＝過去ログの表示ラベルを保つため（read 互換）。
 export const CAREER_INTERVIEW_MODE_ORDER: CareerInterviewType[] = [
   'self_analysis',
-  'gakuchika',
-  'self_pr',
   'motivation',
   'real',
   'pressure',
@@ -215,29 +243,13 @@ export const CAREER_INTERVIEW_SELECTION_LABELS: Record<
   internship: 'インターン',
 };
 
-// 選考フェーズの表示ラベル。指定なし（undefined / 不正値）は空文字。
-export const CAREER_INTERVIEW_PHASE_LABELS: Record<
-  CareerInterviewPhase,
-  string
-> = {
-  first: '一次面接',
-  second: '二次面接',
-  final: '最終面接',
-  internship: 'インターン面接',
-  casual: 'カジュアル面談',
-};
+// ★ 選考フェーズ（interviewPhase）は面接の前段入力から廃止したため、面接側のラベル定義も削除した。
+//   Application Context（企業ページの「選考段階」）は自前の選択肢を持つため影響しない。
 
 export function interviewSelectionLabel(v: unknown): string {
   return typeof v === 'string' &&
     Object.prototype.hasOwnProperty.call(CAREER_INTERVIEW_SELECTION_LABELS, v)
     ? CAREER_INTERVIEW_SELECTION_LABELS[v as CareerInterviewSelectionType]
-    : '';
-}
-
-export function interviewPhaseLabel(v: unknown): string {
-  return typeof v === 'string' &&
-    Object.prototype.hasOwnProperty.call(CAREER_INTERVIEW_PHASE_LABELS, v)
-    ? CAREER_INTERVIEW_PHASE_LABELS[v as CareerInterviewPhase]
     : '';
 }
 
@@ -268,18 +280,27 @@ export function normalizeInterviewTarget(
   if (r.selectionType === 'main' || r.selectionType === 'internship') {
     target.selectionType = r.selectionType;
   }
-  if (
-    typeof r.interviewPhase === 'string' &&
-    Object.prototype.hasOwnProperty.call(
-      CAREER_INTERVIEW_PHASE_LABELS,
-      r.interviewPhase,
-    )
-  ) {
-    target.interviewPhase = r.interviewPhase as CareerInterviewPhase;
-  }
-  const companyMemo = trimStr(r.companyMemo);
-  if (companyMemo) target.companyMemo = companyMemo;
+  // ★ 旧データに interviewPhase / companyMemo が残っていても読み捨てる（両フィールドは廃止済み）。
+  //   unknown key を落とすだけなので、旧下書き・旧セッション・旧結果の読み込みは壊れない。
   const focusPoint = trimStr(r.focusPoint);
   if (focusPoint) target.focusPoint = focusPoint;
   return target;
+}
+
+// 新規面接を開始できる target か（必須 4 項目が揃っているか）。
+//   企業名 / 業界 / 職種 / 選考種別 が必須。特に対策したいこと（focusPoint）は任意。
+//   ★ companyId は必須にしない（free-text の企業名だけでも完走できる不変条件を維持）。
+//
+// 用途は「新規面接の開始 gate」に限る。過去ログ・進行中セッションの読み込みには使わない
+// （旧 target は industry / jobType / selectionType を持たないため、read へ適用すると壊れる）。
+export function isInterviewTargetComplete(
+  target: CareerInterviewTarget | null | undefined,
+): boolean {
+  if (!target) return false;
+  return (
+    trimStr(target.companyName) !== '' &&
+    trimStr(target.industry) !== '' &&
+    trimStr(target.jobType) !== '' &&
+    (target.selectionType === 'main' || target.selectionType === 'internship')
+  );
 }

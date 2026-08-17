@@ -10,20 +10,38 @@
  *   併せて「target 未入力時は operative prompt が byte 不変」「評価側は不変」「system と user の
  *   責務分担」を回帰ガードする。外部 AI 非実行・実データ非参照・DB/Supabase 非接続。
  *
+ *   ★ 面接 基本情報フォームの簡素化以降:
+ *     - 必須は 企業名 / 業界 / 職種 / 選考種別 の 4 項目（section F で静的に固定）。
+ *     - interviewPhase（選考フェーズ）/ companyMemo（企業メモ）は入力・保存・prompt から廃止。
+ *       旧データに残っていても normalize が読み捨て、prompt へ一切漏れないことを固定する。
+ *
+ *   ★ Company Data Spine A 層（Company Official Facts）接続以降（section H）:
+ *     - A 層（公式・出典付きの一次情報）と B 層（本人の企業研究メモ）が **別ブロック**で
+ *       面接 system prompt へ届くこと。
+ *     - 企業理解 / 本番 / 圧迫は同一 data source、自己分析モードは A 層を主 context にしないこと。
+ *     - A 層なし / B 層なし / 両方なし / companyId なしでも面接が成立すること（graceful degradation）。
+ *
  * 使い方: npx tsx scripts/career-interview-target-operative-qa.ts
  * 終了コード: 全 assert 成功 → 0 / 1 件でも失敗 → 1。
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   buildSeedUserPrompt,
   buildFollowupUserPrompt,
   buildFinalUserPrompt,
   buildFinalFeedbackInstruction,
+  buildInterviewBaseSystem,
 } from '@/app/api/career/interview/interviewPrompt';
-import { normalizeInterviewTarget } from '@/app/career/interview/interviewModes';
+import {
+  normalizeInterviewTarget,
+  isInterviewTargetComplete,
+} from '@/app/career/interview/interviewModes';
 import type { CareerInterviewTurn } from '@/types/careerInterview';
 
 // フィールドごとに固有センチネル（到達を出現回数で機械判定する）。
+// memo / phase は「廃止済み入力が prompt へ漏れないこと」を証明するための負のセンチネル。
 const S = {
   company: 'テスト株式会社',
   job: 'JOBSENT法人営業',
@@ -100,17 +118,21 @@ check(count(followC, S.job) === 1, 'followup: 職種能力を確認する指示�
 check(followC.includes('捏造しない'), 'followup: 企業固有基準の捏造禁止ガードが入る');
 check(count(seedC, S.focus) === 0, '未入力の focusPoint 指示は出ない');
 
-// ── ケースD: 全入力（system と user の責務分担 + memo 非復唱） ──
-console.log('\n# D. 全入力');
-const tD = normalizeInterviewTarget({
+// ── ケースD: 必須4項目すべて入力（+ 廃止フィールドを混ぜても漏れない） ──
+// ★ 旧データ相当として interviewPhase / companyMemo を意図的に混ぜる。normalize が読み捨て、
+//   seed / followup / system / 評価 instruction のどこにも出ないことを固定する。
+console.log('\n# D. 必須4項目すべて入力（廃止フィールド混入あり）');
+const RAW_D = {
   companyName: S.company,
   industry: 'IT・SaaS',
   jobType: S.job,
   selectionType: 'main',
+  // 廃止済み（旧 localStorage データに残っている想定）。
   interviewPhase: 'final',
   companyMemo: S.memo,
   focusPoint: S.focus,
-})!;
+};
+const tD = normalizeInterviewTarget(RAW_D)!;
 const seedD = buildSeedUserPrompt(MODE, tD);
 const followD = buildFollowupUserPrompt(TURNS, MODE, tD);
 check(count(seedD, S.focus) === 1 && count(seedD, S.job) === 1, 'seed: focus/job が user に到達');
@@ -118,14 +140,31 @@ check(
   count(followD, S.focus) === 1 && count(followD, S.job) === 1,
   'followup: focus/job が user に到達',
 );
-// companyMemo は system 側の責務。user operative prompt には原文を復唱しない（肥大化防止）。
+// 廃止済み入力は normalize の時点で落ちる（型・保存・prompt のいずれにも載せない）。
 check(
-  count(seedD, S.memo) === 0 && count(followD, S.memo) === 0,
-  'companyMemo 原文は operative prompt に復唱されない（system 側の責務）',
+  !('interviewPhase' in tD) && !('companyMemo' in tD),
+  'normalize: 旧 interviewPhase / companyMemo は target に載らない（読み捨て）',
 );
 check(
-  seedD.includes('企業固有の事実は断定しない') && followD.includes('外部事実として断定しない'),
-  'companyMemo は前提扱い・断定禁止で参照される',
+  tD.companyName === S.company &&
+    tD.industry === 'IT・SaaS' &&
+    tD.jobType === S.job &&
+    tD.selectionType === 'main',
+  'normalize: 必須4項目（企業名/業界/職種/選考種別）は保持される',
+);
+// system prompt（背景ブロック）にも廃止フィールドは一切出ない。
+const systemD = buildInterviewBaseSystem({ target: tD, interviewType: MODE });
+check(
+  count(systemD, S.memo) === 0 && !systemD.includes('選考フェーズ') && !systemD.includes('企業メモ'),
+  'system: companyMemo / 選考フェーズ のブロックが存在しない',
+);
+check(
+  count(seedD, S.memo) === 0 && count(followD, S.memo) === 0,
+  'operative: companyMemo 由来の文言が seed / followup に出ない',
+);
+check(
+  systemD.includes('事実は断定・捏造せず') && followD.includes('捏造しない'),
+  '企業事実の断定・捏造禁止ガードは維持されている（memo 廃止で失われていない）',
 );
 
 // ── ケースE: 長い面接履歴でも focusPoint 優先と復唱回避が維持 ──
@@ -148,6 +187,101 @@ check(
   feedbackInstr.includes('targetFeedback') && feedbackInstr.includes('weakPointsForThisTarget'),
   '評価 instruction は既存の targetFeedback スキーマを維持',
 );
+// 選考フェーズ廃止に伴い、phaseSpecificComment は新規面接では出力させない
+// （型・結果画面は過去ログ表示のためだけに残している）。
+check(
+  !feedbackInstr.includes('phaseSpecificComment') && count(feedbackInstr, S.memo) === 0,
+  '評価 instruction に phaseSpecificComment / companyMemo が出力指示として残っていない',
+);
+check(
+  feedbackInstr.includes('jobFitComment') && feedbackInstr.includes('selectionTypeComment'),
+  '評価 instruction は職種・選考種別の評価軸を維持（必須入力に対応）',
+);
+
+// ── ケースF: 基本情報フォームの必須契約（静的） ──
+// operative prompt では検証できない UI 側の必須化を、ソース上の不変条件として固定する。
+console.log('\n# F. 基本情報フォームの必須契約');
+const targetPage = readFileSync(
+  join(process.cwd(), 'app/career/interview/target/page.tsx'),
+  'utf8',
+);
+// ★ 実コードだけを見る（廃止理由を説明する行コメントを誤検知しないため。
+//   career-company-spine-qa の「field 宣言だけを見る」と同じ方針）。
+const targetPageCode = targetPage
+  .split('\n')
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n');
+// ★ 必須判定は共有純関数（isInterviewTargetComplete）へ一本化してある。
+//   UI（基本情報フォーム / 面接モード選択）と start route が同じ述語を使うため、
+//   「画面は通すのに API は弾く（またはその逆）」という食い違いが構造的に起きない。
+//   まず述語そのものを behavioral に固定し、次に各 boundary が実際に使っているかを見る。
+const FULL_TARGET = {
+  companyName: S.company,
+  industry: 'IT・SaaS',
+  jobType: S.job,
+  selectionType: 'main' as const,
+};
+check(
+  isInterviewTargetComplete(normalizeInterviewTarget(FULL_TARGET)) &&
+    !isInterviewTargetComplete(normalizeInterviewTarget({ ...FULL_TARGET, companyName: '' })) &&
+    !isInterviewTargetComplete(normalizeInterviewTarget({ ...FULL_TARGET, industry: '' })) &&
+    !isInterviewTargetComplete(normalizeInterviewTarget({ ...FULL_TARGET, jobType: '   ' })) &&
+    !isInterviewTargetComplete(
+      normalizeInterviewTarget({ ...FULL_TARGET, selectionType: undefined }),
+    ) &&
+    !isInterviewTargetComplete(null),
+  'F-1 必須4項目（企業名/業界/職種/選考種別）が欠けると面接を開始できない',
+);
+check(
+  /canProceed\s*=\s*isInterviewTargetComplete\(/.test(targetPageCode),
+  'F-1b 基本情報フォームの「次へ」が同じ必須判定を使う',
+);
+check(
+  /useState<CareerInterviewSelectionType \| null>\(null\)/.test(targetPage),
+  'F-2 選考種別は初期選択を持たない（ユーザーが明示的に選ぶ）',
+);
+check(
+  !targetPageCode.includes('指定なし'),
+  'F-3 選考種別に「指定なし」の選択肢が存在しない',
+);
+check(
+  !targetPageCode.includes('選考フェーズ') && !targetPageCode.includes('interviewPhase'),
+  'F-4 選考フェーズ UI / state が存在しない',
+);
+check(
+  !targetPageCode.includes('companyMemo') &&
+    !targetPageCode.includes('企業について分かっていること'),
+  'F-5 企業メモ UI / state が存在しない（企業情報は企業分析 / Company Data Spine の領分）',
+);
+check(
+  targetPageCode.includes('loadCompanyApplicationDefaults'),
+  'F-6 Application Context の初期値供給は維持されている',
+);
+// UI の disabled だけに頼らず、新規面接の開始 boundary（start route）でも必須を検証する。
+// ★ turn / complete には課さない（既に始まった面接・旧セッションを完走させるため）。
+const startRoute = readFileSync(
+  join(process.cwd(), 'app/api/career/interview/start/route.ts'),
+  'utf8',
+);
+check(
+  /if\s*\(!isInterviewTargetComplete\(target\)\)/.test(startRoute) &&
+    startRoute.includes('status: 400'),
+  'F-7 start route が不完全な target を 400 で弾く（validation boundary への反映）',
+);
+const turnRoute = readFileSync(
+  join(process.cwd(), 'app/api/career/interview/turn/route.ts'),
+  'utf8',
+);
+const completeRoute = readFileSync(
+  join(process.cwd(), 'app/api/career/interview/complete/route.ts'),
+  'utf8',
+);
+check(
+  !turnRoute.includes('isInterviewTargetComplete') &&
+    !completeRoute.includes('isInterviewTargetComplete'),
+  'F-8 turn / complete には必須検証を課さない（進行中・旧セッションの完走互換）',
+);
+
 
 console.log('');
 console.log(fails === 0 ? 'ALL_PASS' : `FAIL: ${fails}`);

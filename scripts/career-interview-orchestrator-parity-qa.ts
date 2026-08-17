@@ -103,13 +103,13 @@ const companyResearch = (tag: string): InterviewCompanyResearchContext =>
     verifiedResearchTextPreview: `本人記述抜粋${tag}`,
   });
 
+// target の必須 4 項目（企業名 / 業界 / 職種 / 選考種別）+ 任意の focusPoint。
+// ★ interviewPhase / companyMemo は面接フローから廃止したため fixture からも除去した。
 const target = (tag: string): CareerInterviewTarget => ({
   companyName: `志望企業${tag}`,
   industry: 'IT・通信',
   jobType: 'エンジニア',
   selectionType: 'main',
-  interviewPhase: 'final',
-  companyMemo: `企業メモ${tag}`,
   focusPoint: `対策したい点${tag}`,
 });
 

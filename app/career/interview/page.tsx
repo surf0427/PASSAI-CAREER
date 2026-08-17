@@ -53,7 +53,7 @@ export default function CareerInterviewEntryPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
         title="面接練習（AI面接）"
-        description="新卒就活の面接官AIと、質問→回答→深掘りのターン形式で練習できます。"
+        description="新卒就活の面接官AIと、質問→回答→深掘りのターン形式で音声練習できます。"
       />
 
       <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
@@ -87,7 +87,7 @@ export default function CareerInterviewEntryPage() {
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">次におすすめ</p>
         <p className="text-sm font-bold text-slate-800 mb-1">面接練習を始める</p>
         <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          まず受ける企業・選考を入力すると、その企業に合わせて面接官AIが質問します（企業名だけでもOK）。
+          受ける企業・業界・職種・選考種別を入力し、面接モードを選ぶと音声面接が始まります。
         </p>
         <Link
           href="/career/interview/target"
@@ -100,7 +100,7 @@ export default function CareerInterviewEntryPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         <ModeCard
           title="面接を始める"
-          description="受ける企業・選考を入れて、面接官AIとの練習を始めます。"
+          description="受ける企業・選考を入れて、面接官AIとの音声練習を始めます。"
           href="/career/interview/target"
         />
         <ModeCard

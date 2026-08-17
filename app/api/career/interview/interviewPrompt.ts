@@ -68,13 +68,25 @@ const CAREER_DEEP_DIVE_AXES = [
 ];
 
 // 受験先・選考の想定（target）を面接官 system prompt 用のブロックに整形する。
-// companyName が無ければ空文字（従来どおり企業を特定しない面接）。
-// 企業の事実は断定させず、学生メモ（companyMemo）を最優先根拠にする方針を明示する。
-function buildTargetBlock(target: CareerInterviewTarget | null | undefined): string {
+// companyName が無ければ空文字（＝旧 target / 企業を特定しない過去セッションでは従来どおり）。
+// 企業の事実は断定させない（企業情報は企業分析 / Company Data Spine 側の領分。
+// 面接側でユーザーに企業メモを再入力させる設計は廃止した）。
+//
+// ★ モード差の担保（自己分析モードだけ target の使い方が違う）:
+//   自己分析モードは「自分自身を説明する力」を鍛える場なので、企業名が与えられていても
+//   志望動機・企業理解の深掘りを増やさない。target は背景情報としてのみ渡す。
+//   企業理解 / 本番 / 圧迫は従来どおり志望動機・企業理解・職種理解の深掘りを増やす。
+function buildTargetBlock(
+  target: CareerInterviewTarget | null | undefined,
+  interviewType?: CareerInterviewType,
+): string {
   if (!target || !target.companyName) return '';
+  const selfOnly = interviewType === 'self_analysis';
   const lines: string[] = [
     '# 今回の受験先・選考の想定',
-    `この面接は「${target.companyName}」を受ける想定で行ってください。志望動機・企業理解・職種理解に関する深掘りを自然に増やしてください。`,
+    selfOnly
+      ? `この面接は「${target.companyName}」を受ける想定です。ただし今回は自己分析モードのため、志望動機・企業理解の確認は主題にせず、この情報は背景としてのみ扱ってください（学生自身の経験・強み・価値観の深掘りに集中する）。`
+      : `この面接は「${target.companyName}」を受ける想定で行ってください。志望動機・企業理解・職種理解に関する深掘りを自然に増やしてください。`,
     `ただし「${target.companyName}」の事業内容・待遇・選考フロー・社風などの事実は断定・捏造せず、学生自身の理解と理由を問う形にしてください。`,
   ];
   if (target.industry) lines.push(`- 志望業界: ${target.industry}`);
@@ -91,42 +103,6 @@ function buildTargetBlock(target: CareerInterviewTarget | null | undefined): str
     );
   }
 
-  switch (target.interviewPhase) {
-    case 'first':
-      lines.push(
-        '- 選考フェーズ: 一次面接。人柄・基本的なガクチカ・自己PR・志望動機の土台・コミュニケーションの自然さを中心に確認してください。',
-      );
-      break;
-    case 'second':
-      lines.push(
-        '- 選考フェーズ: 二次面接。経験の深掘り・企業や職種への理解・価値観との一致・強みの再現性を中心に確認してください。',
-      );
-      break;
-    case 'final':
-      lines.push(
-        '- 選考フェーズ: 最終面接。志望度・覚悟・入社後の展望・他社比較・長期的なキャリア観を中心に確認してください。',
-      );
-      break;
-    case 'internship':
-      lines.push(
-        '- 選考フェーズ: インターン面接。参加目的・学習意欲・業界理解・主体性・インターンで得たいことを中心に確認してください。',
-      );
-      break;
-    case 'casual':
-      lines.push(
-        '- 選考フェーズ: カジュアル面談。形式ばりすぎず自然な会話を意識し、企業理解の確認・相互理解・学生からの逆質問も歓迎する姿勢で進めてください。',
-      );
-      break;
-    default:
-      break;
-  }
-
-  if (target.companyMemo) {
-    lines.push(
-      `# 学生が把握している企業情報（最優先で尊重する）\n${target.companyMemo}`,
-      'この企業メモは学生本人が調べた内容です。企業に関する前提はこのメモを最優先の根拠にし、メモを超える事実は断定しないでください。',
-    );
-  }
   if (target.focusPoint) {
     lines.push(
       `# 学生が特に対策したいこと\n${target.focusPoint}`,
@@ -166,9 +142,10 @@ export type CareerInterviewContextInput = {
   // 任意の参考データ（存在しなくても落ちない／プロンプトに出さないだけ）。
   matching?: CareerMatchEngineResult | null;
   consultationInsights?: string[] | null;
-  // 保存済み企業研究（選択時のみ）。ユーザー本人の企業研究を根拠に深掘りする。
+  // 保存済み企業研究（Company Data Spine B 層 = User Private Evidence）。
+  //   ★ ユーザー本人の解釈・メモ。「あなたの記述では」と扱う（A 層の公式事実とは別物）。
   companyResearch?: InterviewCompanyResearchContext | null;
-  // 前段で入力した受験先・選考の想定（任意）。企業・選考フェーズに合わせて深掘りする。
+  // 前段で入力した受験先・選考の想定。企業・業界・職種・選考種別に合わせて深掘りする。
   target?: CareerInterviewTarget | null;
   interviewType?: CareerInterviewType;
   userInput?: string;
@@ -200,8 +177,8 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
   });
 
   const config = getInterviewModeConfig(input.interviewType);
-  // 前段で入力した受験先・選考の想定（任意）。企業名があるときのみ出す。
-  const targetBlock = buildTargetBlock(input.target);
+  // 前段で入力した受験先・選考の想定。企業名があるときのみ出す（旧セッション互換で欠損可）。
+  const targetBlock = buildTargetBlock(input.target, input.interviewType);
 
   return [
     buildPersonaBlock(input.interviewType),
@@ -238,7 +215,7 @@ function clipForPrompt(s: string, max = 120): string {
 
 // target（受験先・選考の想定）を初回質問（seed）の operative な入口選択指示に変換する。
 // companyName が無ければ空文字（＝従来どおり byte 不変）。「答えやすい入口」という性質は保つ。
-// 反映優先度は focusPoint → jobType → companyMemo。未入力項目は指示に含めない。
+// 反映優先度は focusPoint → jobType。未入力項目は指示に含めない。
 function buildSeedTargetHook(
   target: CareerInterviewTarget | null | undefined,
 ): string {
@@ -254,11 +231,6 @@ function buildSeedTargetHook(
   if (target.jobType) {
     lines.push(
       `- 志望職種は「${target.jobType}」。この職種で求められる力を後の深掘りで確認しやすいエピソードに触れられる入口を選ぶ。`,
-    );
-  }
-  if (target.companyMemo) {
-    lines.push(
-      '- 学生が入力した企業想定に関連する経験を話しやすい入口にする（企業固有の事実は断定しない）。',
     );
   }
   lines.push('- ただし target の語句をそのまま復唱せず、自然で答えやすい質問文にする。');
@@ -283,11 +255,6 @@ function buildFollowupTargetHook(
   if (target.jobType) {
     lines.push(
       `- 志望職種「${target.jobType}」で必要になりそうな力（課題把握・関係構築・提案の組み立て・巻き込み・目標への行動・再現性などのうち回答文脈に合うもの）が回答から確認できていなければ、それを確認する深掘りを候補に含める。職種名だけから企業固有の採用基準は捏造しない。`,
-    );
-  }
-  if (target.companyMemo) {
-    lines.push(
-      '- 学生が入力した企業想定は面接の前提として扱い、志望理由と経験の接続・回答の根拠を確認する質問を候補に含める（その想定を外部事実として断定しない）。',
     );
   }
   lines.push(
@@ -354,7 +321,7 @@ export function buildFollowupUserPrompt(
 
 // target（受験先・選考の想定）に応じた最終フィードバックの評価観点を組み立てる。
 // companyName が無ければ空文字（従来どおりの汎用フィードバック）。
-// 企業の事実は断定させず、companyMemo を最優先根拠にする方針を明示する。
+// 企業の事実は断定させない（企業情報は企業分析 / Company Data Spine 側の領分）。
 function buildTargetFeedbackGuidance(
   target: CareerInterviewTarget | null | undefined,
 ): string {
@@ -364,15 +331,9 @@ function buildTargetFeedbackGuidance(
     `この面接は「${target.companyName}」を受ける想定です。上記の総合評価に加え、この企業・選考に向けた実戦的なフィードバックを targetFeedback にまとめてください。`,
     `- companyFitComment: 「${target.companyName}」を受ける面接として、回答の説得力を評価し、志望動機・企業理解・職種理解の不足を具体的に指摘する。`,
   ];
-  if (target.companyMemo) {
-    lines.push(
-      `  企業理解の根拠は、学生の企業メモ（${target.companyMemo}）を最優先にする。メモにない事実は断定せず「入力情報上は」「企業メモを踏まえると」のように表現する。`,
-    );
-  } else {
-    lines.push(
-      '  企業メモは未入力です。企業固有の事実は断定せず、一般的な面接観点として説得力・志望動機の接続を評価する。',
-    );
-  }
+  lines.push(
+    '  企業固有の事実は断定せず、一般的な面接観点として説得力・志望動機の接続を評価する。',
+  );
   if (target.jobType) {
     lines.push(
       `- jobFitComment: 「${target.jobType}」で求められそうな再現性・行動特性・強みが回答から伝わるかを評価し、職種理解が浅ければ指摘し、回答内の経験がその職種でどう活きるかを補強する。`,
@@ -391,43 +352,12 @@ function buildTargetFeedbackGuidance(
     );
   }
 
-  switch (target.interviewPhase) {
-    case 'first':
-      lines.push(
-        '- phaseSpecificComment: 一次面接として、人柄が伝わるか・基本的なガクチカ/自己PRが自然か・コミュニケーションが分かりやすいか・志望動機の土台があるかを評価する。',
-      );
-      break;
-    case 'second':
-      lines.push(
-        '- phaseSpecificComment: 二次面接として、経験の深掘りに耐えられるか・企業/職種理解があるか・価値観と企業の接続があるか・入社後の再現性が見えるかを評価する。',
-      );
-      break;
-    case 'final':
-      lines.push(
-        '- phaseSpecificComment: 最終面接として、志望度が十分か・覚悟が伝わるか・入社後の展望があるか・他社比較に耐えられるか・長期的なキャリア観が自然かを評価する。',
-      );
-      break;
-    case 'internship':
-      lines.push(
-        '- phaseSpecificComment: インターン面接として、参加目的が明確か・学習意欲が伝わるか・業界理解があるか・主体性があるか・インターンで得たいことが具体的かを評価する。',
-      );
-      break;
-    case 'casual':
-      lines.push(
-        '- phaseSpecificComment: カジュアル面談として、自然な会話として成立しているか・一方的なアピールになりすぎていないか・企業理解を深める姿勢があるか・逆質問につながる観点があるか・相互理解の場として適切かを評価する。',
-      );
-      break;
-    default:
-      lines.push(
-        '- phaseSpecificComment: 選考フェーズの指定はありません。一般的な面接として、この企業・選考に向けた評価を述べる。',
-      );
-      break;
-  }
-
+  // ★ 選考フェーズ（interviewPhase）入力は廃止。phaseSpecificComment も出力させない
+  //   （型・結果画面は過去ログ表示のためだけに残している）。
   lines.push(
     '- weakPointsForThisTarget: この企業・選考で特に落ちやすい弱点を具体的に挙げる。',
-    '- nextPracticeQuestions: この企業・選考・フェーズで次に練習すべき想定質問を挙げる。',
-    '- suggestedReverseQuestions: 学生から企業への逆質問案を挙げる（企業メモ・職種に紐づけ、特にカジュアル面談・最終面接・インターンで有効なもの）。',
+    '- nextPracticeQuestions: この企業・選考で次に練習すべき想定質問を挙げる。',
+    '- suggestedReverseQuestions: 学生から企業への逆質問案を挙げる（志望職種に紐づけ、特に最終面接・インターンで有効なもの）。',
   );
   if (target.focusPoint) {
     lines.push(
@@ -493,12 +423,11 @@ export function buildFinalFeedbackInstruction(
     lines.push(
       '  "targetFeedback": {              // 受験先・選考の想定に向けた追加フィードバック',
       '    "companyFitComment": string,       // この企業向けの説得力・不足点（企業事実は断定しない）',
-      '    "phaseSpecificComment": string,    // 選考フェーズ別の評価',
       '    "jobFitComment": string,           // 職種適性・職種理解の評価（職種指定がなければ空文字）',
       '    "selectionTypeComment": string,    // 本選考/インターン別の評価（種別指定がなければ空文字）',
       '    "weakPointsForThisTarget": string[],   // この企業・選考で落ちやすい弱点',
       '    "nextPracticeQuestions": string[],     // 次に練習すべき想定質問',
-      '    "suggestedReverseQuestions": string[]  // 逆質問案（企業メモ・職種に紐づける）',
+      '    "suggestedReverseQuestions": string[]  // 逆質問案（志望職種に紐づける）',
       '  }',
     );
   }

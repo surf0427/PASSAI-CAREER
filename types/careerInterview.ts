@@ -13,16 +13,22 @@ export type CareerInterviewTurn = {
 };
 
 // 入力モード（テキスト入力 / 音声入力）。音声は Web Speech API（ブラウザ内）で扱う。
+// ★ 本番 UX ではユーザーに方式を選ばせない。新規セッションは **常に 'voice'**。
+//   'text' は過去ログ（旧セッション / 旧結果）の read 互換のためだけに残す語彙で、
+//   新規面接フローからは書き込まれない。
 export type CareerInterviewMode = 'text' | 'voice';
 
 // 面接の種類（新卒就活）。受験版の interviewType（self_analysis/statement/essay/free/pressure）に
 // 相当するが、概念を就活へ全面的に置き換える。
-//   - self_analysis : 自己分析深掘り（価値観・強み・原体験）
-//   - gakuchika     : ガクチカ深掘り（学生時代に力を入れたこと）
-//   - self_pr       : 自己PR深掘り（強み・再現性）
-//   - motivation    : 志望動機（業界・企業理解・キャリア軸との接続）
-//   - real          : 本番想定面接（総合・横断）
-//   - pressure      : 圧迫面接（少し厳しめ。人格否定はしない）
+// ★ 新規面接で選べるのは 4 モードだけ（self_analysis / motivation / real / pressure）。
+//   gakuchika / self_pr は新規面接 UI から削除済み（質問領域は自己分析モードへ統合）。
+//   型と mode config は **過去ログの read 互換のためだけに残す**（消すと旧ログの表示が壊れる）。
+//   - self_analysis : 自己分析モード（自分の経験・強み・価値観）
+//   - motivation    : 企業理解モード（企業・業界・職種の理解と志望理由）※ key は旧ログ互換で維持
+//   - real          : 本番モード（自己分析 + 企業理解の総合面接）
+//   - pressure      : 圧迫面接モード（本番相当 context + 厳しい面接官 behavior）
+//   - gakuchika     : 【旧】ガクチカ深掘り（read 互換のみ）
+//   - self_pr       : 【旧】自己PR深掘り（read 互換のみ）
 export type CareerInterviewType =
   | 'self_analysis'
   | 'gakuchika'
@@ -44,10 +50,14 @@ export type CareerInterviewTurnResult = {
 // Supabase / DB には接続しない（欠損しても面接は成立する後方互換設計）。
 
 // 選考種別。ES 側（CareerEsSelectionType）と同じ語彙に揃える（'main' | 'internship'）。
-// 未指定（undefined）は「指定なし」を表す。
+// 面接の前段入力では **必須**（UI が未選択のまま次へ進ませない）。
+// ただし型としては optional のまま（旧セッション / 旧結果には無いため read 互換を壊さない）。
 export type CareerInterviewSelectionType = 'main' | 'internship';
 
-// 選考フェーズ。未指定（undefined）は「指定なし」を表す。
+// 選考フェーズ。
+// ★ 面接の前段入力（CareerInterviewTarget）からは削除済み。現在は Application Context
+//   （types/careerCompanyApplication.ts の selectionPhase）だけがこの語彙を使う。
+//   新しい似た enum を増やさないため、共有語彙としてここに残す。
 //   - 'first'      : 一次面接
 //   - 'second'     : 二次面接
 //   - 'final'      : 最終面接
@@ -60,7 +70,9 @@ export type CareerInterviewPhase =
   | 'internship'
   | 'casual';
 
-// 面接の前段で入力する受験先・選考情報。companyName のみ必須、他は任意。
+// 面接の前段で入力する受験先・選考情報。
+// UI 上の必須は companyName / industry / jobType / selectionType の 4 項目。
+// 型としては companyName 以外を optional に保つ（旧下書き・旧セッション・旧結果の read 互換）。
 export type CareerInterviewTarget = {
   // 志望企業名（必須）。★ Company Identity 導入後も **required のまま維持する**。
   companyName: string;
@@ -69,16 +81,17 @@ export type CareerInterviewTarget = {
   //   - ★ 不変条件: companyId があるなら companyName も必ず非空
   //     （normalizeInterviewTarget が companyName 空を null に倒すため構造的に担保される）。
   companyId?: string;
-  // 志望業界（任意）。
+  // 志望業界（UI 必須 / 型は optional＝旧データ互換）。
   industry?: string;
-  // 志望職種（任意）。
+  // 志望職種（UI 必須 / 型は optional＝旧データ互換）。
   jobType?: string;
-  // 選考種別（任意）。未指定は「指定なし」。
+  // 選考種別（UI 必須 / 型は optional＝旧データ互換）。
   selectionType?: CareerInterviewSelectionType;
-  // 選考フェーズ（任意）。未指定は「指定なし」。
-  interviewPhase?: CareerInterviewPhase;
-  // 企業について分かっていること・メモ（任意。AIの企業情報は本メモを最優先根拠にする）。
-  companyMemo?: string;
+  // ★ interviewPhase（選考フェーズ）と companyMemo（企業メモ）は廃止。
+  //   - 選考フェーズ: 入力価値が低く、Application Context 側の selectionPhase と重複していた。
+  //   - 企業メモ: 企業情報は企業分析 / Company Data Spine 側で管理する設計のため、
+  //     面接側で再入力させると情報が二重管理になる。
+  //   旧 localStorage データに残っていても normalizeInterviewTarget が読み捨てる（落ちない）。
   // 特に対策したいこと（任意）。
   focusPoint?: string;
 };
@@ -88,7 +101,9 @@ export type CareerInterviewTarget = {
 export type CareerInterviewTargetFeedback = {
   // この企業向けに見たときの説得力・不足点（志望動機/企業理解/職種理解）。企業事実は断定しない。
   companyFitComment?: string;
-  // 選考フェーズ（一次/二次/最終/インターン/カジュアル）別の評価。
+  // 選考フェーズ別の評価（★ 廃止済み・read 互換のためだけに残す）。
+  //   選考フェーズ入力の廃止に伴い、新しい面接では AI に出力させない。
+  //   過去ログには残っているため、結果画面は値があるときだけ表示する。
   phaseSpecificComment?: string;
   // 職種適性・職種理解に関する評価（その職種で活きる再現性・行動特性が伝わるか）。
   jobFitComment?: string;
@@ -98,7 +113,7 @@ export type CareerInterviewTargetFeedback = {
   weakPointsForThisTarget?: string[];
   // 次に練習すべき想定質問（この企業・選考・フェーズ向け）。
   nextPracticeQuestions?: string[];
-  // 逆質問案（特にカジュアル面談・最終面接・インターンで有効。企業メモ/職種に紐づける）。
+  // 逆質問案（特に最終面接・インターンで有効。志望職種に紐づける）。
   suggestedReverseQuestions?: string[];
 };
 
