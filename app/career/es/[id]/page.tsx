@@ -35,6 +35,8 @@ import {
 } from '../esStorage';
 import { EsReviewPanel } from '../components/EsReviewPanel';
 import { buildEsReviewRequestBody } from '@/lib/careerEs/reviewRequest';
+// Data Spine connection: 添削 AI に本人の自己分析・活動整理・就活軸を届ける（読めなければ空）。
+import { buildEsReviewContextPayload } from '../reviewContextSource';
 import { esSelectionTypeLabel } from '@/lib/careerEs/esSettings';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import { upsertCareerEsLogsToSupabase } from '@/lib/supabase/careerEs';
@@ -125,12 +127,14 @@ export default function CareerEsEditorPage() {
       const res = await fetch('/api/career/es-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // draft の初回添削と同じ builder で ES 設定 6 項目を送る。
+        // draft の初回添削と同じ builder で ES 設定 + companyId + User Data Spine を送る。
         // 旧ログ（項目欠損 / 旧「指定なし」）は '' / null として送られ、route 側で未指定扱いになる。
         body: JSON.stringify(
           buildEsReviewRequestBody(
             { ...log, companyResearchContext: log.companyResearchSnapshot },
             answer,
+            // User Data Spine（自己分析 / 活動整理 / 就活軸 / 基本情報）。読めなければ空 payload。
+            buildEsReviewContextPayload(),
           ),
         ),
       });

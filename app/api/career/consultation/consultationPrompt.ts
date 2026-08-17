@@ -177,6 +177,8 @@ export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInp
   });
   // P3-C/P15-D: base system prompt を Context Orchestrator（purpose=consultation）経由で取得し、
   //   Personal Memory 由来の横断 context も orchestrated.crossFeatureContext として決定的に受け取る。
+  // ★ Personal Memory は渡さない: consultation の crossFeature は各機能の **履歴**を
+  //   既に描画しており、Memory の要約は全面的に重複する（重複回避の既存不変条件）。
   const orchestrated = buildCareerContextForPurpose('consultation', context, {
     consultation: input.crossFeature,
   });

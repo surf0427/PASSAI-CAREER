@@ -105,7 +105,9 @@ const PURPOSE_MANIFEST: PurposeClaim[] = [
   { purpose: 'matching', classification: 'HYBRID', callsites: ['app/api/career/matching/route.ts'] },
   { purpose: 'self_analysis', classification: 'FULL_SERVER', callsites: ['lib/careerSelfAnalysis/summaryPrompt.ts'] },
   { purpose: 'self_analysis_deep_dive', classification: 'FULL_SERVER', callsites: ['app/api/career/self-analysis/deepDivePrompt.ts'] },
-  { purpose: 'es_review', classification: 'DORMANT_INTENTIONAL', callsites: [] },
+  // Data Spine connection: ES 添削を Orchestrator へ接続した（route が base + 公式情報を結合）。
+  //   es/deep・es/organize は「材料未選択時のみ」es_review policy を借りて背景 context を組む。
+  { purpose: 'es_review', classification: 'FULL_SERVER', callsites: ['app/api/career/es-review/route.ts', 'app/api/career/es/resolveFallbackContext.ts'] },
   { purpose: 'interview_complete', classification: 'DORMANT_INTENTIONAL', callsites: [] },
   { purpose: 'gd_feedback', classification: 'DORMANT_INTENTIONAL', callsites: [] },
   { purpose: 'mypage_summary', classification: 'DORMANT_INTENTIONAL', callsites: [] },
@@ -120,6 +122,8 @@ const PURPOSE_SOURCES: Partial<Record<CareerContextPurpose, readonly CareerSourc
   presentation_feedback: ['profile', 'activity', 'values', 'self_analysis', 'es', 'interview', 'matching', 'consultation'],
   self_analysis: ['profile', 'activity', 'values', 'self_analysis'],
   self_analysis_deep_dive: ['profile', 'activity', 'values', 'self_analysis'],
+  // ES 添削: base 3 + 自己分析（横断ログは読まない）。
+  es_review: ['profile', 'activity', 'values', 'self_analysis'],
 };
 
 // ─────────────────────────────────────────────────────────────────

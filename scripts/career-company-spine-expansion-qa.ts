@@ -785,9 +785,23 @@ async function main(): Promise<void> {
     check('X-9a renderer は本人メモ型を import しない', !renderer.includes('careerCompanyResearch'));
     check('X-9b renderer は AI 派生（derived）を扱わない', !renderer.includes('CompanyDerivedRecord'));
     check('X-9c renderer は Layer 5 を import しない', !renderer.includes('careerCompanyKnowledge'));
+    // ★ 元の意図（= purpose へ勝手に流し込まない）はそのまま維持する。
+    //   ES / プレゼンは Data Spine connection で **意図的に** opt-in したため、
+    //   「未 opt-in の purpose は空」+「opt-in した purpose は専用 usage note を伴う」の
+    //   2 点で「事故で流れ込んでいないこと」を固定する（allowlist の意味を弱めない）。
     check(
-      'X-9d ES purpose は allowlist 外のまま（勝手に流し込まない）',
-      renderCompanyOfficialForPurpose('es_review', { status: 'ready', data: fullContext() }).text === '',
+      'X-9d 未 opt-in purpose は allowlist 外のまま（勝手に流し込まない）',
+      renderCompanyOfficialForPurpose('gd_feedback', { status: 'ready', data: fullContext() })
+        .text === '' &&
+        renderCompanyOfficialForPurpose('matching', { status: 'ready', data: fullContext() })
+          .text === '',
+    );
+    check(
+      'X-9d2 ES purpose は **意図的な opt-in**（ES 専用 usage note を伴う）',
+      renderCompanyOfficialForPurpose('es_review', {
+        status: 'ready',
+        data: fullContext(),
+      }).text.includes('代筆・創作しないでください'),
     );
 
     const runtime = read('lib/careerCompanyPrefetch/runtime.server.ts');

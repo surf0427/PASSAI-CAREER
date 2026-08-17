@@ -17,6 +17,7 @@ import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
   CareerPresentationConfig,
   CareerPresentationQaTurn,
+  CareerPresentationType,
 } from '@/types/careerPresentation';
 import { anthropic, extractJson } from '@/lib/ai';
 import {
@@ -27,11 +28,13 @@ import {
 import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_QA_MAX_TURNS,
-  buildPresentationBaseSystem,
+  buildPresentationSystemParts,
   buildQaUserPrompt,
   countQaAnswers,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
+// Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
+import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
 
 export const maxDuration = 80;
 
@@ -73,6 +76,8 @@ export async function POST(req: Request) {
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
     config?: CareerPresentationConfig | null;
+    // 旧セッション互換（新規フローは常に 'real'）。企業公式情報の出し分けに使う。
+    presentationType?: CareerPresentationType;
     theme?: unknown;
     transcript?: unknown;
     turns?: unknown;
@@ -98,9 +103,16 @@ export async function POST(req: Request) {
   const config = b.config ?? null;
   const theme = str(b.theme);
 
+  // Company Data Spine A 層（公式情報）。既存 read 経路を読むだけで fetch / crawl は起動しない。
+  //   ★ context resolver と互いに独立なので **並列**に走らせる（応答時間を増やさない）。
+  const companyOfficialPromise = resolvePresentationCompanyOfficial(config, b.presentationType);
+
   // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
-  const ctx = await resolvePresentationContextInputs(b, req);
-  const system = buildPresentationBaseSystem({
+  const [companyOfficial, ctx] = await Promise.all([
+    companyOfficialPromise,
+    resolvePresentationContextInputs(b, req),
+  ]);
+  const { system } = buildPresentationSystemParts({
     profile: ctx.profile,
     activity: ctx.activity,
     values: ctx.values,
@@ -111,6 +123,8 @@ export async function POST(req: Request) {
     consultationInsights: ctx.consultationInsights,
     config,
     theme,
+    presentationType: b.presentationType,
+    companyOfficial,
   });
 
   const userPrompt = buildQaUserPrompt({ theme, transcript, turns, config });

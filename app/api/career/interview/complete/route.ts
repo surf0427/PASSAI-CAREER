@@ -39,6 +39,8 @@ import {
 import { resolveInterviewContextInputs } from '../resolveContextInputs';
 // Company Data Spine A 層（公式情報）の read。未取得 / flag OFF / 企業未解決なら null（面接は成立）。
 import { resolveInterviewCompanyOfficial } from '../resolveCompanyOfficial';
+// Data Spine Layer 2（Personal Memory）。flag OFF / gate deny では I/O ゼロで空配列（従来 prompt）。
+import { resolveInterviewPersonalMemory } from '../resolvePersonalMemory';
 
 export const maxDuration = 80;
 
@@ -151,6 +153,11 @@ export async function POST(req: Request) {
   // Company Data Spine A 層（公式情報）。評価も start / turn と同じ企業文脈の上で行う。
   //   fetch / crawl は起動しない（既存 snapshot の read のみ）。
   const companyOfficial = await resolveInterviewCompanyOfficial(target, interviewType);
+  // Personal Memory（Layer 2）。bridge と重複する section は resolver 側で dedupe 済み。
+  const personalMemory = await resolveInterviewPersonalMemory(
+    { selfAnalysis: ctx.selfAnalysis, es: ctx.es },
+    req,
+  );
   const system = [
     buildInterviewBaseSystem({
       profile: ctx.profile,
@@ -162,6 +169,7 @@ export async function POST(req: Request) {
       consultationInsights: ctx.consultationInsights,
       companyResearch,
       companyOfficial,
+      personalMemory,
       target,
       interviewType,
       userInput: typeof b.userInput === 'string' ? b.userInput : '',

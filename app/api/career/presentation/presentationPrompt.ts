@@ -25,6 +25,7 @@ import type {
   CareerPresentationQaTurn,
   CareerPresentationConfig,
 } from '@/types/careerPresentation';
+import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 import {
   CAREER_PRESENTATION_PROMPT_BASE,
   getSelectionTypeLabel,
@@ -60,6 +61,13 @@ export type CareerPresentationPromptContext = {
   config?: CareerPresentationConfig | null;
   // 後方互換: 旧 presentationType（新規フローでは未使用でも良い）。
   presentationType?: CareerPresentationType;
+  /**
+   * Company Data Spine A 層（公式情報）ブロックが実際に prompt へ出るか。
+   *
+   * ★ true のときだけ「企業の事実を断定してよい範囲」を **公式情報ブロック内に限定**して開放する。
+   *   false（既定）では従来どおり企業固有の事実を全面的に断定禁止＝出力 byte 完全互換。
+   */
+  hasCompanyOfficial?: boolean;
 };
 
 // お題・企業/業界/職種・選考種別・評価観点・補足メモを条件ブロックに整形する。
@@ -138,11 +146,35 @@ export type CareerPresentationContextInput = {
   theme?: string;
   // 後方互換のため残す（新規フローでは未使用）。
   presentationType?: CareerPresentationType;
+  // Company Data Spine A 層（Company Official Facts）の read 結果。
+  //   ★ 外部・公式の一次情報（出典 URL + 取得日付き）。route が server 側で read して渡す
+  //     （本 builder は純関数のまま。I/O は持たない）。
+  //   未指定 / unavailable / disabled / 企業未指定のときは renderer が空 block を返し、
+  //   prompt は従来と byte 互換。
+  companyOfficial?: CompanyOfficialReadResult | null;
   userInput?: string;
 };
 
-// プレゼンAIの土台 system prompt を組む。
-export function buildPresentationBaseSystem(input: CareerPresentationContextInput): string {
+/**
+ * プレゼンAIの土台 system prompt と、その付随フラグ。
+ *
+ * ★ `hasCompanyOfficial` をここで返す理由:
+ *   route（app/ 配下）は **renderer を直接 import してはいけない**
+ *   （Orchestrator が唯一の注入口という既存の architecture 不変条件。
+ *     career-collective-intelligence-production-prep-qa が app/ からの
+ *     careerContextRenderers import を 0 に固定している）。
+ *   そのため「公式情報 block が実際に出たか」の判定は本 builder が
+ *   orchestrator の出力から 1 度だけ行い、route へ渡す。
+ *   これにより user prompt 側の guard と system 側の block が乖離しない。
+ */
+export type PresentationSystemParts = {
+  system: string;
+  hasCompanyOfficial: boolean;
+};
+
+export function buildPresentationSystemParts(
+  input: CareerPresentationContextInput,
+): PresentationSystemParts {
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
     profile: input.profile ?? null,
@@ -164,24 +196,41 @@ export function buildPresentationBaseSystem(input: CareerPresentationContextInpu
       matching: input.matching ?? null,
       consultationInsights: input.consultationInsights ?? null,
     },
+    // Company Data Spine A 層。renderer が purpose allowlist / budget / provenance を強制する。
+    //   ★ 面接・企業研究と **同じ type・同じ renderer・同じ extras key** を使う
+    //     （プレゼン専用の並行 architecture を作らない）。
+    ...(input.companyOfficial ? { company: input.companyOfficial } : {}),
   });
 
   const ctx: CareerPresentationPromptContext = {
     theme: input.theme,
     config: input.config ?? undefined,
     presentationType: input.presentationType,
+    // A 層 block が実際に出るときだけ、企業事実の扱いを「公式情報の範囲内」へ開放する。
+    hasCompanyOfficial: orchestrated.companyOfficialContext !== '',
   };
 
-  return [
+  const system = [
     buildEvaluatorPersona(ctx),
     // P3-C: 機能別指示は orchestrated.systemPrompt 内に既に含まれるため、同一 system 内の
     //   二重 append を削除（純粋な重複除去）。
     orchestrated.systemPrompt,
+    // Company Data Spine A 層（公式情報）。★ 他 block とは **別ブロック**として並べる。
+    //   公式事実 / 本人の経験・内省 / AI 派生を混ぜないのが Spine の中核契約。
+    //   企業未指定 / 未取得 / flag OFF のときは '' ＝ 従来 byte 互換。
+    orchestrated.companyOfficialContext,
     // P15-A: refGuard + 各参考ブロックは orchestrated.crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
+
+  return { system, hasCompanyOfficial: orchestrated.companyOfficialContext !== '' };
+}
+
+/** 既存 callsite / byte parity harness 互換の薄い wrapper（出力は従来と同一）。 */
+export function buildPresentationBaseSystem(input: CareerPresentationContextInput): string {
+  return buildPresentationSystemParts(input).system;
 }
 
 // AIお題生成の user プロンプト（企業/業界/職種・選考種別・発表時間・難易度・
@@ -191,6 +240,11 @@ export function buildThemeUserPrompt(params: {
   timeLimitSec?: number;
   difficulty?: unknown;
   excludeThemes?: string[];
+  /**
+   * Company Data Spine A 層 block が system 側に出ているか（既定 false）。
+   * true のときだけ「公式情報にある事実は使ってよい」へ緩める（範囲は公式情報内に限定）。
+   */
+  hasCompanyOfficial?: boolean;
 }): string {
   const cfg = params.config ?? undefined;
   const difficulty = resolveDifficulty(params.difficulty);
@@ -230,14 +284,19 @@ export function buildThemeUserPrompt(params: {
         ].join('\n')
       : '',
     cfg?.companyName?.trim()
-      ? 'この企業を受ける想定のお題にする。ただし企業の事業内容・制度・課題を断定・捏造しない。'
+      ? params.hasCompanyOfficial
+        ? 'この企業を受ける想定のお題にする。企業の事実として使ってよいのは system 側の【公式情報】ブロックにある内容だけで、そこに無い事業内容・制度・課題は断定・捏造しない。'
+        : 'この企業を受ける想定のお題にする。ただし企業の事業内容・制度・課題を断定・捏造しない。'
       : '',
     cfg?.industry?.trim() && !cfg?.companyName?.trim()
       ? 'その業界で出やすいテーマに寄せる。特定企業の事実は出さない。'
       : '',
     // 企業情報の確度に関わらず常に置く hallucination ガード
     //（旧「企業メモが無い場合は…」という companyMemo 前提の分岐を、無条件の指示に置き換えた）。
-    '企業・業界の具体的な事実は断定せず、情報が不足する範囲は一般的な業界課題・職種理解・選考文脈として扱う。',
+    //   A 層がある場合も「公式情報の外は断定しない」という制約は残す（緩めるのは範囲だけ）。
+    params.hasCompanyOfficial
+      ? '【公式情報】に無い企業・業界の具体的な事実は断定せず、情報が不足する範囲は一般的な業界課題・職種理解・選考文脈として扱う。'
+      : '企業・業界の具体的な事実は断定せず、情報が不足する範囲は一般的な業界課題・職種理解・選考文脈として扱う。',
     '出力はお題の文そのものだけ（前置き・説明・記号・引用符・コードブロックは付けない）。',
   ]
     .filter((s) => s !== '')
@@ -286,9 +345,13 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
     'structureFeedback は構成（話す順番・骨子）への、persuasionFeedback は説得力への、deliveryFeedback は話し方・伝え方への、それぞれ2〜3文の個別フィードバック。',
     'improvedStructure は「改善版の構成例（話す順番のアウトライン）」であり、発表の完成原稿を代筆してはいけません（箇条書きの構成のみ）。',
     'passLikelihood は選考通過可能性についての所見を、断定せず根拠とともに2〜4文で述べる（「合格可能性」という受験表現は使わない）。',
-    'companyFit は志望業界・職種（あれば志望企業）との相性・接続を2〜4文で述べる。企業条件が未設定なら一般的なビジネス視点で述べる。',
+    ctx.hasCompanyOfficial
+      ? 'companyFit は志望業界・職種・志望企業との相性・接続を2〜4文で述べる。企業側の事実は【公式情報】ブロックにある内容だけを根拠にし、発表がその実像と噛み合っているかで評価する。'
+      : 'companyFit は志望業界・職種（あれば志望企業）との相性・接続を2〜4文で述べる。企業条件が未設定なら一般的なビジネス視点で述べる。',
     'expectedQuestions と interviewerConcerns では、この発表に対して想定される追加質問・深掘り質問・突っ込まれそうな点を挙げる。',
-    '各配列は2〜4個入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。事実確認が必要な企業情報は断定しない。',
+    ctx.hasCompanyOfficial
+      ? '各配列は2〜4個入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。【公式情報】に無い企業情報は断定しない。'
+      : '各配列は2〜4個入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。事実確認が必要な企業情報は断定しない。',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '',
     '{',

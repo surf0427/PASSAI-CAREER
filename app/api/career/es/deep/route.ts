@@ -30,6 +30,13 @@ import {
   type EsQuestionType,
   type EsTurn,
 } from '@/lib/careerEs/deepDivePrompt';
+// Data Spine fallback: 材料未選択のときだけ背景 context を足す（選択済みなら byte 不変）。
+import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 
 export const maxDuration = 80;
 
@@ -103,6 +110,10 @@ export async function POST(req: Request) {
     answer?: unknown;
     knownFacts?: unknown;
     missingAxes?: unknown;
+    // User Data Spine bridge（材料未選択時の fallback 用。未指定なら従来どおり）。
+    profile?: CareerProfileInput | null;
+    activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
   };
 
   const question = str(b.question);
@@ -132,8 +143,17 @@ export async function POST(req: Request) {
   const answer = str(b.answer);
   const isSeed = turns.length === 0 && !answer;
 
+  // 材料を 1 つも選んでいないユーザーにだけ背景 context を足す（選択済みなら '' ＝ byte 不変）。
+  const fallbackBlock = await resolveEsFallbackContextBlock(
+    (context.knownFacts ?? []).length > 0,
+    b,
+    req,
+  );
+
   try {
-    const system = buildEsDeepSystem(question, questionType, context);
+    const system = [buildEsDeepSystem(question, questionType, context), fallbackBlock]
+      .filter((s) => s !== '')
+      .join('\n\n');
 
     // ── seed（1問目）─────────────────────────────────────────────
     if (isSeed) {

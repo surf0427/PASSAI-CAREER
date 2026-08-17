@@ -22,6 +22,7 @@ import type {
 } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
+import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 // P15-B: 企業研究ブロックの render は orchestrator 経由の interview canonical renderer が担うため、
 //   本ファイルでは型のみ参照する（formatInterviewCompanyResearchForPrompt の呼び出しは renderer 側）。
 import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
@@ -173,6 +174,10 @@ export type CareerInterviewContextInput = {
   //     （本 builder は純関数のまま。I/O は持たない）。
   //   未指定 / unavailable / disabled のときは renderer が空 block を返し、prompt は従来と byte 互換。
   companyOfficial?: CompanyOfficialReadResult | null;
+  // Data Spine Layer 2（Personal Memory）の **検証済み fresh section**（route の server loader が read/gate/dedupe 済み）。
+  //   ★ ユーザー由来の参考情報であり信頼済み instruction ではない（renderer が injection 境界を付ける）。
+  //   未指定 / 空 のときは personalMemoryContext が '' になり、prompt は従来と byte 互換。
+  personalMemory?: readonly CareerPersonalMemorySection[] | null;
   // 前段で入力した受験先・選考の想定。企業・業界・職種・選考種別に合わせて深掘りする。
   target?: CareerInterviewTarget | null;
   interviewType?: CareerInterviewType;
@@ -202,6 +207,11 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
       consultationInsights: input.consultationInsights ?? null,
       companyResearch: input.companyResearch ?? null,
     },
+    // Data Spine Layer 2（Personal Memory）。orchestrator が purpose 別に選択・render・budget enforce する。
+    //   route 側で bridge と重複する section は dedupe 済み（bridge wins / memory fills gaps）。
+    ...(input.personalMemory && input.personalMemory.length > 0
+      ? { personalMemory: input.personalMemory }
+      : {}),
     // Company Data Spine A 層。renderer が purpose allowlist / budget / provenance を強制する。
     //   ★ 既存 company_research_review と **同じ type・同じ renderer・同じ extras key** を使う
     //     （面接専用の並行 architecture を作らない）。
@@ -229,6 +239,9 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     orchestrated.companyOfficialContext,
     // P15-B: 自己分析/ES/マッチング/相談AI/企業研究の各ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
+    // Data Spine Layer 2（Personal Memory）。★ base / crossFeature / 公式情報とは **別ブロック**の
+    //   低優先な参考情報として、1 回だけ結合する。section が無ければ '' ＝ 従来 byte 互換。
+    orchestrated.personalMemoryContext,
     `# この面接の狙い（${config.label}）\n${config.guidance}`,
     // ★ モード固有の質問領域プール。モードが変われば質問の種類・配分そのものが変わる。
     `# この面接で扱う質問領域（${config.label}／毎回この中から最も価値が高い1点を選ぶ）\n${config.topicPool

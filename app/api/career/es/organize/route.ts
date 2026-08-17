@@ -21,6 +21,13 @@ import {
   ES_KNOWN_FACTS_MAX_LINES,
   ES_KNOWN_FACTS_MAX_LINE_CHARS,
 } from '@/lib/careerEs/deepDivePrompt';
+// Data Spine fallback: 材料未選択のときだけ背景 context を足す（選択済みなら byte 不変）。
+import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 
 export const maxDuration = 80;
 
@@ -83,6 +90,10 @@ export async function POST(req: Request) {
     question?: unknown;
     turns?: unknown;
     knownFacts?: unknown;
+    // User Data Spine bridge（材料未選択時の fallback 用。未指定なら従来どおり）。
+    profile?: CareerProfileInput | null;
+    activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
   };
 
   const question = str(b.question);
@@ -97,6 +108,8 @@ export async function POST(req: Request) {
   }
 
   const userMessage = buildEsOrganizeUserMessage(question, turns, knownFacts);
+  // 材料を 1 つも選んでいないユーザーにだけ背景 context を足す（選択済みなら '' ＝ byte 不変）。
+  const fallbackBlock = await resolveEsFallbackContextBlock(knownFacts.length > 0, b, req);
 
   try {
     // parse 失敗時のみ 1 回だけ temperature 0 で再生成する（他 route と同方針）。
@@ -114,12 +127,16 @@ export async function POST(req: Request) {
           model: CAREER_ES_ORGANIZE_MODEL,
           max_tokens: 800,
           temperature: attempt === 2 ? 0 : 0.3,
+          // ★ 静的 prefix（ES_ORGANIZE_SYSTEM_PROMPT）は cache_control 付きのまま **先頭に固定**し、
+          //   ユーザーごとに変わる背景 context は **その後ろの別 block** に置く。
+          //   逆順・同一 block にすると prompt cache のヒット率が毎リクエスト壊れる。
           system: [
             {
-              type: 'text',
+              type: 'text' as const,
               text: ES_ORGANIZE_SYSTEM_PROMPT,
-              cache_control: { type: 'ephemeral' },
+              cache_control: { type: 'ephemeral' as const },
             },
+            ...(fallbackBlock ? [{ type: 'text' as const, text: fallbackBlock }] : []),
           ],
           messages: [{ role: 'user', content: userMessage }],
         },

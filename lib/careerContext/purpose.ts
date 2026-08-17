@@ -68,13 +68,15 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
   maxContextChars: 3500,
 };
 
-// Orchestrator 移行状況（Closure Batch 時点で再監査）:
+// Orchestrator 移行状況（Data Spine connection 時点で再監査）:
 //   live（orchestrator 経由）: interview_practice(start·turn·complete 共有) / matching /
 //             presentation_feedback(theme·evaluate·qa) / company_research_review /
-//             consultation / self_analysis(route.ts) / self_analysis_deep_dive(question)
+//             consultation / self_analysis(route.ts) / self_analysis_deep_dive(question) /
+//             es_review(es-review route)
 //   base 不使用の live route（INTENTIONALLY_CONTEXT_FREE）:
-//             es_review / es/deep / es/organize / gd 系（transcript 主体・静的 system prompt）
-//   DORMANT（registry のみ・live callsite 0）: es_review / interview_complete / gd_feedback / mypage_summary
+//             gd 系（transcript 主体・静的 system prompt）
+//   base fallback のみ（材料未選択時に es_review policy を借りる）: es/deep / es/organize
+//   DORMANT（registry のみ・live callsite 0）: interview_complete / gd_feedback / mypage_summary
 //
 // ★ `es_generation` は Closure Batch で **retire**（`D-S12`）。
 //   ES 再設計（AI 代筆廃止）で live route が消滅し、orchestrator branch も renderer も
@@ -82,13 +84,15 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
 // policy は宣言（観測用）。purpose 別の実削減は P3-F 以降。route 挙動は policy に依存しない。
 export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContextPolicy> = {
   es_review: {
+    // 氏名(構造化 PII)は prompt から落とす（matching / presentation / interview / consultation と同じ pilot）。
     profile: 'minimal',
     activity: 'compact',
     values: 'include',
-    recentLogs: 'exclude',
+    // 直近の自己分析だけは route が別 block で付与する（横断ログ全部は読まない）。
+    recentLogs: 'include',
     companyContext: 'optional',
     maxContextChars: 3500,
-    notes: '未移行。es-review は静的 SYSTEM_PROMPT で base(buildCareerSystemPrompt) を使わない。',
+    notes: 'ES 添削。Data Spine connection で Orchestrator へ移行済み。静的 ES_REVIEW_SYSTEM_PROMPT（添削者ペルソナ・出力 schema）は維持し、base(buildCareerSystemPrompt) と Company 公式情報を **別ブロック**として route が結合する。自己分析は route が canonical renderer で付与。',
   },
   interview_practice: {
     // P6-E: PII 除外 pilot 横展開。matching(P6-C)/presentation(P6-D) と同じく profile を minimal に通電し氏名を prompt から落とす。

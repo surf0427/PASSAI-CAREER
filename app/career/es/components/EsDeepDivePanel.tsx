@@ -13,6 +13,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { esTurnCapForContext, type EsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
+// Data Spine fallback: 材料未選択のユーザーにも背景 context を届ける（選択済みなら server 側が無視）。
+import { esFallbackBridge } from '../reviewContextSource';
 
 type Props = {
   question: string;
@@ -70,7 +72,14 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/deep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, questionType, knownFacts, missingAxes }),
+        body: JSON.stringify({
+          question,
+          questionType,
+          knownFacts,
+          missingAxes,
+          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          ...esFallbackBridge(),
+        }),
       });
       const data = (await res.json()) as { question?: string; detail?: string };
       if (!res.ok || !data.question) throw new Error(data.detail ?? '深掘りの開始に失敗しました。');
@@ -89,7 +98,13 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/organize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, turns: finalTurns, knownFacts }),
+        body: JSON.stringify({
+          question,
+          turns: finalTurns,
+          knownFacts,
+          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          ...esFallbackBridge(),
+        }),
       });
       const data = (await res.json()) as { memo?: string[]; detail?: string };
       if (!res.ok) throw new Error(data.detail ?? '材料整理に失敗しました。');
@@ -115,7 +130,16 @@ export function EsDeepDivePanel({
       const res = await fetch('/api/career/es/deep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, questionType, turns, answer: a, knownFacts, missingAxes }),
+        body: JSON.stringify({
+          question,
+          questionType,
+          turns,
+          answer: a,
+          knownFacts,
+          missingAxes,
+          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          ...esFallbackBridge(),
+        }),
       });
       const data = (await res.json()) as {
         reaction?: string;

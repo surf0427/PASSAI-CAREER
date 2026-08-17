@@ -19,6 +19,12 @@ import type {
   CareerEsRank,
   CareerEsSelectionType,
 } from '@/types/careerEs';
+import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
+import type {
+  CareerProfileInput,
+  CareerActivityInput,
+  CareerValuesInput,
+} from '@/lib/careerAi';
 import {
   normalizeCompanyResearchSnapshot,
   formatCompanyResearchContextForPrompt,
@@ -28,12 +34,25 @@ import {
   ES_REVIEW_SYSTEM_PROMPT,
   buildEsReviewUserMessage,
 } from '@/lib/careerEs/reviewPrompt';
+// User Data Spine: 既存 orchestrator（purpose=es_review）経由で base context を組む。
+//   ★ ES 独自 normalizer は作らない。buildCareerAiContext が canonical boundary。
+import { buildCareerAiContext } from '@/lib/careerAi';
+import { buildCareerContextForPurpose } from '@/lib/careerContext';
+import { renderSelfAnalysis } from '@/lib/careerMemory/renderers/interviewCrossFeature';
+import { resolveEsReviewContextInputs } from './resolveContextInputs';
+// Company Data Spine A 層（公式情報）。未取得 / flag OFF / 企業未解決なら null（添削は成立）。
+import { resolveEsReviewCompanyOfficial } from './resolveCompanyOfficial';
+// T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
+import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
 import { anthropic, extractJson } from '@/lib/ai';
 import {
   AI_BUDGET_PRESET_80S_WALL,
   createAiCallBudget,
   createTimeoutSignal,
 } from '@/lib/aiTimeout';
+
+// 機能キー（就活版共通基盤の出し分け）。
+const FEATURE_KEY = 'career-es' as const;
 
 // 生成系と同系の Sonnet を使用（課金/usage には接続しない）。
 const MODEL = 'claude-sonnet-4-6';
@@ -126,16 +145,24 @@ export async function POST(req: Request) {
     answer?: string;
     question?: string;
     companyName?: string;
+    // Company Data Spine 解決の hint（権威ではない。server 側が canonical company を決める）。
+    companyId?: string;
     charLimit?: number;
     selectionType?: unknown;
     industry?: string;
     jobType?: string;
     companyResearchContext?: unknown;
+    // User Data Spine bridge（未指定なら従来どおり ES 設定のみで添削する）。
+    profile?: CareerProfileInput | null;
+    activity?: CareerActivityInput | null;
+    values?: CareerValuesInput | null;
+    selfAnalysis?: CareerSelfAnalysisResult | null;
   };
 
   const answer = str(b.answer);
   const question = str(b.question);
   const companyName = str(b.companyName);
+  const companyId = str(b.companyId);
   const charLimit =
     typeof b.charLimit === 'number' && Number.isFinite(b.charLimit) && b.charLimit > 0
       ? Math.floor(b.charLimit)
@@ -177,6 +204,50 @@ export async function POST(req: Request) {
       ].join('\n')
     : '';
 
+  // T1 trigger: 企業名は既に server へ来ている。次回以降のために prefetch を起動しておく
+  //   （after() 登録のみ・本 request の応答時間に影響しない・失敗しても添削は続行）。
+  //   同一企業への重複 trigger は company-scoped idempotency が畳む。
+  triggerCompanyPrefetch(companyName, req);
+
+  // ── Data Spine の 2 read（互いに独立なので **並列**に走らせる）────────────
+  //   Company Data Spine（A 層 = 公式情報）:
+  //     flag OFF / DDL 未適用 / 未ログイン / 企業未解決では data を持たない status が返り、
+  //     renderer が '' を返す（＝ 従来 prompt と byte 互換・fail-open）。
+  //   User Data Spine:
+  //     server context canary が無効な環境（既定）では I/O ゼロで request body をそのまま使う。
+  //   ★ どちらも never-throw なので Promise.all が reject する経路は無い。
+  const [companyOfficial, ctx] = await Promise.all([
+    resolveEsReviewCompanyOfficial(companyName, companyId || null),
+    resolveEsReviewContextInputs(b, req),
+  ]);
+  const context = buildCareerAiContext({
+    featureKey: FEATURE_KEY,
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
+    userInput: '',
+  });
+  // P3-F: base system prompt / 公式情報 block を Context Orchestrator（purpose=es_review）経由で取得。
+  //   ★ orchestrator は純関数。I/O（上の 2 read）は route の責務という既存分離を守る。
+  const orchestrated = buildCareerContextForPurpose('es_review', context, {
+    ...(companyOfficial ? { company: companyOfficial } : {}),
+  });
+  // 直近の自己分析（canonical renderer を再利用。ES 専用 renderer は作らない）。
+  const selfAnalysisBlock = renderSelfAnalysis(ctx.selfAnalysis);
+
+  // system: 添削者ペルソナ（静的）→ 本人の土台（profile/activity/values）→ 公式情報 → 自己分析。
+  //   ★ 公式事実（A 層）/ 本人の自己分析 / 本人の企業研究メモ（user メッセージ側）を
+  //     **別ブロック**に保つ。混ぜないことが Data Spine の中核契約。
+  //   すべて空なら join 後は ES_REVIEW_SYSTEM_PROMPT 単体＝従来と byte 一致。
+  const systemPrompt = [
+    ES_REVIEW_SYSTEM_PROMPT,
+    orchestrated.systemPrompt,
+    orchestrated.companyOfficialContext,
+    selfAnalysisBlock ? `# 直近の自己分析結果（本人の内省。ES 本文の裏付けとして使う）\n${selfAnalysisBlock}` : '',
+  ]
+    .filter((s) => s !== '')
+    .join('\n\n');
+
   // user メッセージ: ES 設定（設問 / 文字数 / 企業名 / 業界 / 職種 / 選考種別）を
   // 提出先コンテキスト + 添削基準として積み、最後に添削対象本文を置く。
   // 欠損項目（旧ログ）はブロックごと出さない（AI に埋めさせない）。
@@ -189,6 +260,8 @@ export async function POST(req: Request) {
     jobType,
     selectionType,
     researchInstruction,
+    // A 層 block が実際に出るときだけ、事実として言及してよい範囲を公式情報へ限定する。
+    hasCompanyOfficial: orchestrated.companyOfficialContext !== '',
   });
 
   try {
@@ -214,7 +287,7 @@ export async function POST(req: Request) {
           model: MODEL,
           max_tokens: MAX_TOKENS,
           temperature: attempt === 2 ? 0 : 0.4,
-          system: ES_REVIEW_SYSTEM_PROMPT,
+          system: systemPrompt,
           messages: [{ role: 'user', content: userMessage }],
         },
         { signal: createTimeoutSignal(callTimeoutMs) },

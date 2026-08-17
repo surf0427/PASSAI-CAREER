@@ -14,15 +14,22 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { PresentationEsSummary } from '@/lib/careerMemory/presentationEs';
 import type { CareerInterviewFinalResult } from '@/types/careerInterview';
 import type { CareerMatchEngineResult } from '@/lib/careerMatching';
-import type { CareerPresentationConfig } from '@/types/careerPresentation';
+import type {
+  CareerPresentationConfig,
+  CareerPresentationType,
+} from '@/types/careerPresentation';
 import { anthropic } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
   CAREER_PRESENTATION_MODEL,
-  buildPresentationBaseSystem,
+  buildPresentationSystemParts,
   buildThemeUserPrompt,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
+// Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（お題生成は成立）。
+import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
+// T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
+import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
 
 export const maxDuration = 80;
 
@@ -56,6 +63,8 @@ export async function POST(req: Request) {
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
     config?: CareerPresentationConfig | null;
+    // 旧セッション互換（新規フローは常に 'real'）。企業公式情報の出し分けに使う。
+    presentationType?: CareerPresentationType;
     timeLimitSec?: unknown;
     difficulty?: unknown;
     excludeThemes?: unknown;
@@ -67,9 +76,20 @@ export async function POST(req: Request) {
   const excludeThemes = Array.isArray(b.excludeThemes)
     ? b.excludeThemes.filter((t): t is string => typeof t === 'string').slice(0, 5)
     : [];
+  // Company Data Spine A 層（公式情報）。既存 read 経路を読むだけで fetch / crawl は起動しない。
+  //   ★ context resolver と互いに独立なので **並列**に走らせる（応答時間を増やさない）。
+  const companyOfficialPromise = resolvePresentationCompanyOfficial(config, b.presentationType);
+  // 次回以降のために prefetch を起動しておく（応答時間に影響しない・失敗してもお題生成は続行）。
+  triggerCompanyPrefetch(config?.companyName ?? '', req);
+
   // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
-  const ctx = await resolvePresentationContextInputs(b, req);
-  const system = buildPresentationBaseSystem({
+  const [companyOfficial, ctx] = await Promise.all([
+    companyOfficialPromise,
+    resolvePresentationContextInputs(b, req),
+  ]);
+  // user prompt 側の guard と system 側の block を **同一判定**にする（乖離させない）。
+  //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
+  const { system, hasCompanyOfficial } = buildPresentationSystemParts({
     profile: ctx.profile,
     activity: ctx.activity,
     values: ctx.values,
@@ -79,6 +99,8 @@ export async function POST(req: Request) {
     matching: ctx.matching as typeof b.matching,
     consultationInsights: ctx.consultationInsights,
     config,
+    presentationType: b.presentationType,
+    companyOfficial,
   });
 
   try {
@@ -91,7 +113,14 @@ export async function POST(req: Request) {
         messages: [
           {
             role: 'user',
-            content: buildThemeUserPrompt({ config, timeLimitSec, difficulty: b.difficulty, excludeThemes }),
+            content: buildThemeUserPrompt({
+              config,
+              timeLimitSec,
+              difficulty: b.difficulty,
+              excludeThemes,
+              // A 層 block が system 側に出るときだけ、企業事実の扱いを公式情報の範囲へ開放する。
+              hasCompanyOfficial,
+            }),
           },
         ],
       },

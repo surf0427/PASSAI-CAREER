@@ -279,26 +279,32 @@ export async function POST(req: Request) {
     },
     req,
   );
+  // ★ consultation へ Personal Memory は注入しない（既存の明示的な不変条件）。
+  //   相談 AI の crossFeature は自己分析 / ES / 面接 / プレゼン / 企業研究 / GD / マッチングの
+  //   **履歴**を既に描画しており、Personal Memory の要約は全面的に重複する
+  //   （career-server-context-batch1-qa / career-personal-memory-read-pilot-qa が固定）。
+  const crossFeature = {
+    selfAnalysis: b.selfAnalysis ?? null,
+    es: b.es ?? null,
+    interviewResult: b.interviewResult ?? null,
+    presentationResult: b.presentationResult ?? null,
+    selfAnalysisHistory: ctx.selfAnalysisHistory as typeof selfAnalysisHistory,
+    esHistory: ctx.esHistory as typeof esHistory,
+    interviewHistory: ctx.interviewHistory as typeof interviewHistory,
+    presentationHistory: ctx.presentationHistory as typeof presentationHistory,
+    companyResearch: ctx.companyResearch as typeof companyResearch,
+    gd: gdSnapshots,
+    gdRoom: ctx.gdRoom as typeof gdRoomSignals,
+    matching: ctx.matching as typeof matchingSnapshots,
+  };
+
   const systemPrompt = buildConsultationSystemPrompt({
     profile: ctx.profile,
     activity: compressCareerActivityForConsultation(
       ctx.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
     ) as CareerActivityInput | null,
     values: ctx.values,
-    crossFeature: {
-      selfAnalysis: b.selfAnalysis ?? null,
-      es: b.es ?? null,
-      interviewResult: b.interviewResult ?? null,
-      presentationResult: b.presentationResult ?? null,
-      selfAnalysisHistory: ctx.selfAnalysisHistory as typeof selfAnalysisHistory,
-      esHistory: ctx.esHistory as typeof esHistory,
-      interviewHistory: ctx.interviewHistory as typeof interviewHistory,
-      presentationHistory: ctx.presentationHistory as typeof presentationHistory,
-      companyResearch: ctx.companyResearch as typeof companyResearch,
-      gd: gdSnapshots,
-      gdRoom: ctx.gdRoom as typeof gdRoomSignals,
-      matching: ctx.matching as typeof matchingSnapshots,
-    },
+    crossFeature,
     eventSignalsBlock,
   });
 

@@ -28,6 +28,8 @@ import { EsDeepDivePanel } from '../../components/EsDeepDivePanel';
 import { EsMaterialPickerPanel } from '../../components/EsMaterialPickerPanel';
 import { classifyEsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
 import { buildEsReviewRequestBody } from '@/lib/careerEs/reviewRequest';
+// Data Spine connection: 添削 AI に本人の自己分析・活動整理・就活軸を届ける（読めなければ空）。
+import { buildEsReviewContextPayload } from '../../reviewContextSource';
 import { esSelectionTypeLabel } from '@/lib/careerEs/esSettings';
 import {
   buildEsKnownFacts,
@@ -189,9 +191,12 @@ export default function CareerEsDraftEditorPage() {
       const res = await fetch('/api/career/es-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // ES 設定 6 項目（設問 / 文字数 / 企業名 / 業界 / 職種 / 選考種別）を欠落なく送る。
+        // ES 設定（設問 / 文字数 / 企業名 / companyId / 業界 / 職種 / 選考種別）を欠落なく送る。
         // 組み立ては [id] の再添削と共通の builder に集約する（項目落ちの再発防止）。
-        body: JSON.stringify(buildEsReviewRequestBody(draft, answer)),
+        body: JSON.stringify(
+          // User Data Spine（自己分析 / 活動整理 / 就活軸 / 基本情報）。読めなければ空 payload。
+          buildEsReviewRequestBody(draft, answer, buildEsReviewContextPayload()),
+        ),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;

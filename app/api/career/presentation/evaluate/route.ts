@@ -20,17 +20,20 @@ import type {
   CareerPresentationFinalResult,
   CareerPresentationRank,
   CareerPresentationAxisScore,
+  CareerPresentationType,
 } from '@/types/careerPresentation';
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_AXES,
-  buildPresentationBaseSystem,
+  buildPresentationSystemParts,
   buildEvaluateUserPrompt,
   buildEvaluateInstruction,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
+// Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
+import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
 
 export const maxDuration = 80;
 
@@ -139,6 +142,8 @@ export async function POST(req: Request) {
     matching?: CareerMatchEngineResult | null;
     consultationInsights?: string[] | null;
     config?: CareerPresentationConfig | null;
+    // 旧セッション互換（新規フローは常に 'real'）。企業公式情報の出し分けに使う。
+    presentationType?: CareerPresentationType;
     theme?: unknown;
     timeLimitSec?: unknown;
     durationSec?: unknown;
@@ -158,22 +163,39 @@ export async function POST(req: Request) {
   const timeLimitSec = clampSecond(b.timeLimitSec);
   const durationSec = clampSecond(b.durationSec);
 
+  // Company Data Spine A 層（公式情報）。既存 read 経路を読むだけで fetch / crawl は起動しない。
+  //   ★ context resolver と互いに独立なので **並列**に走らせる（応答時間を増やさない）。
+  const companyOfficialPromise = resolvePresentationCompanyOfficial(config, b.presentationType);
+
   // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
-  const ctx = await resolvePresentationContextInputs(b, req);
+  const [companyOfficial, ctx] = await Promise.all([
+    companyOfficialPromise,
+    resolvePresentationContextInputs(b, req),
+  ]);
+  // 出力 schema 指示側の guard を system の block と **同一判定**にする（乖離させない）。
+  //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
+  const { system: baseSystem, hasCompanyOfficial } = buildPresentationSystemParts({
+    profile: ctx.profile,
+    activity: ctx.activity,
+    values: ctx.values,
+    selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
+    es: ctx.es as typeof b.es,
+    interview: ctx.interview as typeof b.interview,
+    matching: ctx.matching as typeof b.matching,
+    consultationInsights: ctx.consultationInsights,
+    config,
+    theme,
+    presentationType: b.presentationType,
+    companyOfficial,
+  });
   const system = [
-    buildPresentationBaseSystem({
-      profile: ctx.profile,
-      activity: ctx.activity,
-      values: ctx.values,
-      selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
-      es: ctx.es as typeof b.es,
-      interview: ctx.interview as typeof b.interview,
-      matching: ctx.matching as typeof b.matching,
-      consultationInsights: ctx.consultationInsights,
-      config,
+    baseSystem,
+    buildEvaluateInstruction({
       theme,
+      config,
+      presentationType: b.presentationType,
+      hasCompanyOfficial,
     }),
-    buildEvaluateInstruction({ theme, config }),
   ].join('\n\n');
 
   const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript, config });

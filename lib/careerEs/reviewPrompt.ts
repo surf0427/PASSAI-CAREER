@@ -131,6 +131,15 @@ export type EsReviewPromptInput = {
   selectionType: CareerEsSelectionType | null;
   // 保存済み企業研究の評価指示（任意・[id] からのみ）。
   researchInstruction?: string;
+  /**
+   * Company Data Spine A 層（公式情報）ブロックが実際に prompt へ出るか。
+   *
+   * ★ true のときだけ「企業の事実を断定してよい範囲」を **公式情報ブロック内に限定**して開放する。
+   *   false（既定）では従来どおり企業情報の推測を全面禁止＝出力 byte 完全互換。
+   *   面接の buildTargetBlock(hasCompanyOfficial) と同じ思想（捏造禁止は緩めない。
+   *   むしろ根拠の所在を明示する分だけ制約は強くなる）。
+   */
+  hasCompanyOfficial?: boolean;
 };
 
 // ES 設定を「提出先コンテキスト」として列挙するブロック。
@@ -149,7 +158,9 @@ function buildApplicationContextBlock(input: EsReviewPromptInput): string {
     ...lines,
     '',
     'これはユーザーの入力であり、あなたの知識で補完・拡張してよい情報ではありません。',
-    'ここに書かれていない企業情報（理念・採用方針・求める人物像・事業戦略・選考傾向）を創作しないでください。',
+    input.hasCompanyOfficial
+      ? 'この企業について事実として言及してよいのは、下の【公式情報】ブロックに出典付きで示されている内容だけです。そこに無い企業情報（理念・採用方針・求める人物像・事業戦略・選考傾向）を創作しないでください。'
+      : 'ここに書かれていない企業情報（理念・採用方針・求める人物像・事業戦略・選考傾向）を創作しないでください。',
   ].join('\n');
 }
 
@@ -174,9 +185,23 @@ function buildContextUsageInstruction(input: EsReviewPromptInput): string {
   if (input.companyName) {
     lines.push(
       `- 企業名: この ES の提出先は「${input.companyName}」である、という前提だけを使う。`,
-      '  企業の実態を推測して評価しない（企業研究が別途与えられている場合のみ、その内容を根拠にできる）。',
+      input.hasCompanyOfficial
+        ? '  企業の実態は推測せず、下の【公式情報】ブロックにある事実（および企業研究が別途与えられていればその内容）だけを根拠にできる。'
+        : '  企業の実態を推測して評価しない（企業研究が別途与えられている場合のみ、その内容を根拠にできる）。',
+      // ★ 公式情報がある場合でも、companyFit の評価は「本人の記述がその事実と噛み合っているか」であり、
+      //   足りない志望理由を AI が埋めることではない（ai_policy: 代筆・創作の禁止）。
+      input.hasCompanyOfficial
+        ? '  companyFit は「本人の記述が公式情報にある企業の実像と噛み合っているか」で評価する。'
+        : '',
+      input.hasCompanyOfficial
+        ? '  噛み合っていない・具体性が足りない場合は、公式情報のどの点に触れられていないかを指摘する。'
+        : '',
       '  企業向けの具体性が足りない場合は「志望企業に対する具体性が不足」と指摘し、',
       '  何を自分で調べて書き足すべきかを助言する。',
+      // ★ 代筆禁止は公式情報の有無に関わらず維持する（公式情報は「指摘の根拠」であって「本文の材料」ではない）。
+      input.hasCompanyOfficial
+        ? '  ★ 公式情報を使って、本人の志望理由・経験・強み・本文を代筆・創作してはならない。'
+        : '',
     );
   }
   if (input.industry) {
@@ -191,8 +216,10 @@ function buildContextUsageInstruction(input: EsReviewPromptInput): string {
       '  同じ経験でも職種によって強調すべき点が変わるため、この職種で評価されにくい書き方があれば指摘する。',
     );
   }
-  if (lines.length === 0) return '';
-  return ['# 応募コンテキストの使い方（添削基準）', ...lines].join('\n');
+  // hasCompanyOfficial=false のとき条件分岐が積む '' を落とす（未接続時の byte 完全互換を保つ）。
+  const kept = lines.filter((line) => line !== '');
+  if (kept.length === 0) return '';
+  return ['# 応募コンテキストの使い方（添削基準）', ...kept].join('\n');
 }
 
 // 添削 user メッセージ。ES 設定 → 添削基準 → 選考種別 → 企業研究 → 本文 の順で積む。
