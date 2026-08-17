@@ -30,13 +30,16 @@ import {
   type EsQuestionType,
   type EsTurn,
 } from '@/lib/careerEs/deepDivePrompt';
-// Data Spine fallback: 材料未選択のときだけ背景 context を足す（選択済みなら byte 不変）。
+// Data Spine: 選択材料と **併用**する背景 context（選択の有無で見出し・ルールが変わる）。
 import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
+// Company Data Spine A 層。企業依存設問（志望動機 / 企業研究）でのみ背景に載せる。
+import { resolveEsDeepCompanyOfficialBlock } from '../resolveCompanyOfficial';
 import type {
   CareerProfileInput,
   CareerActivityInput,
   CareerValuesInput,
 } from '@/lib/careerAi';
+import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 
 export const maxDuration = 80;
 
@@ -110,10 +113,14 @@ export async function POST(req: Request) {
     answer?: unknown;
     knownFacts?: unknown;
     missingAxes?: unknown;
-    // User Data Spine bridge（材料未選択時の fallback 用。未指定なら従来どおり）。
+    // Company Data Spine 解決の hint（権威ではない。server 側が canonical company を決める）。
+    companyName?: unknown;
+    companyId?: unknown;
+    // User Data Spine bridge（背景 context 用。未指定なら背景ブロックは出ない）。
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
+    selfAnalysis?: CareerSelfAnalysisResult | null;
   };
 
   const question = str(b.question);
@@ -143,15 +150,22 @@ export async function POST(req: Request) {
   const answer = str(b.answer);
   const isSeed = turns.length === 0 && !answer;
 
-  // 材料を 1 つも選んでいないユーザーにだけ背景 context を足す（選択済みなら '' ＝ byte 不変）。
-  const fallbackBlock = await resolveEsFallbackContextBlock(
-    (context.knownFacts ?? []).length > 0,
-    b,
-    req,
-  );
+  const hasKnownFacts = (context.knownFacts ?? []).length > 0;
+  // 背景 context と企業公式情報は互いに独立なので並列に解決する（応答時間を増やさない）。
+  //   ★ どちらも never-throw（Promise.all が reject する経路は無い）。
+  const [fallbackBlock, companyBlock] = await Promise.all([
+    resolveEsFallbackContextBlock(hasKnownFacts, b, req),
+    resolveEsDeepCompanyOfficialBlock(questionType, str(b.companyName), str(b.companyId)),
+  ]);
 
   try {
-    const system = [buildEsDeepSystem(question, questionType, context), fallbackBlock]
+    // 並び: 深掘り本体（人格 / 設問 / 選択材料 / 深掘り軸）→ 企業公式情報 → 本人の背景。
+    //   ★ 選択材料が主要材料。企業情報・背景はいずれも **別ブロック**の参考情報として置く。
+    const system = [
+      buildEsDeepSystem(question, questionType, context),
+      companyBlock,
+      fallbackBlock,
+    ]
       .filter((s) => s !== '')
       .join('\n\n');
 

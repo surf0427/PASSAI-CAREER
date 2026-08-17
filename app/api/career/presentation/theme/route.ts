@@ -87,23 +87,26 @@ export async function POST(req: Request) {
     companyOfficialPromise,
     resolvePresentationContextInputs(b, req),
   ]);
-  // user prompt 側の guard と system 側の block を **同一判定**にする（乖離させない）。
-  //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
-  const { system, hasCompanyOfficial } = buildPresentationSystemParts({
-    profile: ctx.profile,
-    activity: ctx.activity,
-    values: ctx.values,
-    selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
-    es: ctx.es as typeof b.es,
-    interview: ctx.interview as typeof b.interview,
-    matching: ctx.matching as typeof b.matching,
-    consultationInsights: ctx.consultationInsights,
-    config,
-    presentationType: b.presentationType,
-    companyOfficial,
-  });
-
   try {
+    // ★ prompt builder も route の error boundary の内側で実行する。
+    //   builder が throw すると（例: 壊れた Layer 1 データ）catch されず
+    //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
+    // user prompt 側の guard と system 側の block を **同一判定**にする（乖離させない）。
+    //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
+    const { system, hasCompanyOfficial } = buildPresentationSystemParts({
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
+      es: ctx.es as typeof b.es,
+      interview: ctx.interview as typeof b.interview,
+      matching: ctx.matching as typeof b.matching,
+      consultationInsights: ctx.consultationInsights,
+      config,
+      presentationType: b.presentationType,
+      companyOfficial,
+    });
+
     const message = await anthropic.messages.create(
       {
         model: CAREER_PRESENTATION_MODEL,

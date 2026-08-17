@@ -59,8 +59,13 @@ export function renderSelfAnalysis(result: CareerSelfAnalysisResult | null | und
 export function renderEs(result: CareerEsResult | null | undefined): string {
   if (!result) return '';
   const lines: string[] = [];
-  const push = (label: string, value: string) => {
-    if (value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
+  // ★ null-safe: `career_es_logs.result` は DDL 既定が `'{}'::jsonb`（NOT NULL DEFAULT）であり、
+  //   `rowToCareerEsLog` / `normalizeEsLog` は形状を検証せず cast する。したがって
+  //   4 field が **undefined のまま**ここへ到達しうる。素の `value.trim()` は TypeError を投げ、
+  //   面接 prompt の組み立て（route の try 外）で落ちて非 JSON 500 になっていた。
+  //   renderSelfAnalysis と同じ guard 形に揃える（well-formed data の出力 byte は不変）。
+  const push = (label: string, value: string | undefined) => {
+    if (value && value.trim() !== '') lines.push(`- ${label}: ${value.trim()}`);
   };
   push('キャッチコピー', result.headline);
   push('ガクチカ', result.gakuchika);

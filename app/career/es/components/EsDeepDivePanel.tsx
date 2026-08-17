@@ -13,7 +13,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { esTurnCapForContext, type EsQuestionType, type EsTurn } from '@/lib/careerEs/deepDivePrompt';
-// Data Spine fallback: 材料未選択のユーザーにも背景 context を届ける（選択済みなら server 側が無視）。
+// Data Spine: 選択材料と併用する背景 context を届ける（server が別ブロックとして扱う）。
 import { esFallbackBridge } from '../reviewContextSource';
 
 type Props = {
@@ -30,6 +30,11 @@ type Props = {
   knownFacts?: string[];
   // まだ埋まっていない観点の key（ES_AXIS_DEFS の key。任意）。
   missingAxes?: string[];
+  // 提出先の企業（draft 由来・任意）。企業依存設問（志望動機 / 企業研究）でのみ
+  //   server が Company Data Spine を背景に載せる。旧 draft では欠損が正常。
+  //   ★ companyId は権威ではなく解決 hint（server が canonical company を決める）。
+  companyName?: string;
+  companyId?: string;
 };
 
 export function EsDeepDivePanel({
@@ -40,6 +45,8 @@ export function EsDeepDivePanel({
   onOrganized,
   knownFacts,
   missingAxes,
+  companyName,
+  companyId,
 }: Props) {
   // 既知の観点の分だけ質問数上限を下げる（server と同じ純関数・同じ入力で一致する）。
   const cap = esTurnCapForContext(questionType, { knownFacts, missingAxes });
@@ -77,7 +84,9 @@ export function EsDeepDivePanel({
           questionType,
           knownFacts,
           missingAxes,
-          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          companyName: companyName ?? null,
+          companyId: companyId ?? null,
+          // Data Spine 背景 context 用 bridge（選択材料とは別ブロックとして扱われる）。
           ...esFallbackBridge(),
         }),
       });
@@ -102,7 +111,7 @@ export function EsDeepDivePanel({
           question,
           turns: finalTurns,
           knownFacts,
-          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          // Data Spine 背景 context 用 bridge（Organize に企業情報は載せない）。
           ...esFallbackBridge(),
         }),
       });
@@ -137,7 +146,9 @@ export function EsDeepDivePanel({
           answer: a,
           knownFacts,
           missingAxes,
-          // Data Spine fallback 用 bridge。材料を選んでいるユーザーでは server 側が無視する。
+          companyName: companyName ?? null,
+          companyId: companyId ?? null,
+          // Data Spine 背景 context 用 bridge（選択材料とは別ブロックとして扱われる）。
           ...esFallbackBridge(),
         }),
       });

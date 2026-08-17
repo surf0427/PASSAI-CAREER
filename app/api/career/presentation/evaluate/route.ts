@@ -172,35 +172,38 @@ export async function POST(req: Request) {
     companyOfficialPromise,
     resolvePresentationContextInputs(b, req),
   ]);
-  // 出力 schema 指示側の guard を system の block と **同一判定**にする（乖離させない）。
-  //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
-  const { system: baseSystem, hasCompanyOfficial } = buildPresentationSystemParts({
-    profile: ctx.profile,
-    activity: ctx.activity,
-    values: ctx.values,
-    selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
-    es: ctx.es as typeof b.es,
-    interview: ctx.interview as typeof b.interview,
-    matching: ctx.matching as typeof b.matching,
-    consultationInsights: ctx.consultationInsights,
-    config,
-    theme,
-    presentationType: b.presentationType,
-    companyOfficial,
-  });
-  const system = [
-    baseSystem,
-    buildEvaluateInstruction({
-      theme,
-      config,
-      presentationType: b.presentationType,
-      hasCompanyOfficial,
-    }),
-  ].join('\n\n');
-
-  const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript, config });
-
   try {
+    // ★ prompt builder も route の error boundary の内側で実行する。
+    //   builder が throw すると（例: 壊れた Layer 1 データ）catch されず
+    //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
+    // 出力 schema 指示側の guard を system の block と **同一判定**にする（乖離させない）。
+    //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
+    const { system: baseSystem, hasCompanyOfficial } = buildPresentationSystemParts({
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
+      es: ctx.es as typeof b.es,
+      interview: ctx.interview as typeof b.interview,
+      matching: ctx.matching as typeof b.matching,
+      consultationInsights: ctx.consultationInsights,
+      config,
+      theme,
+      presentationType: b.presentationType,
+      companyOfficial,
+    });
+    const system = [
+      baseSystem,
+      buildEvaluateInstruction({
+        theme,
+        config,
+        presentationType: b.presentationType,
+        hasCompanyOfficial,
+      }),
+    ].join('\n\n');
+
+    const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript, config });
+
     let result: CareerPresentationFinalResult | null = null;
     const startedAt = Date.now();
     for (let attempt = 1; attempt <= 2; attempt++) {

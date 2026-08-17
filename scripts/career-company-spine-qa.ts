@@ -525,21 +525,40 @@ console.log('[H] ES CompanyPicker 接続（R4）');
 }
 
 {
-  // Case E: ES 材料選択 V1 / CONTEXT_FREE を触っていないこと。
+  // Case E: 材料選択の pure function 群と、企業非依存の ES route が company-free であること。
+  //   ★ `app/api/career/es/deep/route.ts` は Data Spine 完了フェーズで **意図的に** consumer に
+  //     なった（企業依存設問のみ Company Official を背景に載せる）。したがって untouched からは
+  //     外し、代わりに下の H-8b/H-8c で「gate されていること」「hint 止まりであること」を固定する。
+  //     材料選択そのもの（候補列挙 / ranking / prompt builder）と organize / materials は
+  //     引き続き company-free でなければならない。
   const untouched = [
     'lib/careerEs/materialCandidates.ts',
     'lib/careerEs/materialPrompt.ts',
     'lib/careerEs/deepDivePrompt.ts',
     'lib/careerEs/organizePrompt.ts',
-    'app/api/career/es/deep/route.ts',
     'app/api/career/es/organize/route.ts',
     'app/api/career/es/materials/route.ts',
   ];
   const leaked = untouched.filter((p) => /companyId|CompanyPicker/.test(read(join(ROOT, p))));
   check(
-    'H-8 材料選択 V1 / ES route に companyId が漏れていない（CONTEXT_FREE 維持）',
+    'H-8 材料選択 V1 / 企業非依存 ES route に companyId が漏れていない（CONTEXT_FREE 維持）',
     leaked.length === 0,
     leaked.join(', '),
+  );
+
+  // ★ ES 深掘りは gate 済みの consumer であること（全設問へ無差別投入しない）。
+  const deepResolver = read(join(ROOT, 'app/api/career/es/resolveCompanyOfficial.ts'));
+  check(
+    'H-8b ES 深掘りの企業情報は設問種別で gate される（motivation / research のみ）',
+    /COMPANY_DEPENDENT_QUESTION_TYPES/.test(deepResolver) &&
+      /'motivation'/.test(deepResolver) &&
+      /'research'/.test(deepResolver) &&
+      !/'gakuchika'/.test(deepResolver),
+  );
+  check(
+    'H-8c ★ client 申告 companyId は権威ではなく hint（read repository が実在を確認する）',
+    /権威として扱わない|権威ではなく/.test(deepResolver) &&
+      /loadCompanyOfficialContext/.test(deepResolver),
   );
   const draftEditor = read(join(ROOT, 'app/career/es/draft/[draftId]/page.tsx'));
   check(

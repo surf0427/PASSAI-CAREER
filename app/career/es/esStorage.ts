@@ -4,6 +4,11 @@ import type {
   CareerEsSelectionType,
 } from '@/types/careerEs';
 import { normalizeSelectedMaterials } from '@/lib/careerEs/materialCandidates';
+// canonical shape は lib 側の純関数に一本化する（competing normalizer を作らない）。
+import {
+  emptyCareerEsResult,
+  normalizeCareerEsResult,
+} from '@/lib/careerEs/resultShape';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 
 // SSR / 旧 runtime fallback 付き UUID（run 画面と同方針）。
@@ -17,15 +22,7 @@ export function newEsId(): string {
 // 空の CareerEsResult 土台。ESトレーニングでは本文を body に持つため result は空で埋める
 // （横断メモリ互換のため result 自体は必須。body は保存時に result.answer にも反映する）。
 export function emptyEsResult(): CareerEsResult {
-  return {
-    gakuchika: '',
-    selfPr: '',
-    motivation: '',
-    headline: '',
-    appealPoints: [],
-    interviewQuestions: [],
-    improvements: [],
-  };
+  return emptyCareerEsResult();
 }
 
 // ES ワークスペース（1 版 = 1 ログ）を作る factory。
@@ -97,7 +94,9 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
     id: r.id,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
     userInput: typeof r.userInput === 'string' ? r.userInput : '',
-    result: r.result as CareerEsLog['result'],
+    // ★ read boundary で canonical shape へ正規化する（`{}` や欠損 field を素通ししない）。
+    //   値の捏造はしない: 既存の値はそのまま、欠損だけ '' / [] で埋める。
+    result: normalizeCareerEsResult(r.result),
   };
   if (typeof r.companyName === 'string') log.companyName = r.companyName;
   // Company Identity（Phase A / R4）: optional・欠損が正常（旧ログは常に欠損）。

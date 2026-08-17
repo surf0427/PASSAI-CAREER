@@ -352,6 +352,8 @@ export default function CareerEsDraftEditorPage() {
             onOrganized={handleOrganized}
             knownFacts={knownFacts}
             missingAxes={missingAxes}
+            companyName={draft.companyName}
+            companyId={draft.companyId}
           />
         </>
       ) : (

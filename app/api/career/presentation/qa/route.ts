@@ -112,24 +112,27 @@ export async function POST(req: Request) {
     companyOfficialPromise,
     resolvePresentationContextInputs(b, req),
   ]);
-  const { system } = buildPresentationSystemParts({
-    profile: ctx.profile,
-    activity: ctx.activity,
-    values: ctx.values,
-    selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
-    es: ctx.es as typeof b.es,
-    interview: ctx.interview as typeof b.interview,
-    matching: ctx.matching as typeof b.matching,
-    consultationInsights: ctx.consultationInsights,
-    config,
-    theme,
-    presentationType: b.presentationType,
-    companyOfficial,
-  });
-
-  const userPrompt = buildQaUserPrompt({ theme, transcript, turns, config });
-
   try {
+    // ★ prompt builder も route の error boundary の内側で実行する。
+    //   builder が throw すると（例: 壊れた Layer 1 データ）catch されず
+    //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
+    const { system } = buildPresentationSystemParts({
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      selfAnalysis: ctx.selfAnalysis as typeof b.selfAnalysis,
+      es: ctx.es as typeof b.es,
+      interview: ctx.interview as typeof b.interview,
+      matching: ctx.matching as typeof b.matching,
+      consultationInsights: ctx.consultationInsights,
+      config,
+      theme,
+      presentationType: b.presentationType,
+      companyOfficial,
+    });
+
+    const userPrompt = buildQaUserPrompt({ theme, transcript, turns, config });
+
     // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
     // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。
     const aiBudget = createAiCallBudget({ ...AI_BUDGET_PRESET_80S_WALL });

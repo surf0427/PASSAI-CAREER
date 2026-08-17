@@ -114,6 +114,8 @@ export default function CareerPresentationSessionPage() {
         body: JSON.stringify({
           ...ctx,
           config: session.config ?? null,
+          // 企業公式情報の出し分けに使う（旧セッションの自己PR / ガクチカは除外される）。
+          presentationType: session.presentationType,
           theme: session.theme,
           timeLimitSec: session.timeLimitSec,
           durationSec,

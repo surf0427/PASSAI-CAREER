@@ -108,6 +108,9 @@ export default function CareerPresentationSetupPage() {
         body: JSON.stringify({
           ...ctx,
           config: buildConfig(),
+          // 企業公式情報の出し分けに使う（自己PR / ガクチカ等は企業依存でないため除外される）。
+          //   新規セッションは常に CAREER_PRESENTATION_NEW_SESSION_TYPE。
+          presentationType: CAREER_PRESENTATION_NEW_SESSION_TYPE,
           timeLimitSec,
           difficulty,
           excludeThemes: recentThemes,

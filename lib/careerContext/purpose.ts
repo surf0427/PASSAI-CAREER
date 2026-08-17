@@ -13,6 +13,7 @@
 export type CareerContextPurpose =
   | 'consultation'
   | 'es_review'
+  | 'es_deep_dive'
   | 'interview_practice'
   | 'interview_complete'
   | 'gd_feedback'
@@ -26,6 +27,7 @@ export type CareerContextPurpose =
 export const CAREER_CONTEXT_PURPOSES: readonly CareerContextPurpose[] = [
   'consultation',
   'es_review',
+  'es_deep_dive',
   'interview_practice',
   'interview_complete',
   'gd_feedback',
@@ -93,6 +95,19 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     companyContext: 'optional',
     maxContextChars: 3500,
     notes: 'ES 添削。Data Spine connection で Orchestrator へ移行済み。静的 ES_REVIEW_SYSTEM_PROMPT（添削者ペルソナ・出力 schema）は維持し、base(buildCareerSystemPrompt) と Company 公式情報を **別ブロック**として route が結合する。自己分析は route が canonical renderer で付与。',
+  },
+  es_deep_dive: {
+    // ES 深掘り質問生成。es_review と同じ policy（氏名除外 / activity compact / values 込み）。
+    //   ★ es_review と **別 purpose** にしている理由: Company Official の使い道が違う。
+    //     添削は「本人の記述と企業の実像の照合」、深掘りは「どの経験・動機を確認すべきかの判断材料」。
+    //     renderer の usage note を purpose 単位で出し分けるため、purpose を分ける必要がある。
+    profile: 'minimal',
+    activity: 'compact',
+    values: 'include',
+    recentLogs: 'include', // 直近の自己分析を route が背景 block として付与
+    companyContext: 'optional',
+    maxContextChars: 3500,
+    notes: 'ES 深掘り質問生成（seed / follow-up）。選択材料が主要材料、base + 自己分析は背景。企業依存設問（志望動機 / 企業研究）でのみ Company Official を背景に載せる。',
   },
   interview_practice: {
     // P6-E: PII 除外 pilot 横展開。matching(P6-C)/presentation(P6-D) と同じく profile を minimal に通電し氏名を prompt から落とす。

@@ -49,15 +49,18 @@ export function esFallbackBridge(): {
   profile: CareerEsReviewContextPayload['profile'];
   activity: CareerEsReviewContextPayload['activity'];
   values: CareerEsReviewContextPayload['values'];
+  selfAnalysis: CareerEsReviewContextPayload['selfAnalysis'];
 } {
   try {
-    return {
+    // 選択規則（最新 1 件）は canonical selector に委譲する（ES 専用実装を作らない）。
+    return buildEsReviewRequestContext({
       profile: loadBasicInfo(),
       activity: loadActivityData(),
       values: loadCareerValues(),
-    };
+      selfAnalysisLogs: loadSelfAnalysisLogsSafe(),
+    });
   } catch {
-    return { profile: null, activity: null, values: null };
+    return EMPTY_ES_REVIEW_CONTEXT;
   }
 }
 

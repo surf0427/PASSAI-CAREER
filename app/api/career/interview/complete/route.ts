@@ -158,26 +158,29 @@ export async function POST(req: Request) {
     { selfAnalysis: ctx.selfAnalysis, es: ctx.es },
     req,
   );
-  const system = [
-    buildInterviewBaseSystem({
-      profile: ctx.profile,
-      activity: ctx.activity,
-      values: ctx.values,
-      selfAnalysis: ctx.selfAnalysis,
-      es: ctx.es,
-      matching: ctx.matching,
-      consultationInsights: ctx.consultationInsights,
-      companyResearch,
-      companyOfficial,
-      personalMemory,
-      target,
-      interviewType,
-      userInput: typeof b.userInput === 'string' ? b.userInput : '',
-    }),
-    buildFinalFeedbackInstruction(interviewType, !!companyResearch, target),
-  ].join('\n\n');
-
   try {
+    // ★ prompt builder も route の error boundary の内側で実行する。
+    //   builder が throw すると（例: 壊れた Layer 1 データ）catch されず
+    //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
+    const system = [
+      buildInterviewBaseSystem({
+        profile: ctx.profile,
+        activity: ctx.activity,
+        values: ctx.values,
+        selfAnalysis: ctx.selfAnalysis,
+        es: ctx.es,
+        matching: ctx.matching,
+        consultationInsights: ctx.consultationInsights,
+        companyResearch,
+        companyOfficial,
+        personalMemory,
+        target,
+        interviewType,
+        userInput: typeof b.userInput === 'string' ? b.userInput : '',
+      }),
+      buildFinalFeedbackInstruction(interviewType, !!companyResearch, target),
+    ].join('\n\n');
+
     let result: CareerInterviewFinalResult | null = null;
     // AI 合計時間予算（wall 80s の内側に固定）。retry ごとに満額 signal を再発行すると
     // 合計が wall を超えて 504（非JSON）になり、client には汎用エラーしか見えなくなる。

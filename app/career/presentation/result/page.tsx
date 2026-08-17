@@ -107,6 +107,8 @@ export default function CareerPresentationResultPage() {
         body: JSON.stringify({
           ...ctx,
           config: selected.config ?? null,
+          // 企業公式情報の出し分けに使う（旧ログの自己PR / ガクチカは除外される）。
+          presentationType: selected.presentationType,
           theme: selected.theme,
           transcript: selected.transcript,
           turns,

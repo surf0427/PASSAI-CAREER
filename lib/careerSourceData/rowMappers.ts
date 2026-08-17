@@ -18,6 +18,8 @@
 //   - PII の除去はここでは行わない（Layer 1 は原本。PII 除去は Layer 2 projection の責務）。
 
 import type { CareerProfile } from '@/types/careerProfile';
+// ES result は DDL 既定が '{}'::jsonb。read boundary で canonical shape へ正規化する。
+import { normalizeCareerEsResult } from '@/lib/careerEs/resultShape';
 import type { CareerActivity } from '@/types/careerActivity';
 import type {
   CareerValues,
@@ -184,7 +186,7 @@ export function rowToCareerEsLog(row: CareerEsLogRow): CareerEsLog {
     id: row.client_id,
     createdAt: row.created_at,
     userInput: typeof row.user_input === 'string' ? row.user_input : '',
-    result: (row.result ?? {}) as CareerEsResult,
+    result: normalizeCareerEsResult(row.result),
     favorite: row.favorite,
     submitted: row.submitted,
   };

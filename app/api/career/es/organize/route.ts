@@ -21,13 +21,15 @@ import {
   ES_KNOWN_FACTS_MAX_LINES,
   ES_KNOWN_FACTS_MAX_LINE_CHARS,
 } from '@/lib/careerEs/deepDivePrompt';
-// Data Spine fallback: 材料未選択のときだけ背景 context を足す（選択済みなら byte 不変）。
+// Data Spine: 選択材料と **併用**する背景 context（選択の有無で見出し・ルールが変わる）。
+//   ★ Organize に企業公式情報は載せない（Q&A を本人の言葉で構造化するのが目的のため）。
 import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
 import type {
   CareerProfileInput,
   CareerActivityInput,
   CareerValuesInput,
 } from '@/lib/careerAi';
+import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 
 export const maxDuration = 80;
 
@@ -90,10 +92,11 @@ export async function POST(req: Request) {
     question?: unknown;
     turns?: unknown;
     knownFacts?: unknown;
-    // User Data Spine bridge（材料未選択時の fallback 用。未指定なら従来どおり）。
+    // User Data Spine bridge（背景 context 用。未指定なら背景ブロックは出ない）。
     profile?: CareerProfileInput | null;
     activity?: CareerActivityInput | null;
     values?: CareerValuesInput | null;
+    selfAnalysis?: CareerSelfAnalysisResult | null;
   };
 
   const question = str(b.question);
@@ -108,7 +111,7 @@ export async function POST(req: Request) {
   }
 
   const userMessage = buildEsOrganizeUserMessage(question, turns, knownFacts);
-  // 材料を 1 つも選んでいないユーザーにだけ背景 context を足す（選択済みなら '' ＝ byte 不変）。
+  // 選択材料の有無に関わらず背景 context を足す（有無で見出し・取り扱いルールが変わる）。
   const fallbackBlock = await resolveEsFallbackContextBlock(knownFacts.length > 0, b, req);
 
   try {

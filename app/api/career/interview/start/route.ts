@@ -109,23 +109,26 @@ export async function POST(req: Request) {
     { selfAnalysis: ctx.selfAnalysis, es: ctx.es },
     req,
   );
-  const system = buildInterviewBaseSystem({
-    profile: ctx.profile,
-    activity: ctx.activity,
-    values: ctx.values,
-    selfAnalysis: ctx.selfAnalysis,
-    es: ctx.es,
-    matching: ctx.matching,
-    consultationInsights: ctx.consultationInsights,
-    companyResearch: ctx.companyResearch,
-    companyOfficial,
-    personalMemory,
-    target,
-    interviewType,
-    userInput: typeof b.userInput === 'string' ? b.userInput : '',
-  });
-
   try {
+    // ★ prompt builder も route の error boundary の内側で実行する。
+    //   builder が throw すると（例: 壊れた Layer 1 データ）catch されず
+    //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
+    const system = buildInterviewBaseSystem({
+      profile: ctx.profile,
+      activity: ctx.activity,
+      values: ctx.values,
+      selfAnalysis: ctx.selfAnalysis,
+      es: ctx.es,
+      matching: ctx.matching,
+      consultationInsights: ctx.consultationInsights,
+      companyResearch: ctx.companyResearch,
+      companyOfficial,
+      personalMemory,
+      target,
+      interviewType,
+      userInput: typeof b.userInput === 'string' ? b.userInput : '',
+    });
+
     const message = await anthropic.messages.create(
       {
         model: CAREER_INTERVIEW_MODEL,

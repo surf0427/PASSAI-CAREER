@@ -108,6 +108,9 @@ const PURPOSE_MANIFEST: PurposeClaim[] = [
   // Data Spine connection: ES 添削を Orchestrator へ接続した（route が base + 公式情報を結合）。
   //   es/deep・es/organize は「材料未選択時のみ」es_review policy を借りて背景 context を組む。
   { purpose: 'es_review', classification: 'FULL_SERVER', callsites: ['app/api/career/es-review/route.ts', 'app/api/career/es/resolveFallbackContext.ts'] },
+  // ES 深掘り質問生成。企業依存設問でのみ Company Official を背景に載せるため、
+  //   usage note を purpose 単位で分ける必要があり es_review とは別 purpose にしている。
+  { purpose: 'es_deep_dive', classification: 'FULL_SERVER', callsites: ['app/api/career/es/resolveCompanyOfficial.ts'] },
   { purpose: 'interview_complete', classification: 'DORMANT_INTENTIONAL', callsites: [] },
   { purpose: 'gd_feedback', classification: 'DORMANT_INTENTIONAL', callsites: [] },
   { purpose: 'mypage_summary', classification: 'DORMANT_INTENTIONAL', callsites: [] },

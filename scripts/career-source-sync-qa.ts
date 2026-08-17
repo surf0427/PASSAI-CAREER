@@ -46,6 +46,7 @@ import {
   rowToCareerActivity,
 } from '@/lib/careerSourceData/rowMappers';
 import { SECTION_SOURCE_KINDS } from '@/lib/careerMemory/persistence/sourceProjection';
+import { normalizeCareerEsResult } from '@/lib/careerEs/resultShape';
 import {
   PERSONAL_MEMORY_SYNC_KINDS,
   BASE_CONTEXT_SYNC_KINDS,
@@ -92,8 +93,13 @@ const VALUES = {
 };
 const SELF_LOGS = [{ id: 'sa-1', createdAt: CLIENT_TS, userInput: 'in', result: { summary: 's', strengths: ['計画性'] } }];
 // ★ body / mode / groupId / version / deepDive は mirror の meta へ保存されない（toMeta 参照）。
+// ★ client canonical は `loadEsLogs()` → `normalizeEsLog` を通るため、result は必ず
+//   canonical shape（4 string + 3 list、欠損は '' / []）になっている。
+//   fixture もその実態に合わせる（生の部分オブジェクトは client 側に存在しない形）。
+//   `createEsWorkspaceLog` も `{ ...emptyEsResult(), answer: body }` を保存する。
 const ES_LOGS = [{
-  id: 'es-1', createdAt: CLIENT_TS, userInput: '', result: { answer: '本文' },
+  id: 'es-1', createdAt: CLIENT_TS, userInput: '',
+  result: normalizeCareerEsResult({ answer: '本文' }),
   body: '本文', mode: 'write', groupId: 'es-1', version: 1, deepDive: { a: 1 },
   companyName: 'A社', question: '設問', charLimit: 400, selectionType: 'main',
   favorite: true, submitted: false,
@@ -142,6 +148,21 @@ function main() {
       const a = computeSourceSyncRevision(kind, CLIENT_BUNDLE);
       const b = computeSourceSyncRevision(kind, MIRROR_BUNDLE);
       check(a === b, `${kind}: client と mirror 往復後で revision 一致`, `${a} vs ${b}`);
+    }
+    // ★ 追加の安全網: ES result が壊れた形（DDL 既定の `{}` など）でも、
+    //   client 正規化（esStorage.normalizeEsLog → normalizeCareerEsResult）と
+    //   mirror 正規化（rowToCareerEsLog → normalizeCareerEsResult）が **同じ shape** を
+    //   作ることを固定する。ここが非対称になると revision が永久に一致せず、
+    //   Personal Memory が恒久 veto される（この QA の存在理由そのもの）。
+    for (const raw of [{}, { answer: '本文' }, { gakuchika: 'G' }] as unknown[]) {
+      const clientSide = [{ id: 'sym-1', createdAt: CLIENT_TS, userInput: '', result: normalizeCareerEsResult(raw), favorite: false, submitted: false }];
+      const mirrorSide = [rowToCareerEsLog({
+        client_id: 'sym-1', user_input: '', result: raw, edited_result: null,
+        favorite: false, submitted: false, meta: {}, created_at: CLIENT_TS,
+      } as never)];
+      const ra = computeSourceSyncRevision('es', { ...EMPTY_CAREER_SOURCE_BUNDLE, esLogs: clientSide } as unknown as CareerSourceBundle);
+      const rb = computeSourceSyncRevision('es', { ...EMPTY_CAREER_SOURCE_BUNDLE, esLogs: mirrorSide } as unknown as CareerSourceBundle);
+      check(ra === rb, `es: 壊れた result（${JSON.stringify(raw)}）でも client/mirror 正規化が対称`, `${ra} vs ${rb}`);
     }
     check(
       computeSourceSyncRevision('values', CLIENT_BUNDLE) === computeSourceSyncRevision('values', MIRROR_BUNDLE),
