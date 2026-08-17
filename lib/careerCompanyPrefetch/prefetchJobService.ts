@@ -17,6 +17,20 @@
  *
  * 部分成功を許す: identity は取れたが公式サイトが落ちていた、という状態を
  * failed に丸めない（取れた fact を捨てない）。
+ *
+ * ── TTL lifecycle（fresh → stale → refresh → fresh …）────────────────
+ *   Stage 2 の freshness 判定は「取るか / 取らないか」の 2 値ではなく、
+ *   **どの fact_group を取り直すか（refresh scope）**を決める。
+ *     全 group fresh          → 外部 I/O ゼロで終了（kind: 'fresh'）
+ *     一部 group が stale     → その group に必要な取得だけを行う
+ *       identity fresh        → 公的 registry を叩かない（既存の identity facts が現行値）
+ *       profile/navigation fresh → 公式サイトを取りに行かない
+ *   取得できた fact は **新しい fetched_at / valid_until を持つ行として積む**（上書き削除しない）。
+ *   取得に失敗した group は old fact をそのまま残す（last-known-good + stale）。
+ *
+ *   「もう一度取ってよいか」の最終判定は job 台帳（claim RPC）が持つ。
+ *   terminal 行は **永久禁止ではなく cooldown 付きの休止**である
+ *   （`lib/careerCompanyPrefetch/refreshPolicy.ts` / DDL §7 の CLAIMED_REFRESH）。
  */
 
 import type { CompanyRegisterResult } from '@/types/careerCompanyIdentity';
@@ -410,6 +424,21 @@ async function loadGroupStates(deps: PrefetchDeps, companyId: string) {
 }
 
 /**
+ * 「今回取りに行く group」＝ missing / stale な group だけ（**refresh scope**）。
+ *
+ * ★ 一部 group が stale なだけで企業データ全部を取り直さない。
+ *   identity（TTL 180 日）が fresh なのに profile（90 日）の期限が来ただけなら、
+ *   公的 registry へは行かず公式サイトだけを取り直す。
+ */
+async function loadRefreshScope(
+  deps: PrefetchDeps,
+  companyId: string,
+): Promise<CompanyFactGroup[]> {
+  const states = await loadGroupStates(deps, companyId);
+  return states.filter((s) => shouldRefetchGroup(s.freshness)).map((s) => s.factGroup);
+}
+
+/**
  * 企業名 1 件分の prefetch を実行する（never-throw）。
  *
  * ★ 呼び出し側（route）は結果を待たない（`after()` で登録する）。
@@ -432,16 +461,35 @@ export async function runCompanyPrefetch(
     //   「既に知っている企業で、情報も新しい」なら **1 バイトも取りに行かない**。
     //   これが Requirement C（同じ企業を何度入力しても外部検索しない）の本体。
     //   ここを identity 解決より後ろに置くと、既知企業でも毎回 registry を叩いてしまう。
+    //   ★ fresh でなかった場合は「どの group が古いか」をそのまま refresh scope として持ち回る。
+    let refreshScope: CompanyFactGroup[] | null = null;
     if (internal) {
-      const cached = await loadGroupStates(deps, internal.companyId);
-      if (cached.every((s) => !shouldRefetchGroup(s.freshness))) {
+      refreshScope = await loadRefreshScope(deps, internal.companyId);
+      if (refreshScope.length === 0) {
         emit(deps, { stage: 'freshness', outcome: 'all_fresh_internal' });
         return { kind: 'fresh', companyId: internal.companyId };
       }
+      emit(deps, { stage: 'freshness', outcome: 'refresh_scoped', count: refreshScope.length });
     }
 
-    // ── Stage 1c: 外部 registry で identity を確定 / 新規作成 ──────────
-    const identity = await resolveCompanyIdentity(deps, name, internal);
+    // ── Stage 1c: identity の確定 ────────────────────────────────────
+    //   ★ identity group が fresh で、かつ内部 registry で既に企業が決まっているなら
+    //     **公的 registry を叩かない**（R6: 期限の来ていない source を取り直さない）。
+    //     この場合 candidate は無く identity facts も作らない（既存の値がそのまま現行値）。
+    let identity: IdentityResolution;
+    if (internal && refreshScope && !refreshScope.includes('identity')) {
+      identity = {
+        kind: 'resolved',
+        companyId: internal.companyId,
+        displayName: internal.displayName,
+        candidate: null,
+        registrySource: null,
+      };
+      emit(deps, { stage: 'identity', outcome: 'fresh_skipped' });
+    } else {
+      identity = await resolveCompanyIdentity(deps, name, internal);
+    }
+
     if (identity.kind === 'blocked') {
       return { kind: 'identity_blocked', reason: identity.reason };
     }
@@ -449,12 +497,15 @@ export async function runCompanyPrefetch(
 
     // ── Stage 2: freshness 再確認（companyId が内部解決と違いうるため）──
     if (!internal || internal.companyId !== companyId) {
-      const groupStates = await loadGroupStates(deps, companyId);
-      if (groupStates.every((s) => !shouldRefetchGroup(s.freshness))) {
+      refreshScope = await loadRefreshScope(deps, companyId);
+      if (refreshScope.length === 0) {
         emit(deps, { stage: 'freshness', outcome: 'all_fresh' });
         return { kind: 'fresh', companyId };
       }
     }
+
+    // ここまで来た時点で refreshScope は必ず非空（空なら上で return 済み）。
+    const targetGroups: readonly CompanyFactGroup[] = refreshScope ?? PREFETCH_FACT_GROUPS;
 
     // ── Stage 3: claim（company-scoped）──────────────────────────────
     const jobIdentity = deps.buildIdentity(companyId);
@@ -462,6 +513,8 @@ export async function runCompanyPrefetch(
     emit(deps, { stage: 'claim', outcome: claim.outcome });
     if (!claim.attemptToken) {
       // ALREADY_RUNNING / ALREADY_COMPLETED / FAILED_NON_RETRYABLE / RETRY_LIMIT_REACHED
+      // ★ いずれも **今は**取りに行かないという意味であり、永久禁止ではない。
+      //   cooldown を過ぎれば同じ行が CLAIMED_REFRESH で再び開く（refreshPolicy.ts）。
       return { kind: 'deduped', companyId, outcome: claim.outcome };
     }
     const attemptToken = claim.attemptToken;
@@ -479,7 +532,14 @@ export async function runCompanyPrefetch(
 
     let externalFailure: CompanyEnrichmentErrorCode | null = null;
 
-    if (deps.externalFetchEnabled()) {
+    // ★ 公式サイト取得は profile / navigation のどちらかが対象のときだけ走る（R6）。
+    //   identity だけを取り直す場合、サイトへは 1 バイトも出さない。
+    const needsOfficialSite =
+      targetGroups.includes('profile') || targetGroups.includes('navigation');
+
+    if (!needsOfficialSite) {
+      emit(deps, { stage: 'discovery', outcome: 'skipped_fresh' });
+    } else if (deps.externalFetchEnabled()) {
       const discovery = await discoverOfficialSite(deps, displayName, candidate);
       sources.push(...discovery.sources);
       if (discovery.document) {
@@ -517,8 +577,10 @@ export async function runCompanyPrefetch(
 
     // ── Stage 6: terminal ────────────────────────────────────────────
     // 対象 group をすべて満たしたか（部分成功を completed と偽らない）。
+    // ★ 判定は **今回の refresh scope** に対して行う。fresh だったので取りに行かなかった
+    //   group を「欠けている」とは数えない（正しい scoped refresh を partial と偽らない）。
     const writtenGroups = new Set(merged.map((f) => f.factGroup));
-    const complete = PREFETCH_FACT_GROUPS.every((g) => writtenGroups.has(g));
+    const complete = targetGroups.every((g) => writtenGroups.has(g));
     const status: 'completed' | 'partial' = complete && !externalFailure ? 'completed' : 'partial';
     const errorCode = status === 'partial' ? (externalFailure ?? 'PARTIAL_RESULT') : null;
 

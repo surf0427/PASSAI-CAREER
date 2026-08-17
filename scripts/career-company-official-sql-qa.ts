@@ -210,6 +210,7 @@ console.log('[Q-6] claim RPC');
   for (const outcome of [
     'CLAIMED_NEW',
     'CLAIMED_RETRY',
+    'CLAIMED_REFRESH',
     'ALREADY_RUNNING',
     'ALREADY_COMPLETED',
     'FAILED_NON_RETRYABLE',
@@ -226,6 +227,120 @@ console.log('[Q-6] claim RPC');
     'Q-6j service_role 限定（anon / authenticated から REVOKE）',
     sql.includes('REVOKE ALL ON FUNCTION public.career_company_enrichment_job_claim') &&
       sql.includes('GRANT EXECUTE ON FUNCTION public.career_company_enrichment_job_claim'),
+  );
+
+  // ── TTL refresh lifecycle（★ terminal state != permanent state）─────
+  //
+  //   idempotency_key は company_id / task / revision だけから作られ、時間成分を持たない。
+  //   したがって terminal 行（completed / partial / failed）を「二度と取得しない」と解釈すると、
+  //   1 度成功した企業は fetcher_revision を上げるコード変更でしか再取得できなくなる。
+  //   ここは「cooldown 付きの休止」であることを SQL テキストで固定する。
+  //   判定の意味論は lib/careerCompanyPrefetch/refreshPolicy.ts と
+  //   scripts/career-company-prefetch-ttl-qa.ts が実行して検証する（本 QA は DDL 側の契約）。
+
+  /** IF v_refresh_due THEN 〜 END IF; の本体（refresh 分岐だけを見る）。 */
+  const refreshBranch = (() => {
+    const start = fn.indexOf('IF v_refresh_due THEN');
+    if (start < 0) return '';
+    const end = fn.indexOf('END IF;', start);
+    return end < 0 ? '' : fn.slice(start, end);
+  })();
+
+  check(
+    'Q-6k ★ cooldown を引数で受け取る（TTL 判定を DB に埋め込まない）',
+    fn.includes('p_refresh_after_seconds') && fn.includes('p_failure_cooldown_seconds'),
+  );
+  check(
+    'Q-6k2 cooldown 引数も検証して RAISE（0 / NULL で永久 refresh にしない）',
+    /p_refresh_after_seconds IS NULL OR p_refresh_after_seconds <= 0/.test(fn) &&
+      /p_failure_cooldown_seconds IS NULL OR p_failure_cooldown_seconds <= 0/.test(fn),
+  );
+  check(
+    'Q-6l ★ terminal から cooldown 経過で再 claim できる（CLAIMED_REFRESH）',
+    refreshBranch !== '' && refreshBranch.includes("'CLAIMED_REFRESH'"),
+  );
+  check(
+    'Q-6l2 refresh 判定は terminal 時刻 + cooldown <= now()',
+    /v_refresh_due\s*:=\s*v_terminal_at IS NOT NULL[\s\S]*?v_terminal_at \+ make_interval\(secs => v_cooldown\) <= now\(\)/.test(fn),
+  );
+  check(
+    'Q-6l3 completed は refresh cooldown / それ以外は failure cooldown',
+    /v_cooldown\s*:=\s*CASE WHEN v_row\.status = 'completed'[\s\S]*?p_refresh_after_seconds[\s\S]*?p_failure_cooldown_seconds/.test(fn),
+  );
+  check(
+    'Q-6l4 terminal 時刻は completed_at / failed_at から採る',
+    /v_terminal_at\s*:=\s*CASE[\s\S]*?completed_at[\s\S]*?failed_at[\s\S]*?END;/.test(fn),
+  );
+
+  // ★ 判定順（ここが崩れると「実行中の横取り」か「永久ブロック」のどちらかが復活する）。
+  check(
+    'Q-6m ★ ALREADY_RUNNING が refresh 判定より前（実行中の job を横取りしない）',
+    fn.indexOf("'ALREADY_RUNNING'") >= 0 &&
+      fn.indexOf("'ALREADY_RUNNING'") < fn.indexOf('v_refresh_due :='),
+  );
+  check(
+    'Q-6n ★ refresh 分岐が ALREADY_COMPLETED より前（completed を永久 terminal にしない）',
+    fn.indexOf("'CLAIMED_REFRESH'") >= 0 &&
+      fn.indexOf("'CLAIMED_REFRESH'") < fn.indexOf("'ALREADY_COMPLETED'"),
+  );
+  check(
+    'Q-6n2 ★ refresh 分岐が FAILED_NON_RETRYABLE / RETRY_LIMIT_REACHED より前',
+    fn.indexOf("'CLAIMED_REFRESH'") < fn.indexOf("'FAILED_NON_RETRYABLE'") &&
+      fn.indexOf("'CLAIMED_REFRESH'") < fn.indexOf("'RETRY_LIMIT_REACHED'"),
+  );
+  check(
+    'Q-6n3 cooldown 未経過の completed は従来どおり deduped',
+    fn.includes("RETURN QUERY SELECT 'ALREADY_COMPLETED'::text"),
+  );
+
+  // ★ 新サイクルは attempt 予算を戻す（attempt_count を生涯上限にしない）。
+  check(
+    'Q-6o ★ refresh で attempt_count を 1 へリセットする',
+    /attempt_count = 1\b/.test(refreshBranch),
+  );
+  check(
+    'Q-6o2 refresh で terminal 列（error_code / completed_at / failed_at）を消す',
+    /error_code = NULL/.test(refreshBranch) &&
+      /completed_at = NULL/.test(refreshBranch) &&
+      /failed_at = NULL/.test(refreshBranch),
+  );
+  check(
+    'Q-6o3 refresh は新しい attempt_token と lease を発行する（fencing を維持）',
+    /attempt_token = gen_random_uuid\(\)/.test(refreshBranch) &&
+      /lease_expires_at = now\(\) \+ make_interval\(secs => p_lease_seconds\)/.test(refreshBranch),
+  );
+  check(
+    'Q-6o4 ★ refresh でも facts / sources を消さない（last-known-good を残す）',
+    !/DELETE|TRUNCATE/i.test(refreshBranch),
+  );
+
+  // ★ refresh_cycle_count（attempt_count はサイクル内・こちらがサイクル数）。
+  const jobs = tableBody('career_company_enrichment_jobs');
+  check('Q-6p refresh_cycle_count 列がある', jobs.includes('refresh_cycle_count'));
+  check(
+    'Q-6p2 refresh_cycle_count は既存環境へも非破壊に追加される',
+    sql.includes('ADD COLUMN IF NOT EXISTS refresh_cycle_count int NOT NULL DEFAULT 1'),
+  );
+  check('Q-6p3 refresh_cycle_count >= 1 の不変条件がある', jobs.includes('refresh_cycle_count >= 1'));
+  check(
+    'Q-6p4 ★ refresh のたびに refresh_cycle_count が進む',
+    /refresh_cycle_count = COALESCE\(v_row\.refresh_cycle_count, 1\) \+ 1/.test(refreshBranch),
+  );
+
+  // ★ 引数が 8 → 10 に増えた。CREATE OR REPLACE は signature 違いだと overload 追加になる。
+  check(
+    'Q-6q 旧 signature（8 引数）を DROP してから作り直す',
+    sql.indexOf('DROP FUNCTION IF EXISTS public.career_company_enrichment_job_claim(') >= 0 &&
+      sql.indexOf('DROP FUNCTION IF EXISTS public.career_company_enrichment_job_claim(') <
+        sql.indexOf('CREATE OR REPLACE FUNCTION public.career_company_enrichment_job_claim'),
+  );
+  check(
+    'Q-6q2 GRANT / REVOKE が新 signature（10 引数）を指す',
+    (sql.match(/text, text, text, text, text, int, int, text\[\], int, int/g) ?? []).length >= 2,
+  );
+  check(
+    'Q-6q3 旧 signature への GRANT / REVOKE が残っていない',
+    !/(REVOKE|GRANT)[\s\S]{0,120}career_company_enrichment_job_claim\(\s*\n?\s*text, text, text, text, text, int, int, text\[\]\s*\n?\s*\)/.test(sql),
   );
 }
 

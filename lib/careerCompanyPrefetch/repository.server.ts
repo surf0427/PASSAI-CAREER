@@ -29,9 +29,11 @@ import {
 import { computeValidUntil } from '@/lib/careerCompanyOfficial/freshness';
 import { devWarn } from '@/lib/devLog';
 import {
+  FAILURE_COOLDOWN_SECONDS,
   LEASE_SECONDS,
   MAX_ATTEMPTS,
   NONRETRYABLE_ERROR_CODES,
+  REFRESH_COOLDOWN_SECONDS,
   type CompanyEnrichmentErrorCode,
 } from './constants';
 import type { CompanyEnrichmentIdentity } from './idempotency';
@@ -81,6 +83,8 @@ function toStorageError(err: unknown, ctx: string): CompanyPrefetchStorageError 
 export type CompanyEnrichmentClaimOutcome =
   | 'CLAIMED_NEW'
   | 'CLAIMED_RETRY'
+  /** TTL 経過後の新しい取得サイクル（attempt 予算はリセットされる）。 */
+  | 'CLAIMED_REFRESH'
   | 'ALREADY_RUNNING'
   | 'ALREADY_COMPLETED'
   | 'FAILED_NON_RETRYABLE'
@@ -89,7 +93,7 @@ export type CompanyEnrichmentClaimOutcome =
 export type CompanyEnrichmentClaimResult = {
   outcome: CompanyEnrichmentClaimOutcome;
   jobId: string;
-  /** CLAIMED_NEW / CLAIMED_RETRY のみ非 null（terminal 更新時の fencing token）。 */
+  /** CLAIMED_NEW / CLAIMED_RETRY / CLAIMED_REFRESH のみ非 null（terminal 更新時の fencing token）。 */
   attemptToken: string | null;
   status: string;
   attemptCount: number;
@@ -98,8 +102,11 @@ export type CompanyEnrichmentClaimResult = {
 /**
  * enrichment job を atomic に claim する。
  *
- * ★ 取得を開始してよいのは `CLAIMED_NEW` / `CLAIMED_RETRY` のときだけ。
+ * ★ 取得を開始してよいのは `CLAIMED_NEW` / `CLAIMED_RETRY` / `CLAIMED_REFRESH` のときだけ。
  *   `ALREADY_RUNNING` は「別 request が同じ企業を取得中」＝ N 人同時入力の収束点。
+ *
+ * ★ cooldown 2 種を必ず渡す（`lib/careerCompanyPrefetch/refreshPolicy.ts` と同じ値）。
+ *   渡さないと terminal 行が永久に再 claim 不能になり、TTL 切れ後の再取得が止まる。
  */
 export async function claimCompanyEnrichmentJob(
   admin: SupabaseClient,
@@ -118,6 +125,8 @@ export async function claimCompanyEnrichmentJob(
     p_lease_seconds: LEASE_SECONDS,
     p_max_attempts: MAX_ATTEMPTS,
     p_nonretryable_codes: [...NONRETRYABLE_ERROR_CODES],
+    p_refresh_after_seconds: REFRESH_COOLDOWN_SECONDS,
+    p_failure_cooldown_seconds: FAILURE_COOLDOWN_SECONDS,
   });
 
   if (error) throw toStorageError(error, 'claim');

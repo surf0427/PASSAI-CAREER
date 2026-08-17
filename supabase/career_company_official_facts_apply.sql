@@ -227,10 +227,17 @@ ALTER TABLE public.career_company_derived ENABLE ROW LEVEL SECURITY;
 --   natural key = (company_id, task, idempotency_key)
 --     idempotency_key は server が company_id / task / fetcher_revision /
 --     schema_revision から SHA-256 で算出する（client 申告値は使わない）。
+--     ★ 時間の成分を持たない = 同じ企業は永久に同じ 1 行を使い回す。
+--       よって **terminal 行は「永久に取得禁止」ではなく「次のサイクルまで休止」**として
+--       扱わなければならない（§7 の cooldown 分岐）。ここを取り違えると
+--       1 度 completed になった企業が TTL 後も二度と再取得されない。
 --
 --   status に 'partial' を持つ:
 --     identity は取れたが profile ページの取得に失敗した、という **部分成功**を
 --     failed に丸めない（取れた fact を捨てない）。partial は terminal だが retryable。
+--
+--   attempt_count は **1 取得サイクル内**の試行回数（企業の生涯試行回数ではない）。
+--   refresh_cycle_count が「何サイクル目か」を持つ。
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.career_company_enrichment_jobs (
   id                uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -251,7 +258,10 @@ CREATE TABLE IF NOT EXISTS public.career_company_enrichment_jobs (
   -- attempt fencing（lease を失った古い attempt の書き込みを弾く）。
   attempt_token     uuid,
   lease_expires_at  timestamptz,
+  -- ★ 現在の取得サイクル内の試行回数（サイクルが変わると 1 へ戻る）。
   attempt_count     int         NOT NULL DEFAULT 0,
+  -- ★ 何サイクル目か（TTL 経過で再取得するたびに +1）。運用観測用。
+  refresh_cycle_count int       NOT NULL DEFAULT 1,
 
   -- 結果は「何件書けたか」の数値のみ（事実本体は facts table 側）。
   facts_written     int,
@@ -277,6 +287,7 @@ CREATE TABLE IF NOT EXISTS public.career_company_enrichment_jobs (
 
   CONSTRAINT career_company_enrichment_jobs_invariants CHECK (
     attempt_count >= 0
+    AND refresh_cycle_count >= 1
     AND (facts_written IS NULL OR facts_written >= 0)
     AND (sources_written IS NULL OR sources_written >= 0)
     AND (provider_duration_ms IS NULL OR provider_duration_ms >= 0)
@@ -297,6 +308,13 @@ CREATE TABLE IF NOT EXISTS public.career_company_enrichment_jobs (
     )
   )
 );
+
+-- 既に本 DDL の旧版を適用済みの環境向け（新規適用では上の table 定義に既に含まれる）。
+ALTER TABLE public.career_company_enrichment_jobs
+  ADD COLUMN IF NOT EXISTS refresh_cycle_count int NOT NULL DEFAULT 1;
+
+COMMENT ON COLUMN public.career_company_enrichment_jobs.refresh_cycle_count IS
+  'How many fetch cycles this company job has gone through. Incremented when a terminal row is re-opened after the TTL cooldown (CLAIMED_REFRESH). attempt_count is per-cycle, not lifetime.';
 
 COMMENT ON TABLE public.career_company_enrichment_jobs IS
   'Company Data Spine global enrichment job ledger. Company-scoped (NO user_id) so N users wanting the same company converge to ONE external fetch. natural key=(company_id, task, idempotency_key). attempt fencing=(status=running AND attempt_token match). NO company name, URL, HTML, prompt or PII is stored.';
@@ -355,26 +373,53 @@ CREATE POLICY "career_company_derived read"
 -- ----------------------------------------------------------------------------
 -- §7 atomic claim function（company-scoped）
 --
---   career_generation_job_claim と同一の 6 outcome。違いは scope だけ:
+--   career_generation_job_claim と同形。違いは scope と **TTL lifecycle**:
 --     owner-scoped (user_id, idempotency_key) → company-scoped (company_id, task, idempotency_key)
+--     生成 job は「1 入力 = 1 結果」で terminal が最終だが、
+--     企業事実は **時間とともに古くなる**ので terminal が最終ではない。
+--
+--   ★★ dedupe と「再取得の永久禁止」を混同しない ★★
+--     idempotency_key に時間成分は無く、同じ企業は永久に同じ行を使う。
+--     したがって terminal（completed / partial / failed）は
+--     **「次のサイクルまで休止」**であって「二度と取得しない」ではない。
+--     cooldown を過ぎた terminal 行は CLAIMED_REFRESH として再 claim できる。
+--     この分岐が無いと、1 度成功した企業は fetcher_revision を上げる **コード変更でしか**
+--     再取得できなくなる（TTL が切れても永久に ALREADY_COMPLETED）。
 --
 --   outcome:
 --     CLAIMED_NEW          新規 claim 成功（呼び出し側が取得を開始してよい）
---     CLAIMED_RETRY        stale reclaim / retryable failed / partial 後の再 claim 成功
+--     CLAIMED_RETRY        stale reclaim / retryable failed / partial 後の **同一サイクル内**再 claim
+--     CLAIMED_REFRESH      ★ cooldown 経過後の **新しい取得サイクル**（attempt_count を 1 へ戻す）
 --     ALREADY_RUNNING      別 attempt が実行中（lease 有効）。取得しない ← ★ N 人同時入力の収束点
---     ALREADY_COMPLETED    completed 済み。取得しない
---     FAILED_NON_RETRYABLE 非 retryable で失敗確定。取得しない
---     RETRY_LIMIT_REACHED  MAX_ATTEMPTS 到達。取得しない
+--     ALREADY_COMPLETED    completed 済みかつ cooldown 未経過。取得しない
+--     FAILED_NON_RETRYABLE 非 retryable で失敗確定かつ cooldown 未経過。取得しない
+--     RETRY_LIMIT_REACHED  サイクル内 MAX_ATTEMPTS 到達かつ cooldown 未経過。取得しない
+--
+--   cooldown（呼び出し側が constants.ts の値を渡す）:
+--     p_refresh_after_seconds     completed から次サイクルまで（= prefetch 対象 group の最短 TTL）
+--     p_failure_cooldown_seconds  partial / failed から次サイクルまで（短い）
+--   ★ p_refresh_after_seconds は freshness policy の最短 TTL より **長くしてはならない**。
+--     長いと「呼び出し側は stale と判定したのに DB が claim を拒む」窓ができる。
+--   ★ 判定順は lib/careerCompanyPrefetch/refreshPolicy.ts の decideCompanyJobClaim と 1:1。
+--
+--   ⚠ 引数が 8 → 10 に増えたため、旧 signature を明示的に DROP する
+--     （CREATE OR REPLACE は signature が違うと置換ではなく **overload の追加**になる）。
 -- ----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.career_company_enrichment_job_claim(
+  text, text, text, text, text, int, int, text[]
+);
+
 CREATE OR REPLACE FUNCTION public.career_company_enrichment_job_claim(
-  p_company_id         text,
-  p_task               text,
-  p_idempotency_key    text,
-  p_fetcher_revision   text,
-  p_schema_revision    text,
-  p_lease_seconds      int,
-  p_max_attempts       int,
-  p_nonretryable_codes text[]
+  p_company_id               text,
+  p_task                     text,
+  p_idempotency_key          text,
+  p_fetcher_revision         text,
+  p_schema_revision          text,
+  p_lease_seconds            int,
+  p_max_attempts             int,
+  p_nonretryable_codes       text[],
+  p_refresh_after_seconds    int,
+  p_failure_cooldown_seconds int
 )
 RETURNS TABLE (
   outcome       text,
@@ -388,10 +433,13 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_id    uuid;
-  v_tok   uuid;
-  v_row   public.career_company_enrichment_jobs%ROWTYPE;
-  v_stale boolean;
+  v_id          uuid;
+  v_tok         uuid;
+  v_row         public.career_company_enrichment_jobs%ROWTYPE;
+  v_stale       boolean;
+  v_terminal_at timestamptz;
+  v_cooldown    int;
+  v_refresh_due boolean;
 BEGIN
   IF p_company_id IS NULL OR p_company_id = ''
      OR p_task IS NULL OR p_task = ''
@@ -399,7 +447,9 @@ BEGIN
      OR p_fetcher_revision IS NULL OR p_fetcher_revision = ''
      OR p_schema_revision IS NULL OR p_schema_revision = ''
      OR p_lease_seconds IS NULL OR p_lease_seconds <= 0
-     OR p_max_attempts IS NULL OR p_max_attempts <= 0 THEN
+     OR p_max_attempts IS NULL OR p_max_attempts <= 0
+     OR p_refresh_after_seconds IS NULL OR p_refresh_after_seconds <= 0
+     OR p_failure_cooldown_seconds IS NULL OR p_failure_cooldown_seconds <= 0 THEN
     RAISE EXCEPTION 'career_company_enrichment_job_claim: missing/invalid argument';
   END IF;
 
@@ -425,16 +475,59 @@ BEGIN
   WHERE company_id = p_company_id AND task = p_task AND idempotency_key = p_idempotency_key
   FOR UPDATE;
 
-  IF v_row.status = 'completed' THEN
-    RETURN QUERY SELECT 'ALREADY_COMPLETED'::text, v_row.id, NULL::uuid, 'completed'::text, v_row.attempt_count;
+  v_stale := (v_row.status = 'running' AND v_row.lease_expires_at <= now());
+
+  -- ★ 収束点（最優先）: 別 attempt が実行中なら何もしない。
+  --   100 人が同時に同じ企業を入力しても外部取得は 1 回。
+  --   ★ この判定を cooldown 判定より **前**に置くこと。実行中の job を refresh で横取りしない。
+  IF v_row.status = 'running' AND NOT v_stale THEN
+    RETURN QUERY SELECT 'ALREADY_RUNNING'::text, v_row.id, NULL::uuid, 'running'::text, v_row.attempt_count;
     RETURN;
   END IF;
 
-  v_stale := (v_row.status = 'running' AND v_row.lease_expires_at <= now());
+  -- ── ★ TTL lifecycle: terminal から cooldown 経過 → 新しい取得サイクルを開く ──────
+  --   completed        … データの TTL が切れた（p_refresh_after_seconds）
+  --   partial / failed … 前回の取得が不完全だった（p_failure_cooldown_seconds）
+  --   境界は `<=`（cooldown ちょうどで開く）。freshness 側は age <= TTL を fresh とするため、
+  --   呼び出し側が stale と判定する瞬間には DB 側は必ず開いている。
+  v_terminal_at := CASE
+    WHEN v_row.status IN ('completed','partial') THEN v_row.completed_at
+    WHEN v_row.status = 'failed' THEN v_row.failed_at
+    ELSE NULL
+  END;
+  v_cooldown := CASE WHEN v_row.status = 'completed'
+                     THEN p_refresh_after_seconds
+                     ELSE p_failure_cooldown_seconds END;
+  v_refresh_due := v_terminal_at IS NOT NULL
+                   AND v_terminal_at + make_interval(secs => v_cooldown) <= now();
 
-  -- ★ 収束点: 別 attempt が実行中なら何もしない。100 人が同時に同じ企業を入力しても外部取得は 1 回。
-  IF v_row.status = 'running' AND NOT v_stale THEN
-    RETURN QUERY SELECT 'ALREADY_RUNNING'::text, v_row.id, NULL::uuid, 'running'::text, v_row.attempt_count;
+  IF v_refresh_due THEN
+    -- ★ 新サイクル: attempt 予算を 1 へ戻す。
+    --   戻さないと「過去に MAX_ATTEMPTS 回失敗した企業」が TTL 後も永久に取得不能なままになる。
+    --   ★ facts / sources は消さない（last-known-good を残したまま取り直す）。
+    UPDATE public.career_company_enrichment_jobs
+    SET status = 'running',
+        attempt_token = gen_random_uuid(),
+        attempt_count = 1,
+        refresh_cycle_count = COALESCE(v_row.refresh_cycle_count, 1) + 1,
+        started_at = now(),
+        lease_expires_at = now() + make_interval(secs => p_lease_seconds),
+        error_code = NULL, completed_at = NULL, failed_at = NULL,
+        facts_written = NULL, sources_written = NULL,
+        provider_duration_ms = NULL, total_duration_ms = NULL,
+        fetcher_revision = p_fetcher_revision,
+        schema_revision = p_schema_revision,
+        updated_at = now()
+    WHERE id = v_row.id
+    RETURNING career_company_enrichment_jobs.attempt_token INTO v_tok;
+
+    RETURN QUERY SELECT 'CLAIMED_REFRESH'::text, v_row.id, v_tok, 'running'::text, 1;
+    RETURN;
+  END IF;
+
+  -- cooldown 未経過の terminal は従来どおり取得しない（毎 request で外部に出ない）。
+  IF v_row.status = 'completed' THEN
+    RETURN QUERY SELECT 'ALREADY_COMPLETED'::text, v_row.id, NULL::uuid, 'completed'::text, v_row.attempt_count;
     RETURN;
   END IF;
 
@@ -498,10 +591,10 @@ GRANT ALL ON public.career_company_enrichment_jobs   TO service_role;
 
 -- claim function は server-side（service_role）専用。
 REVOKE ALL ON FUNCTION public.career_company_enrichment_job_claim(
-  text, text, text, text, text, int, int, text[]
+  text, text, text, text, text, int, int, text[], int, int
 ) FROM public, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.career_company_enrichment_job_claim(
-  text, text, text, text, text, int, int, text[]
+  text, text, text, text, text, int, int, text[], int, int
 ) TO service_role;
 
 COMMIT;

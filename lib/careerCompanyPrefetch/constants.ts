@@ -28,8 +28,38 @@ export const COMPANY_EXTRACTION_PROMPT_REVISION = 'company-extract-2026-08-16' a
 export const COMPANY_EXTRACTION_MODEL = 'claude-haiku-4-5-20251001' as const;
 
 // ── attempt / retry ─────────────────────────────────────────────────
-/** 「初回を含む最大試行回数」。1=初回、2/3=reclaim。3 到達後は取得しない。 */
+/**
+ * 「1 取得サイクルあたりの最大試行回数」。1=初回、2/3=reclaim。
+ *
+ * ★ サイクル内の上限であり、企業の生涯上限ではない。
+ *   TTL 経過後の新サイクル（CLAIMED_REFRESH）で attempt_count は 1 へ戻る。
+ *   戻さないと「過去に 3 回失敗した企業」が永久に取得不能になる（本 slice で直した事故）。
+ */
 export const MAX_ATTEMPTS = 3 as const;
+
+// ── refresh lifecycle（TTL 経過後の再取得サイクル）───────────────────
+const REFRESH_DAY_SECONDS = 24 * 60 * 60;
+
+/**
+ * completed から **新しい取得サイクル**を開いてよくなるまでの最短間隔（秒）。
+ *
+ * ★ 値は freshness policy（`COMPANY_FACT_TTL_SECONDS` の prefetch 対象 group の最短 TTL
+ *   ＝ profile / navigation の 90 日）と **一致させる**。
+ *   これより長いと「呼び出し側は stale と判定したのに DB が claim を拒む」窓ができ、
+ *   再取得できない状態へ逆戻りする。一致は
+ *   `refreshCooldownIsConsistent()`（lib/careerCompanyPrefetch/refreshPolicy.ts）と
+ *   `scripts/career-company-prefetch-ttl-qa.ts` が固定する。
+ */
+export const REFRESH_COOLDOWN_SECONDS = 90 * REFRESH_DAY_SECONDS;
+
+/**
+ * partial / failed から再試行サイクルを開いてよくなるまでの最短間隔（秒）。
+ *
+ * ★ 役割は「毎 request で外部に出ない」ことだけ。永久遮断のためではない。
+ *   公式サイトが一時的に落ちていた企業を、翌日には取り直せるようにする。
+ *   サイクル内の即時 retry（CLAIMED_RETRY・MAX_ATTEMPTS まで）は従来どおり cooldown 無しで走る。
+ */
+export const FAILURE_COOLDOWN_SECONDS = 1 * REFRESH_DAY_SECONDS;
 
 // ── timeout / lease ─────────────────────────────────────────────────
 /** route-level maxDuration（秒）。intent route で `export const maxDuration` に使う。 */
