@@ -96,32 +96,48 @@ export default function CareerInterviewResultPage() {
           {selected && (
             <>
               <p className="text-xs text-slate-400 mb-4">
-                実施日時: {formatDate(selected.createdAt)}・面接の種類:{' '}
-                {getInterviewModeConfig(selected.interviewType).label}
+                実施日時: {formatDate(selected.createdAt)}
               </p>
 
-              {selected.target && (
-                <Card variant="soft" padding="md" className="mb-4">
-                  <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
-                    受けた企業・選考
+              {/* 今回の面接条件。評価はこの条件（企業・業界・職種・選考種別・モード・重点対策）を
+                  前提に生成されているため、結果を読むときの文脈として先頭に置く。
+                  ★ target を持たない過去ログでも面接モードだけは必ず出す（後方互換）。 */}
+              <Card variant="soft" padding="md" className="mb-4">
+                <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
+                  今回の面接条件
+                </p>
+                {selected.target ? (
+                  <>
+                    <p className="text-sm font-bold text-slate-900 break-words">
+                      {selected.target.companyName}
+                    </p>
+                    {(() => {
+                      const meta = [
+                        selected.target.industry,
+                        selected.target.jobType,
+                        interviewSelectionLabel(selected.target.selectionType),
+                      ].filter((s) => s);
+                      return meta.length > 0 ? (
+                        <p className="mt-1 text-xs text-slate-500 leading-relaxed break-words">
+                          {meta.join(' / ')}
+                        </p>
+                      ) : null;
+                    })()}
+                  </>
+                ) : null}
+                <p
+                  className={`text-xs text-slate-500 leading-relaxed ${
+                    selected.target ? 'mt-1' : ''
+                  }`}
+                >
+                  {getInterviewModeConfig(selected.interviewType).label}
+                </p>
+                {selected.target?.focusPoint && (
+                  <p className="mt-1.5 text-xs text-slate-500 leading-relaxed break-words">
+                    重点対策: {selected.target.focusPoint}
                   </p>
-                  <p className="text-sm font-bold text-slate-900 break-words">
-                    {selected.target.companyName}
-                  </p>
-                  {(() => {
-                    const meta = [
-                      selected.target.industry,
-                      selected.target.jobType,
-                      interviewSelectionLabel(selected.target.selectionType),
-                    ].filter((s) => s);
-                    return meta.length > 0 ? (
-                      <p className="mt-1 text-xs text-slate-500 leading-relaxed break-words">
-                        {meta.join('・')}
-                      </p>
-                    ) : null;
-                  })()}
-                </Card>
-              )}
+                )}
+              </Card>
 
               {selected.companyResearchLogId && (
                 <Card variant="soft" padding="md" className="mb-4">

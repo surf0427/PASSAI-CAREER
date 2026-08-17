@@ -27,7 +27,9 @@ import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import {
   getInterviewModeConfig,
+  buildInterviewRubricLines,
   SHARED_INTERVIEWER_RULES,
+  type CareerInterviewModeConfig,
 } from '@/app/career/interview/interviewModes';
 
 // 機能キー（就活版共通基盤の出し分け）。
@@ -39,34 +41,24 @@ export const CAREER_INTERVIEW_MODEL = 'claude-sonnet-4-6';
 // 回答ターン上限（受験版 INTERVIEW_AI_MAX_ANSWER_TURNS=5 を踏襲）。
 export const CAREER_INTERVIEW_MAX_TURNS = 5;
 
-// 面接で扱う質問テーマ（新卒就活）。観点を変えながら深掘りするためのプール。
-// 単なる「頑張ったこと」で終わらせず、就活で評価される情報まで自然に掘り下げる狙い。
-const CAREER_INTERVIEW_TOPICS = [
-  'ガクチカ（学生時代に力を入れたこと）と、その行動を選んだ理由・判断基準',
-  '自己PR・強みと、それが発揮された具体的な場面・担った役割',
-  '困難・挫折経験と、どう乗り越えたか（思考プロセス）',
-  '成果の具体化（数字・Before/After・改善・周囲への影響）',
-  'チームでの役割・協働経験と、周囲からの評価',
-  '強みの再現性（他の場面でも同じ強みを発揮できそうか、なぜそう思うか）',
-  '経験から育まれた価値観・大切にしたいこと',
-  '力を発揮できる環境／避けたい環境',
-  '志望動機・キャリア観と、興味のある業界・職種との接続',
-  '就活軸との共通点',
-];
+// 面接で扱う質問テーマ / 深掘り軸は **モード固有**（interviewModes.ts の config.topicPool /
+// config.deepDiveAxes）。
+//   ★ ここに全モード共通のプールを置かない。共通プールに戻すと「モード名だけ違う面接」へ退行し、
+//     質問の種類・配分・深掘り方法がモード間で同一になってしまう（career-interview-mode-差別化 QA が禁止）。
 
-// 深掘りで引き出したい観点（ES・面接・マッチング・企業分析AI で再利用できる粒度）。
-// followup の質問は毎回この中から「その回答で最も価値が高く、まだ十分に聞けていない1点」を選んで掘る。
-const CAREER_DEEP_DIVE_AXES = [
-  '行動の理由・判断基準（なぜそれを選んだか／他に選択肢はあったか／何を基準に決めたか）',
-  '発揮した能力・担った役割（具体的に何をしたか）',
-  '定量的な成果・変化（数字／Before・After／改善の度合い／周囲への影響）',
-  '一番苦労した点・悩んだ点と、その乗り越え方（思考プロセス）',
-  '周囲からの評価（チーム・上長・顧客などの反応）',
-  '強みの再現性（他の場面でも同じ強みを発揮できそうか、なぜそう思うか）',
-  '価値観（その経験から大切にするようになったこと）',
-  '力を発揮できる環境／避けたい環境',
-  '興味のある業界・職種や就活軸との接続（この経験はどんな仕事で活きそうか）',
-];
+// 面接中の「これまでの回答との整合性」確認（本番 / 圧迫モードのみ）。
+//   ★ 学生が実際に発言していない内容を捏造させないことが最優先の制約。
+function buildConsistencyCheckBlock(config: CareerInterviewModeConfig): string {
+  if (!config.checksAnswerConsistency) return '';
+  return [
+    'これまでの回答との整合性（このモードでのみ行う）:',
+    config.pressure
+      ? '- 上のやり取り全体を見て、発言の食い違い・言い換えによるすり替え・当初の主張からの後退があれば、それを最優先で突く。「先ほどは〇〇とおっしゃいましたが、今の説明とどう両立しますか」のように、該当箇所を示して説明を求める。'
+      : '- 上のやり取り全体を見て、明らかな食い違いや説明の後退があれば、「先ほど〇〇とおっしゃっていましたが、今の回答との関係を説明してください」のように自然に確認する。',
+    '- ★ 引用してよいのは上の transcript に実際にある学生の発言だけ。言っていない内容を「先ほど〇〇と言っていましたが」と作り出すことは絶対に禁止。',
+    '- 矛盾が見当たらないときはこの深掘りを行わず、通常の深掘り軸から選ぶ（無理に矛盾を作らない）。',
+  ].join('\n');
+}
 
 // 受験先・選考の想定（target）を面接官 system prompt 用のブロックに整形する。
 // companyName が無ければ空文字（＝旧 target / 企業を特定しない過去セッションでは従来どおり）。
@@ -99,27 +91,48 @@ function buildTargetBlock(
       ? `「${target.companyName}」について事実として言及してよいのは、下の【公式情報】ブロックに出典付きで示されている内容だけです。そこに無い事業内容・待遇・選考フロー・社風などは断定・捏造せず、学生自身の理解と理由を問う形にしてください。`
       : `ただし「${target.companyName}」の事業内容・待遇・選考フロー・社風などの事実は断定・捏造せず、学生自身の理解と理由を問う形にしてください。`,
   ];
-  if (target.industry) lines.push(`- 志望業界: ${target.industry}`);
-  if (target.jobType) lines.push(`- 志望職種: ${target.jobType}`);
+  if (target.industry) {
+    lines.push(
+      selfOnly
+        ? `- 志望業界: ${target.industry}（今回は背景情報。業界理解の確認は主題にしない）`
+        : `- 志望業界: ${target.industry}。「なぜこの業界か」「業界の変化・課題をどう捉えているか」「他業界ではなくこの業界である理由」「自分の経験と業界の接続」を確認できる質問を必要に応じて含めてください。業界の統計・動向を事実として断定しないこと。`,
+    );
+  }
+  if (target.jobType) {
+    lines.push(
+      selfOnly
+        ? `- 志望職種: ${target.jobType}（今回は背景情報。職種適性の確認は主題にしない）`
+        : `- 志望職種: ${target.jobType}。この職種で求められる力・適性・必要な経験・強みの活かし方・志望理由の重心を、この職種に合わせて変えてください。ただしこの企業固有の採用要件・求める人物像を知らないまま断定・捏造しないこと。`,
+    );
+  }
 
+  // 選考種別は「表示項目」ではなく、深掘りの重心そのものを変える指示にする。
+  //   ★ 自己分析モードでは選考種別で質問の重心を変えない（自分自身の言語化に集中する場のため）。
   if (target.selectionType === 'main') {
     lines.push(
-      '- 選考種別: 本選考。入社後の貢献可能性・志望度の強さ・企業適合性・過去経験の再現性・「なぜこの会社か」を重視して深掘りしてください。',
+      selfOnly
+        ? '- 選考種別: 本選考（今回は背景情報）。'
+        : '- 選考種別: 本選考。入社意思・志望度の強さ・キャリアとの一貫性・企業適合性・過去経験の再現性・入社後に何ができるか・「なぜ競合ではなくこの企業か」の比重を上げて深掘りしてください。',
     );
   } else if (target.selectionType === 'internship') {
     lines.push(
-      '- 選考種別: インターン。参加目的・業界や企業への関心・現場理解・学びたいこと・検証したい仮説を重視して深掘りしてください。',
-      '  長期の入社を前提とした断定的な志望確認に寄せすぎないでください。',
+      selfOnly
+        ? '- 選考種別: インターン（今回は背景情報）。'
+        : '- 選考種別: インターン。学習意欲・好奇心・成長可能性・参加目的・行動力・プログラムとの適合・インターンを通して何を得たいか・検証したい仮説の比重を上げて深掘りしてください。',
+      selfOnly
+        ? ''
+        : '  長期の入社意思を前提にした断定的な志望確認（入社後の貢献の詰め）には寄せすぎないでください。',
     );
   }
 
   if (target.focusPoint) {
     lines.push(
-      `# 学生が特に対策したいこと\n${target.focusPoint}`,
-      'この点を意識して、質問・深掘り・最終フィードバックに自然に反映してください。',
+      `# 学生が特に対策したいこと（重点対策）\n「${target.focusPoint}」`,
+      'この面接は「通常の面接 + 重点対策」です。上のテーマに関わる論点は、通常より一段深く連鎖的に掘ってください（主張 → なぜそう言えるのか → その判断の根拠 → 本人の経験との接続、の順に降りる）。',
+      'ただし全質問をこのテーマだけにしないでください。通常の面接進行の中に重点対策を織り込み、他の観点も確認してください。',
     );
   }
-  return lines.join('\n');
+  return lines.filter((s) => s !== '').join('\n');
 }
 
 // 面接官の人格・話し方を、面接の種類（interviewType）に応じて組み立てる。
@@ -217,7 +230,12 @@ export function buildInterviewBaseSystem(input: CareerInterviewContextInput): st
     // P15-B: 自己分析/ES/マッチング/相談AI/企業研究の各ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
     `# この面接の狙い（${config.label}）\n${config.guidance}`,
-    `# 深掘りで扱える観点（毎回この中から最も価値が高い1点を選ぶ）\n${CAREER_INTERVIEW_TOPICS.map((t) => `- ${t}`).join('\n')}`,
+    // ★ モード固有の質問領域プール。モードが変われば質問の種類・配分そのものが変わる。
+    `# この面接で扱う質問領域（${config.label}／毎回この中から最も価値が高い1点を選ぶ）\n${config.topicPool
+      .map((t) => `- ${t}`)
+      .join('\n')}`,
+    // ★ 与えた context を全部毎回使わせない（token / latency 抑制と、モード別の焦点付けを兼ねる）。
+    `# 参照する文脈の優先順位（${config.label}）\n${config.contextUsage}`,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
@@ -243,11 +261,16 @@ function clipForPrompt(s: string, max = 120): string {
 
 // target（受験先・選考の想定）を初回質問（seed）の operative な入口選択指示に変換する。
 // companyName が無ければ空文字（＝従来どおり byte 不変）。「答えやすい入口」という性質は保つ。
-// 反映優先度は focusPoint → jobType。未入力項目は指示に含めない。
+// 反映優先度は focusPoint → jobType → industry → selectionType。未入力項目は指示に含めない。
+//
+// ★ モード差: 自己分析モードは業界・選考種別で入口を変えない（学生自身の経験から入る）。
+//   企業理解モードは 1 問目から企業・業界への関心を入口にしてよい（他モードは経験から入る）。
 function buildSeedTargetHook(
   target: CareerInterviewTarget | null | undefined,
+  interviewType?: CareerInterviewType,
 ): string {
   if (!target || !target.companyName) return '';
+  const selfOnly = interviewType === 'self_analysis';
   const lines: string[] = [
     'この面接は特定の受験先を想定しています。1問目は答えやすい入口のまま、次に配慮して切り口を選んでください（初回から詰問・細かい数値・失敗理由の深掘りはしない）:',
   ];
@@ -258,7 +281,23 @@ function buildSeedTargetHook(
   }
   if (target.jobType) {
     lines.push(
-      `- 志望職種は「${target.jobType}」。この職種で求められる力を後の深掘りで確認しやすいエピソードに触れられる入口を選ぶ。`,
+      selfOnly
+        ? `- 志望職種は「${target.jobType}」だが、今回は自己分析モードなので職種要件から入らない。学生自身の経験・価値観が表れる入口を選ぶ。`
+        : `- 志望職種は「${target.jobType}」。この職種で求められる力を後の深掘りで確認しやすいエピソードに触れられる入口を選ぶ。`,
+    );
+  }
+  if (target.industry && !selfOnly) {
+    lines.push(
+      interviewType === 'motivation'
+        ? `- 志望業界は「${target.industry}」。企業理解モードのため、1問目から企業・業界への関心の入口（なぜここに関心を持ったか）にしてよい。ただし業界知識を問うクイズにはしない。`
+        : `- 志望業界は「${target.industry}」。1問目では業界知識を問わず、後の質問で業界との接続を確認しやすい入口にとどめる。`,
+    );
+  }
+  if (target.selectionType && !selfOnly) {
+    lines.push(
+      target.selectionType === 'internship'
+        ? '- 選考種別はインターン。入社意思の確認から入らず、関心・行動・学びたいことにつながる入口を選ぶ。'
+        : '- 選考種別は本選考。1問目から圧をかけず、後の深掘りで志望度・再現性を確認できる入口を選ぶ。',
     );
   }
   lines.push('- ただし target の語句をそのまま復唱せず、自然で答えやすい質問文にする。');
@@ -266,23 +305,42 @@ function buildSeedTargetHook(
 }
 
 // target を中盤深掘り（followup）の operative な質問選択の優先度指示に変換する。
-// 既存の CAREER_DEEP_DIVE_AXES を置き換えず、優先順位だけ足す。companyName 無しは空文字。
+// モード固有の深掘り軸（config.deepDiveAxes）を置き換えず、優先順位だけ足す。companyName 無しは空文字。
 // focusPoint を最優先扱いにする。未入力項目は指示に含めない。
+//
+// ★ モード差: 自己分析モードは業界・選考種別・企業固有性で深掘り優先度を変えない
+//   （企業対策は企業理解モード以降の役割）。
 function buildFollowupTargetHook(
   target: CareerInterviewTarget | null | undefined,
+  interviewType?: CareerInterviewType,
 ): string {
   if (!target || !target.companyName) return '';
+  const selfOnly = interviewType === 'self_analysis';
   const lines: string[] = [
-    '受験先の想定を踏まえた質問選択の優先度（上の汎用深掘り軸は残したまま、優先順位だけ調整する）:',
+    '受験先の想定を踏まえた質問選択の優先度（上の深掘り軸は残したまま、優先順位だけ調整する）:',
   ];
   if (target.focusPoint) {
     lines.push(
-      `- 最優先: 学生が特に練習したい「${clipForPrompt(target.focusPoint)}」に関わる力・経験・根拠がまだ十分に確認できていなければ、次の質問で優先的に掘る。ただし既に十分聞けた／直前に同じ観点を聞いた／回答と接続できない／不自然な話題転換になる場合は無理に聞かない。`,
+      `- 最優先: 学生が特に練習したい「${clipForPrompt(target.focusPoint)}」に関わる力・経験・根拠がまだ十分に確認できていなければ、次の質問で優先的に掘る。1回の確認で終わらせず、既に一度聞けている場合は一段深い層（主張 → なぜそう言えるか → 判断の根拠 → 本人の経験との接続）へ降ろす。ただし既に十分聞けた／直前に同じ観点を聞いた／回答と接続できない／不自然な話題転換になる場合は無理に聞かない。`,
     );
   }
   if (target.jobType) {
     lines.push(
-      `- 志望職種「${target.jobType}」で必要になりそうな力（課題把握・関係構築・提案の組み立て・巻き込み・目標への行動・再現性などのうち回答文脈に合うもの）が回答から確認できていなければ、それを確認する深掘りを候補に含める。職種名だけから企業固有の採用基準は捏造しない。`,
+      selfOnly
+        ? `- 志望職種「${target.jobType}」は背景情報にとどめる。職種要件の確認より、学生自身の行動理由・強みの再現性を優先して掘る。`
+        : `- 志望職種「${target.jobType}」で必要になりそうな力（課題把握・関係構築・提案の組み立て・巻き込み・目標への行動・再現性などのうち回答文脈に合うもの）が回答から確認できていなければ、それを確認する深掘りを候補に含める。職種名だけから企業固有の採用基準は捏造しない。`,
+    );
+  }
+  if (target.industry && !selfOnly) {
+    lines.push(
+      `- 志望業界「${target.industry}」について、「なぜこの業界か」「業界の変化・課題をどう捉えているか」「他業界ではなくこの業界である理由」「自分の経験がこの業界でどう活きるか」のうち、まだ確認できていない点があれば深掘り候補に含める。業界の統計・動向を面接官側から事実として断定しない。`,
+    );
+  }
+  if (target.selectionType && !selfOnly) {
+    lines.push(
+      target.selectionType === 'main'
+        ? '- 選考種別は本選考。入社意思・志望度の強さ・キャリアとの一貫性・「なぜ競合ではなくこの企業か」・過去経験の再現性・入社後に何ができるか を確認する深掘りを優先度上位に置く。'
+        : '- 選考種別はインターン。参加目的・学びたいこと・好奇心と行動力・成長可能性・プログラムで検証したい仮説 を確認する深掘りを優先度上位に置く。長期の入社意思を問い詰める方向には寄せない。',
     );
   }
   lines.push(
@@ -304,7 +362,7 @@ export function buildSeedUserPrompt(
     `1問目の切り口: ${config.seedFocus}`,
     'いきなり数字や細部を問い詰めず、まずは経験の全体像を話しやすい入口にしてください。',
   ];
-  const targetHook = buildSeedTargetHook(target);
+  const targetHook = buildSeedTargetHook(target, interviewType);
   if (targetHook) lines.push(targetHook);
   lines.push('出力は質問文そのものだけ（前置き・説明・記号・引用符は付けない）。');
   return lines.join('\n');
@@ -329,15 +387,18 @@ export function buildFollowupUserPrompt(
     '',
     `この面接の狙い: ${config.guidance}`,
     '',
-    '深掘りの方針（重要）:',
+    `深掘りの方針（${config.label}／重要）:`,
     '- 直前の回答内容に合わせて、次の観点のうち「最も価値が高く、まだ十分に聞けていない1点」だけを選び、自然な会話の流れで1問だけ掘り下げる。',
-    ...CAREER_DEEP_DIVE_AXES.map((axis) => `  ・${axis}`),
-    '- 回答が抽象的・一般論なら具体例を求め、盛りすぎ・嘘っぽさを感じたら現実性（数字・事実・再現性）をやんわり確認する。',
-    '- 文脈に合えば、STAR（状況・課題・行動・結果）・数字・Before/After・判断理由・学び・再現性まで自然に引き出す（ただし一度に複数を問い詰めず、尋問にしない）。',
+    // ★ モード固有の深掘り軸。ここが全モード共通に戻ると「深掘り方法が同じ面接」へ退行する。
+    ...config.deepDiveAxes.map((axis) => `  ・${axis}`),
+    `- 追及の強さ（このモードの水準）: ${config.followupIntensity}`,
+    '- 回答が抽象的・一般論なら具体例を求め、盛りすぎ・嘘っぽさを感じたら現実性（数字・事実・再現性）を確認する。',
     '- 既に聞いた論点・聞き方は繰り返さない。Yes/Noで終わる質問・答えにくい質問・説教めいた質問は避ける。',
     '- 目的は「多く質問すること」ではなく、ES・面接・マッチングで再利用できる具体的な情報を引き出すこと。',
   ];
-  const targetHook = buildFollowupTargetHook(target);
+  const consistencyBlock = buildConsistencyCheckBlock(config);
+  if (consistencyBlock) lines.push('', consistencyBlock);
+  const targetHook = buildFollowupTargetHook(target, interviewType);
   if (targetHook) lines.push('', targetHook);
   lines.push(
     '',
@@ -362,21 +423,30 @@ function buildTargetFeedbackGuidance(
   lines.push(
     '  企業固有の事実は断定せず、一般的な面接観点として説得力・志望動機の接続を評価する。',
   );
+  if (target.industry) {
+    lines.push(
+      `  併せて「${target.industry}」業界を志望する理由（なぜ他業界ではないのか・業界の変化や課題の捉え方・自分の経験と業界の接続）が回答から伝わるかも評価する。業界の統計・動向は断定しない。`,
+    );
+  }
   if (target.jobType) {
     lines.push(
       `- jobFitComment: 「${target.jobType}」で求められそうな再現性・行動特性・強みが回答から伝わるかを評価し、職種理解が浅ければ指摘し、回答内の経験がその職種でどう活きるかを補強する。`,
     );
   }
 
+  // ★ 選考種別は「表示項目」ではなく評価ウェイトそのものを動かす。
+  //   上のモード別 rubric に対する上書き指示として扱う。
   if (target.selectionType === 'main') {
     lines.push(
-      '- selectionTypeComment: 本選考として、入社後の貢献可能性・志望度の強さ・企業適合性・過去経験の再現性・「他社ではなくこの企業である理由」・採用する理由が伝わるかを評価する。',
+      '- selectionTypeComment: 本選考として、入社意思・志望度の強さ・キャリアとの一貫性・企業適合性・過去経験の再現性・入社後に何ができるか・「なぜ競合ではなくこの企業か」・採用する理由が伝わるかを評価する。',
+      '  ★ 本選考のため、上の評価ウェイトのうち 企業理解・企業適合 / 志望理由の深さ / 強みの再現性 を一段上げて採点する（インターンより厳しい水準で見る）。',
       '  「学びたい」「成長したい」だけの受け身表現は厳しめに見て、貢献・主体性に転換するよう促す。',
     );
   } else if (target.selectionType === 'internship') {
     lines.push(
-      '- selectionTypeComment: インターンとして、参加目的の明確さ・業界/企業への関心・現場理解への意欲・学びたいことの具体性・検証したい仮説・本選考への自然な接続を評価する。',
-      '  「入社したい」という長期の入社意思に寄せすぎず、参加目的・学習意欲・仮説検証を重視する。',
+      '- selectionTypeComment: インターンとして、学習意欲・好奇心・成長可能性・参加目的の明確さ・行動力・プログラムとの適合・インターンを通して何を得たいか・検証したい仮説を評価する。',
+      '  ★ インターンのため、上の評価ウェイトのうち 学習意欲・好奇心・成長可能性・参加目的の具体性 を一段上げ、入社意思の強さ・入社後の貢献可能性の比重は下げて採点する。',
+      '  「入社したい」という長期の入社意思の弱さを減点材料にしない。参加目的・学習意欲・仮説検証の具体性で判断する。',
     );
   }
 
@@ -389,7 +459,10 @@ function buildTargetFeedbackGuidance(
   );
   if (target.focusPoint) {
     lines.push(
-      `# 学生が特に対策したいこと（必ず触れる）\n「${target.focusPoint}」について、targetFeedback と改善点（improvements）・次にやるべきこと（nextActions）の中で必ず具体的に言及する。`,
+      `# 学生が特に対策したいこと（重点対策・必ず触れる）\n学生は「${target.focusPoint}」を重点対策として指定しています。`,
+      '改善点（improvements）の少なくとも1つは、この重点対策そのものへの評価にしてください。文頭を「重点対策として指定された「（テーマ）」については、」の形で始め、今回の回答でその点がどこまでできていたか・何が足りなかったかを具体的に述べる。',
+      '次にやるべきこと（nextActions）にも、この重点対策を伸ばすための具体的な次アクションを1つ以上入れる。',
+      '重点対策に触れられるだけの材料が回答内に無い場合は、その旨（今回の面接では十分に確認できなかった）を書き、次に何を準備して臨むべきかを示す。材料が無いまま評価を捏造しない。',
     );
   }
   return lines.join('\n');
@@ -411,8 +484,24 @@ export function buildFinalFeedbackInstruction(
     `これまでの面接（${config.label}）のやり取り全体をもとに、新卒就活の観点で最終フィードバックを作成してください。`,
     '評価は「優しいが甘すぎない」面接官として、STAR（状況・課題・行動・結果）・結論ファースト・成果の具体性・強みの再現性・志望動機との一貫性を見て行ってください。',
     `この面接の種類で特に重視する観点: ${config.feedbackEmphasis}`,
+    '',
+    // ── モード別の評価ウェイト（単一の共通 rubric にしない） ────────────────
+    `## 評価ウェイト（${config.label}）`,
+    '同じ回答でも、面接の種類によって配点は変わります。今回は次のウェイトで採点してください。',
+    '[最重視] は総合評価を実質的に決める軸、[重視] は弱いと総合評価が下がる軸、[通常] は標準配点、[参考] は大きく加点も減点もしない軸、[対象外] は今回の面接では評価しない軸です。',
+    ...buildInterviewRubricLines(config),
+    '[対象外] の観点は overallComment / strengths / improvements の主題にしないでください（今回の練習目的から外れるため）。',
+    '',
+    // ── 採点難易度（threshold そのものを変える。固定減点はしない） ──────────
+    `## 採点の水準（難易度 ${config.difficultyRank}/4）`,
+    '面接の種類ごとに「何を満たせば高評価か」の到達条件が違います（自己分析モード < 企業理解モード < 本番モード < 圧迫面接モード の順に要求水準が上がります）。',
+    config.scoringStandard,
+    '★ 難易度に応じて一律に点を引くような不自然な減点はしないでください。上の到達条件を満たしているかどうかだけで判断してください。',
+    '',
+    `## 改善提案の重心（${config.label}）`,
+    `improvements と nextActions は次を中心に構成してください: ${config.improvementFocus}`,
     config.pressure
-      ? '圧迫面接の評価でも、指摘は厳しくてよいが、フィードバック自体は学生が次に改善できるよう建設的にすること（人格否定は禁止）。'
+      ? '圧迫面接の評価でも、指摘は厳しくてよいが、フィードバック自体は学生が次に改善できるよう建設的にすること（人格否定・人格への言及は禁止。評価対象は回答内容のみ）。'
       : '指摘は率直にしつつ、学生が次に改善できるよう建設的にすること。',
     '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
     '各配列は2〜4個入れ、空配列にしない。実際の回答内容に即した具体的な指摘にし、テンプレ文を避ける。',
