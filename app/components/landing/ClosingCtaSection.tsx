@@ -1,18 +1,14 @@
 import Link from 'next/link';
-import { isCareerVariantByEnv } from '@/lib/appVariant';
-// FREEZE(legacy-diagnosis): 締めの主 CTA（/diagnosis）は凍結中。CTA 非表示に伴い
-// LinkButton は未使用となるため import も停止。サブ CTA（/home）は Link のまま残す。
-// import { LinkButton } from '@/components/ui/LinkButton';
+import { LinkButton } from '@/components/ui/LinkButton';
 
 // LP の締め。FAQ で不安を解消した直後の「感情に残る最後の一押し」。
 // 上から indigo→blue→white にフェードする縦グラデで「光が差す」雰囲気を作り、
-// 中央寄せの本文 → メイン CTA（凍結中）→ サブ CTA（PASSAIを始める / /login）で締める。
-// Free Diagnosis CTA とのカニバリ回避のため、本文を厚めに、CTA は同色だがコンテキストで差別化。
+// 中央寄せの本文 → メイン CTA（/career/profile）→ サブ導線（ログイン）で締める。
+//
+// メイン CTA の遷移先は Hero と同じ /career/profile（基本情報入力・ログイン不要）。
+// 入力後は /career/home に着地する（app/career/home/page.tsx の redirect 参照）。
 
 export function ClosingCtaSection() {
-  // 就活版（CAREER）では「PASSAIを始める」を受験版課金（/pricing）ではなく
-  // CAREER 基本情報（/career/profile・guest 可）へ向ける。受験版は従来どおり /pricing。
-  const startHref = isCareerVariantByEnv() ? '/career/profile' : '/pricing';
   return (
     <section className="relative overflow-hidden">
       <div
@@ -23,60 +19,56 @@ export function ClosingCtaSection() {
         <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight leading-snug mb-8 sm:mb-10 text-slate-900">
           迷っているうちに、
           <br className="sm:hidden" />
-          時間だけが過ぎていく。
+          エントリーの時期がくる。
         </h2>
 
-        {/* 本文：ユーザー指定の改行を <br /> でそのまま再現し、詩的なリズムを維持 */}
+        {/* 本文：指定の改行を <br /> でそのまま再現し、リズムを維持する */}
         <div className="space-y-5 text-sm sm:text-base text-slate-700 leading-relaxed mb-10 sm:mb-12">
           <p>
-            総合型選抜・学校推薦型選抜は、
+            就活は、
             <br />
-            特別な才能がある人だけの入試ではありません。
+            特別な経験がある人だけのものではありません。
           </p>
           <p>
             自分の経験を整理して、
             <br />
-            なぜその大学で学びたいのかを言葉にして、
+            なぜその会社で働きたいのかを言葉にして、
             <br />
-            面接で自分の言葉で伝えられる人が強い入試です。
+            面接で自分の言葉で伝えられる人が強い選考です。
           </p>
           <p>
-            PASSAIは、
+            PASSAI CAREERは、
             <br />
-            何も書けない状態から始める人のために、
+            何から始めればいいか分からない人のために、
             <br />
-            活動整理・自己分析・志望理由書・小論文・面接対策まで、
+            活動整理・自己分析・就活軸・企業研究・ES・面接練習まで、
             <br />
             1つの流れで進められるように作られています。
           </p>
           <p className="font-semibold text-slate-800">
-            まずは無料診断から、
+            まずは基本情報の入力から、
             <br />
-            自分に合う対策の始め方を見つけてください。
+            自分の就活準備を始めてください。
           </p>
         </div>
 
-        {/* CTA：メイン（/diagnosis）は凍結中のため非表示。サブ（/home）のみ残す。 */}
         <div className="flex flex-col gap-3 max-w-md mx-auto">
-          {/* FREEZE(legacy-diagnosis): メイン CTA は /diagnosis への導線だったため凍結。
           <LinkButton
-            href="/diagnosis"
+            href="/career/profile"
             variant="accent"
             size="cta"
             className="font-bold"
           >
-            無料で受験タイプ診断をする
-            <span aria-hidden="true" className="ml-2">→</span>
+            PASSAI CAREERを始める
+            <span aria-hidden="true" className="ml-2">
+              →
+            </span>
           </LinkButton>
-          */}
-          {/* サブ CTA：cta size の主役と並ぶ控えめ 1 本。LinkButton size 体系に
-              完全一致しないため（text-sm sm:text-base）、ここは Link のまま残し、
-              次の PR で「subtle」size を追加するときに揃える。 */}
           <Link
-            href={startHref}
+            href="/career/login?redirect=%2Fcareer%2Fprofile"
             className="inline-flex justify-center items-center bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-sm sm:text-base px-6 py-3 rounded-xl transition-colors"
           >
-            PASSAIを始める
+            ログイン
           </Link>
         </div>
       </div>

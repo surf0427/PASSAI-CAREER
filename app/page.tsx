@@ -1,50 +1,41 @@
 import { HeroSection } from '@/app/components/landing/HeroSection';
 import { ProblemSection } from '@/app/components/landing/ProblemSection';
 import { FeatureFlowSection } from '@/app/components/landing/FeatureFlowSection';
-import { PricingSection } from '@/app/components/landing/PricingSection';
-import { CompareSection } from '@/app/components/landing/CompareSection';
-import { FreeDiagnosisCtaSection } from '@/app/components/landing/FreeDiagnosisCtaSection';
 import { FaqSection } from '@/app/components/landing/FaqSection';
 import { ClosingCtaSection } from '@/app/components/landing/ClosingCtaSection';
 import { FooterSection } from '@/app/components/landing/FooterSection';
-import { isCareerVariantByEnv } from '@/lib/appVariant';
 
-// ── PASSAI ランディングページ（LP / トップページ） ─────────────────
+// ── PASSAI CAREER ランディングページ（LP / トップページ） ────────────
 // セクション構成：
 //   1. Header（グローバル Header が LP 用変種を表示。app/components/Header.tsx 参照）
-//   2. First View（ヒーロー：メインコピー / サブコピー / 補足）
-//   3. For You / Pain Points（こんな人におすすめ：悩み → 警告 → 解決）
-//   4. Feature Flow（機能の流れ：6 ステップを番号付きカードで表示）
-//   5. Pricing（料金プラン比較：2 カード + 注意書き）
-//   6. Compare（他社比較：PDF 比較資料の 8 項目で「向いている人の違い」として提示）
-//   7. Free Diagnosis CTA（無料受験タイプ診断への強めの CTA）
-//   8. FAQ（よくある質問：<details> ベースの開閉式・JS なし）
-//   9. Closing Message + Final CTA（締めの本文 + メイン/サブ CTA）
-//  10. Footer（LP 内 footer：ブランド + 法的リンク列 + コピーライト）
+//   2. First View（ヒーロー：メインコピー / サブコピー / 主 CTA）
+//   3. For You / Pain Points（こんな人におすすめ：悩み → 警告 → 解決）#recommend
+//   4. Feature Flow（機能の流れ：8 ステップ + 横断機能 3 つ）#features
+//   5. FAQ（よくある質問：<details> ベースの開閉式・JS なし）#faq
+//   6. Closing Message + Final CTA（締めの本文 + メイン/サブ CTA）
+//   7. Footer（LP 内 footer：ブランド + 法的リンク列 + コピーライト）
 //      ※ 他ページに出さないため、グローバル layout ではなく LP 内に配置する。
+//
+// 掲載する機能は /career 配下に実ページがあるものだけ（app/career/home/page.tsx の
+// FEATURES と一致）。企業マッチングは flag 既定 OFF のため LP には出さない。
+//
+// 料金セクション（PricingSection）は本 LP には置かない。Stripe 課金（basic / premium）は
+// 受験版機能の PlanGate 用であり、/career 配下は PlanGate の保護対象外＝CAREER 側に
+// 課金導線が無いため、LP に価格を出すと実装と矛盾する。
+// PricingSection / /pricing / Stripe 側の仕様は一切変更していない。
 //
 // 各セクションの実体は app/components/landing/ 配下に分離。
 // 文言・デザイン・リンクの変更はそれぞれの section ファイルで行う。
 
 export default function LandingPage() {
-  // 就活版（CAREER）デプロイでは、受験版専用の課金（PricingSection）・受験タイプ
-  // 診断（FreeDiagnosisCtaSection）セクションを非表示にする。両者は文言も CTA も
-  // 100% 受験版（/pricing・Stripe・/diagnosis）で CAREER 相当が無いため、非表示に
-  // することで受験版導線をトップから排除する（env は SSR 安全＝初回描画から確定）。
-  const isCareer = isCareerVariantByEnv();
   return (
     <div className="bg-white text-slate-900">
       <HeroSection />
       <ProblemSection />
       <FeatureFlowSection />
-      {!isCareer && <PricingSection />}
-      <CompareSection />
-      {/* ⑥ 無料の受験タイプ診断（無料で試せる入口・有料 CTA とは別物）。
-          flag は /diagnosis 側で legacy / 9タイプを出し分ける。CAREER では非表示。 */}
-      {!isCareer && <FreeDiagnosisCtaSection />}
       <FaqSection />
       <ClosingCtaSection />
-      <FooterSection />
+      <FooterSection variant="career" />
     </div>
   );
 }

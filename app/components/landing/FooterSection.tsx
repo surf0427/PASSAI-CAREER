@@ -6,18 +6,33 @@ import { Logo } from '@/app/components/Logo';
 // 個別に描画する。ログイン後の作業画面（/home, 各AI機能ページ等）には出さない。
 // スマホ：ブランド → リンク列 → コピーライト の縦並び。
 // PC：ブランド（左）／リンク列（右）の左右配置 + 下にコピーライト。
+//
+// variant:
+//   - 'career' … 就活版 LP 用。ロゴを PASSAI CAREER 表記にし、就活向け tagline を出す。
+//   - 'default'… 共通法務ページ（/terms /privacy /legal/commerce /about /contact）と
+//     受験版ページ（/pricing /login）用。親ブランド PASSAI 表記のみで tagline は出さない
+//     （複数サービスに共通の footer のため、片方のサービス説明を出さない）。
 
-export function FooterSection() {
+type FooterVariant = 'default' | 'career';
+
+export function FooterSection({
+  variant = 'default',
+}: {
+  variant?: FooterVariant;
+} = {}) {
+  const isCareer = variant === 'career';
   return (
     <footer className="bg-slate-50 border-t border-slate-200">
       <div className="mx-auto max-w-5xl px-6 sm:px-8 py-10 sm:py-12">
         <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between sm:gap-12">
           {/* ブランド */}
           <div>
-            <Logo />
-            <p className="mt-3 text-xs sm:text-sm text-slate-500 leading-relaxed">
-              総合型選抜・学校推薦型選抜のためのAI受験サポート
-            </p>
+            <Logo variant={variant} />
+            {isCareer && (
+              <p className="mt-3 text-xs sm:text-sm text-slate-500 leading-relaxed">
+                新卒就活のためのAI就活サポート
+              </p>
+            )}
           </div>
 
           {/* リンク列 */}

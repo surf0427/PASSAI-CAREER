@@ -10,7 +10,18 @@ import { PLANS } from '@/lib/billing/plans';
 export const BUSINESS_NAME = 'PASSAI';
 export const OPERATOR_NAME = '窪田 慶大';
 export const CONTACT_EMAIL = 'passai.jp@gmail.com';
+// ★ 特定商取引法に基づく表記（/legal/commerce）の「サービス内容」欄。
+//   直下に SALES_PRICE_LABEL（Basic / Premium）が並ぶ＝**有料で販売している役務**の
+//   法定表示であるため、現在課金対象になっているサービスの内容から動かさないこと。
+//   PASSAI CAREER は決済導線が無く販売対象ではないため、ここには含めない。
 export const SERVICE_DESCRIPTION = '総合型選抜・推薦入試対策AIサービス';
+
+// 運営者情報（/about）の「サービス内容」欄。
+//   SERVICE_DESCRIPTION とは用途が異なる（法定表示ではなく、事業者が公開・提供して
+//   いるサービスの案内）ため、販売の有無にかかわらず製品ラインを併記できる。
+//   価格・契約条件には一切言及しない。
+export const OPERATOR_SERVICES_DESCRIPTION =
+  '大学受験向けの「PASSAI」および新卒就活向けの「PASSAI CAREER」の提供';
 
 // 所在地・電話番号は特定商取引法に基づき、請求時に遅滞なく開示する運用とする。
 export const DISCLOSURE_ON_REQUEST = '請求があった際に遅滞なく開示いたします。';

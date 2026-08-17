@@ -17,10 +17,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// 公開トップ（app/page.tsx）は PASSAI CAREER 専用 LP のため、ルート metadata も
+// CAREER 基準にする。/career 配下は app/career/layout.tsx が個別に上書きする。
+// 掲載する機能は実装済み route のみ（企業マッチングは flag 既定 OFF のため含めない）。
 export const metadata: Metadata = {
-  title: BRAND_NAME,
+  title: `${BRAND_NAME} CAREER`,
   description:
-    "総合型選抜・学校推薦型選抜の対策を、活動整理から自己分析・志望理由書・小論文・面接までAIでサポートする受験サービスです。",
+    "新卒就活の活動整理・自己分析・就活軸整理・企業研究・ES・面接練習・GD練習・プレゼン対策をAIでサポートする就活サービスです。入力した内容は次の対策にも引き継がれます。",
 };
 
 export default function RootLayout({
