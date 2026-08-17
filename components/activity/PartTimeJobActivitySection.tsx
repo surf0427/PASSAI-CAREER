@@ -53,6 +53,8 @@ export default function PartTimeJobActivitySection({ activities, errors, onAdd, 
   return (
     <ActivitySectionShell
       title="アルバイト"
+      // hydration mismatch 回避：isMounted 前は count=0 とすることで Shell の
+      // `count > 0` 条件を満たさなくし、SSR と一致した「badge 非表示」状態を維持する。
       count={isMounted ? activities.length : 0}
       hasError={!!(errors && errors.length > 0)}
       isOpen={isOpen}
