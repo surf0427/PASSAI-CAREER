@@ -146,6 +146,16 @@ const ROWS = [
     fetchedAt: ago(10),
   },
   {
+    // ★ foundedYear は「設立」を意味する（prefetch 側の抽出契約と renderer ラベルの接合点）。
+    factKey: 'foundedYear',
+    factGroup: 'identity',
+    factValue: { value: '昭和22年11月' },
+    sourceUrl: 'https://www.sony.com/company/',
+    sourceType: 'official_site',
+    extractionMethod: 'llm_extraction',
+    fetchedAt: ago(10),
+  },
+  {
     factKey: 'recruitUrl',
     factGroup: 'navigation',
     factValue: { value: 'https://recruit.sony.co.jp/' },
@@ -198,6 +208,10 @@ check('C-3f ★ 本人のメモとは別物だと明示', block.text.includes('�
 check('C-3g ★ ここに無い事実を補って断定しないよう指示', block.text.includes('補って断定しないでください'));
 check('C-3h 値は原文のまま（要約しない）', block.text.includes('ゲーム、音楽、映画') && block.text.includes('113,000 名'));
 check('C-3i asOf を併記', block.text.includes('（2026年3月31日現在）'));
+check(
+  'C-3i2 ★ foundedYear は「設立」ラベルで出る（創業ではない）',
+  block.text.includes('- 設立: 昭和22年11月') && !block.text.includes('創業'),
+);
 
 {
   const staleCtx = buildCompanyOfficialContext({
@@ -328,6 +342,18 @@ console.log('[C-6] read repository の状態写像（静的契約）');
   check('C-6f read は user-scoped client（service_role を使わない）', !repo.includes('ServiceRole'));
   check('C-6g never-throw（catch で unavailable へ倒す）', /catch[\s\S]*status: 'unavailable'/.test(repo));
   check('C-6h 既存 Company Identity の resolver を再利用', repo.includes('buildCompanyResolveResult') && repo.includes('findCompanyCandidates'));
+  check(
+    'C-6i ★ fact 読み出しは company_id で絞る（別企業の fact が混入しない）',
+    /\.eq\('company_id', companyId\)/.test(repo),
+  );
+  check(
+    'C-6j ★ global な企業データのみ読む（user 由来の private data を混ぜない）',
+    !repo.includes('user_id') && !repo.includes('careerCompanyResearch') && !repo.includes('personalMemory'),
+  );
+  check(
+    'C-6k 読み出し件数に上限がある（暴走防止）',
+    repo.includes('MAX_FACT_ROWS') && /\.limit\(MAX_FACT_ROWS\)/.test(repo),
+  );
 }
 
 console.log('');

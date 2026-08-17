@@ -39,6 +39,9 @@ export const COMPANY_EXTRACTION_SYSTEM = [
   '- 企業の評価・優劣・将来予測・分析を書かないでください。あなたは抽出器であり、分析者ではありません。',
   '- 数値には本文に書かれている単位と基準日をそのまま添えてください（無ければ null）。',
   '- businessDescription は本文からの**抜粋**です。要約文を作らないでください。',
+  '- foundedYear は法人としての「設立」です。「創業」「創立」とは意味が違います。',
+  '  「創業」と「設立」が併記されている場合は必ず「設立」の値を返してください。',
+  '  「設立」の記載が無い場合は、創業年で代用せず null にしてください。',
   '',
   '【出力形式（厳守）】',
   '出力は次の JSON オブジェクトのみ。前後に説明文・コードブロック記号（```）を付けないでください。',
@@ -54,7 +57,7 @@ export const COMPANY_EXTRACTION_SYSTEM = [
   '  "employeeCountAsOf": string | null,   // 例: 「2026年3月31日現在」本文にあるときだけ',
   '  "capital": string | null,             // 例: 「880億円」本文の表記のまま',
   '  "capitalAsOf": string | null,',
-  '  "foundedYear": string | null,         // 例: 「1946年」本文の表記のまま',
+  '  "foundedYear": string | null,         // **設立**の年月日。例: 「1946年5月7日」本文の表記のまま',
   '  "headquartersAddress": string | null, // 本社所在地の本文表記',
   '  "listingStatus": string | null,       // 例: 「東証プライム」本文の表記のまま',
   '  "tickerCode": string | null,          // 証券コード（本文にあるときだけ）',
@@ -172,6 +175,104 @@ export function isGroundedInSource(value: string, sourceText: string): boolean {
   return toComparable(sourceText).includes(needle);
 }
 
+// ── foundedYear の意味固定（創業 ≠ 設立）────────────────────────────
+/**
+ * `foundedYear` は **法人としての「設立」**（renderer のラベルも「設立」）。
+ *
+ * 日本企業の会社概要は「創業」と「設立」を併記することが多く、LLM は先に現れる
+ * 「創業」を返しうる（canary 実測: 創業 明治22年9月 / 設立 昭和22年11月 の頁で
+ * 創業側が保存された）。prompt の指示は担保にならないため、
+ * **原文から決定論で確定する**（この module の他の検証と同じ思想）。
+ */
+const ESTABLISHED_LABEL = '設立';
+
+/** 「設立」ではない創業系ラベル（foundedYear へ昇格させない）。 */
+const FOUNDING_LABELS: readonly string[] = ['創業', '創立'];
+
+/** ラベルと日付の間に挟まってよい文字（「設立年月日：」「設立 : 」「設　立\n」等）。 */
+const LABEL_GAP = /^[\s　:：;；|｜・･年月日／/\\,，、.。（）()［］[\]＝=－ー\-–—]*/;
+
+/**
+ * ラベル〜日付の距離の上限。
+ * 離れた場所の年を拾わないための保険（表組みの改行 1 つ分を跨げれば足りる）。
+ */
+const MAX_LABEL_GAP_CHARS = 12;
+
+/**
+ * ラベル直後の日付表記（和暦・西暦）。**原文の表記のまま**返すため加工しない。
+ * 先頭一致のみ（「設立以来80年」のような散文から年を拾わない）。
+ */
+const DATE_AT_START =
+  /^(?:(?:明治|大正|昭和|平成|令和)\s*)?\d{1,4}\s*年(?:\s*\d{1,2}\s*月)?(?:\s*\d{1,2}\s*日)?|^\d{4}\s*[./-]\s*\d{1,2}(?:\s*[./-]\s*\d{1,2})?/;
+
+/**
+ * ラベル 1 語の照合パターン。
+ *
+ * ★ 実サイトは表組みの見出しを「設　立」「創　業」のように **文字間へ空白を入れて**
+ *   組むことが多い（canary の会社概要ページが実際にこの表記だった）。
+ *   単純な `indexOf('設立')` では 1 件も当たらないため、文字間の空白を許容する。
+ *   改行は跨がない（無関係な行の 1 文字目と繋げて誤検出しないため）。
+ */
+function buildLabelPattern(label: string): RegExp {
+  const chars = Array.from(label).map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(chars.join('[ \\t\\u3000]*'), 'g');
+}
+
+/**
+ * `label` の直後に続く日付を原文から切り出す（pure・決定論・作文しない）。
+ * ラベルが複数回現れる場合は、**日付が続く最初の 1 件**を採る。
+ */
+export function findLabeledDate(sourceText: string, label: string): string | null {
+  if (typeof sourceText !== 'string' || typeof label !== 'string' || label === '') return null;
+  const pattern = buildLabelPattern(label);
+  for (;;) {
+    const hit = pattern.exec(sourceText);
+    if (!hit) return null;
+    const after = sourceText.slice(hit.index + hit[0].length);
+    const gap = LABEL_GAP.exec(after)?.[0] ?? '';
+    if (gap.length <= MAX_LABEL_GAP_CHARS) {
+      const matched = DATE_AT_START.exec(after.slice(gap.length))?.[0]?.trim();
+      if (matched) return matched;
+    }
+    // 0 幅マッチで無限ループしない。
+    if (pattern.lastIndex <= hit.index) pattern.lastIndex = hit.index + 1;
+  }
+}
+
+/** 2 つの日付表記が実質同じものを指すか（表記の一部一致を含む）。 */
+function refersToSameDate(a: string, b: string): boolean {
+  const x = toComparable(a);
+  const y = toComparable(b);
+  if (x.length < 2 || y.length < 2) return false;
+  return x.includes(y) || y.includes(x);
+}
+
+/**
+ * 抽出された `foundedYear` を「設立」の意味へ正す（pure・決定論）。
+ *
+ * 契約:
+ *   0. 抽出値が無い → `null`（**本関数は fact を新規に生み出さない**。
+ *      決定論 parse で LLM が返さなかった値を作ると partial 判定の意味が変わるため）
+ *   1. 原文に「設立 <日付>」がある → **その値**（LLM が創業を返していても原文で上書きする）
+ *   2. 「設立」が無く、抽出値が「創業 / 創立」の日付と一致する → `null`（昇格させない）
+ *   3. それ以外 → 抽出値のまま（出典検証は呼び出し側が別途行う）
+ */
+export function resolveFoundedYear(
+  extractedValue: string | null,
+  sourceText: string,
+): string | null {
+  if (extractedValue === null) return null;
+
+  const established = findLabeledDate(sourceText, ESTABLISHED_LABEL);
+  if (established !== null) return established;
+
+  for (const label of FOUNDING_LABELS) {
+    const founding = findLabeledDate(sourceText, label);
+    if (founding !== null && refersToSameDate(extractedValue, founding)) return null;
+  }
+  return extractedValue;
+}
+
 /** 検証で落とした項目の記録（観測用。値そのものは保持しない）。 */
 export type GroundingReport = {
   /** 検証を通った項目数。 */
@@ -212,6 +313,11 @@ export function rejectUngroundedValues(
     return out;
   };
 
+  // ★ foundedYear だけは「値が本文に在るか」の前に **意味**を正す（創業 → 設立）。
+  //   原文に「設立」が無いのに創業日が入っていたら、ここで落とす（昇格させない）。
+  const foundedYear = resolveFoundedYear(profile.foundedYear, sourceText);
+  if (profile.foundedYear !== null && foundedYear === null) rejected.push('foundedYear');
+
   const next: ExtractedCompanyProfile = {
     legalName: keepString('legalName', profile.legalName),
     industryLabel: keepString('industryLabel', profile.industryLabel),
@@ -222,7 +328,7 @@ export function rejectUngroundedValues(
     employeeCountAsOf: keepString('employeeCountAsOf', profile.employeeCountAsOf),
     capital: keepString('capital', profile.capital),
     capitalAsOf: keepString('capitalAsOf', profile.capitalAsOf),
-    foundedYear: keepString('foundedYear', profile.foundedYear),
+    foundedYear: keepString('foundedYear', foundedYear),
     headquartersAddress: keepString('headquartersAddress', profile.headquartersAddress),
     listingStatus: keepString('listingStatus', profile.listingStatus),
     tickerCode: keepString('tickerCode', profile.tickerCode),

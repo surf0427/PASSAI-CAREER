@@ -52,11 +52,13 @@ import {
 } from '../lib/careerCompanyPrefetch/domainVerification';
 import {
   COMPANY_EXTRACTION_SYSTEM,
+  findLabeledDate,
   findRawExcerpt,
   isEmptyExtraction,
   isGroundedInSource,
   normalizeExtractedProfile,
   rejectUngroundedValues,
+  resolveFoundedYear,
 } from '../lib/careerCompanyPrefetch/extraction';
 import {
   buildDomainFacts,
@@ -436,6 +438,134 @@ console.log('[P-6] LLM は抽出器のみ + 原文に無い値を捨てる');
   check('P-6p "null" 文字列を値にしない', normalizeExtractedProfile({ capital: 'null' }).capital === null);
   check('P-6q rawExcerpt は原文から切り出す（作文しない）', (findRawExcerpt('1946年5月7日', sourceText) ?? '').includes('1946年5月7日'));
   check('P-6r 原文に無い値の excerpt は null', findRawExcerpt('1955年', sourceText) === null);
+
+  // ── foundedYear = 「設立」（創業ではない）────────────────────────────
+  //   canary 実測の欠陥: 創業 / 設立 併記の会社概要で、LLM が「創業」を返していた。
+  //   renderer のラベルは「設立」なので、創業日をそこへ載せると事実が歪む。
+  check(
+    'P-6E1 ★ 抽出 prompt が foundedYear を「設立」と定義している',
+    COMPANY_EXTRACTION_SYSTEM.includes('foundedYear は法人としての「設立」です') &&
+      COMPANY_EXTRACTION_SYSTEM.includes('創業年で代用せず null'),
+  );
+
+  // Case 1: 創業 / 設立 併記 → 設立が勝つ（LLM が創業を返しても原文から正す）。
+  const bothLabels = ['会社概要', '創業 明治22年9月', '設立 昭和22年11月', '資本金 100億円'].join('\n');
+  check('P-6E2 「設立」の日付を原文から取れる', findLabeledDate(bothLabels, '設立') === '昭和22年11月');
+  check('P-6E3 「創業」の日付を原文から取れる', findLabeledDate(bothLabels, '創業') === '明治22年9月');
+  check(
+    'P-6E4 ★ 創業 / 設立 併記では設立を採る（LLM が創業を返しても上書き）',
+    resolveFoundedYear('明治22年9月', bothLabels) === '昭和22年11月',
+    String(resolveFoundedYear('明治22年9月', bothLabels)),
+  );
+  check(
+    'P-6E5 ★ rejectUngroundedValues 経由でも設立になる',
+    rejectUngroundedValues(normalizeExtractedProfile({ foundedYear: '明治22年9月' }), bothLabels)
+      .profile.foundedYear === '昭和22年11月',
+  );
+
+  // Case 2: 設立のみ → そのまま。
+  const establishedOnly = '会社概要\n設立 2000年4月\n資本金 1億円';
+  check('P-6E6 設立のみなら設立を採る', resolveFoundedYear('2000年4月', establishedOnly) === '2000年4月');
+  check(
+    'P-6E7 設立のみ・LLM が幻覚を返しても原文の設立で正す',
+    resolveFoundedYear('1900年', establishedOnly) === '2000年4月',
+  );
+
+  // Case 3: 創業のみ → 昇格させない（null）。
+  const foundingOnly = '会社概要\n創業 1900年\n資本金 1億円';
+  check('P-6E8 ★ 創業しか無いなら foundedYear を作らない', resolveFoundedYear('1900年', foundingOnly) === null);
+  check(
+    'P-6E9 ★ 創業のみのとき fact 化されず、観測に rejected が残る',
+    (() => {
+      const r = rejectUngroundedValues(normalizeExtractedProfile({ foundedYear: '1900年' }), foundingOnly);
+      return r.profile.foundedYear === null && r.report.rejectedKeys.includes('foundedYear');
+    })(),
+  );
+  check(
+    'P-6E10 創業のみのとき fact が 1 件も作られない',
+    buildExtractedProfileFacts(
+      rejectUngroundedValues(normalizeExtractedProfile({ foundedYear: '1900年' }), foundingOnly).profile,
+      foundingOnly,
+      'https://x.com/company/',
+      '2026-08-16T00:00:00.000Z',
+    ).every((f) => f.factKey !== 'foundedYear'),
+  );
+  check('P-6E11 「創立」も設立として昇格させない', resolveFoundedYear('1900年', '創立 1900年') === null);
+
+  // Case 4: LLM が原文に無い設立年を返した場合。
+  //   - 原文に「設立」がある → 原文の値で上書きされる（幻覚は Data Spine に入らない）
+  //   - 原文に「設立」が無い → 既存の出典検証で落ちる
+  check(
+    'P-6E12 ラベルの無い本文では抽出値を勝手に変えない',
+    resolveFoundedYear('1946年', 'ソニーグループ株式会社 1946年') === '1946年',
+  );
+  check(
+    'P-6E13 ★ 幻覚した設立年は原文の「設立」で上書きされる',
+    rejectUngroundedValues(normalizeExtractedProfile({ foundedYear: '1955年3月1日' }), sourceText)
+      .profile.foundedYear === '1946年5月7日',
+  );
+  check(
+    'P-6E14 ★ 「設立」が無い本文の幻覚は出典検証で捨てられる',
+    rejectUngroundedValues(
+      normalizeExtractedProfile({ foundedYear: '1955年3月1日' }),
+      'ソニーグループ株式会社 会社概要',
+    ).profile.foundedYear === null,
+  );
+  check(
+    'P-6E15 ★ 抽出値が無いときに決定論 parse で fact を生み出さない',
+    resolveFoundedYear(null, bothLabels) === null &&
+      rejectUngroundedValues(normalizeExtractedProfile({ capital: '880,214百万円' }), sourceText)
+        .profile.foundedYear === null,
+  );
+
+  // ★ 実サイトの表組み表記（canary の会社概要ページから採取した形）。
+  //   見出しが「創　業」「設　立」と **文字間に全角空白**を持ち、値は **次の行**にある。
+  //   この形を扱えないと canary の欠陥（創業が設立として保存される）を修正できない。
+  const tableLayout = [
+    '会社情報：会社概要',
+    '商　号',
+    '任天堂株式会社',
+    '事業内容',
+    '家庭用レジャー機器の製造・販売',
+    '創　業',
+    '明治22年9月',
+    '設　立',
+    '昭和22年11月',
+    '資本金',
+    '10,065,400,000円',
+  ].join('\n');
+  check(
+    'P-6E20 ★ 「設　立」（文字間空白）+ 改行後の値を拾える',
+    findLabeledDate(tableLayout, '設立') === '昭和22年11月',
+    String(findLabeledDate(tableLayout, '設立')),
+  );
+  check(
+    'P-6E21 ★ 実表記でも創業ではなく設立が foundedYear になる（canary 回帰）',
+    resolveFoundedYear('明治22年9月', tableLayout) === '昭和22年11月',
+    String(resolveFoundedYear('明治22年9月', tableLayout)),
+  );
+  check(
+    'P-6E22 ★ 実表記で rejectUngroundedValues を通しても設立になる',
+    rejectUngroundedValues(normalizeExtractedProfile({ foundedYear: '明治22年9月' }), tableLayout)
+      .profile.foundedYear === '昭和22年11月',
+  );
+  check(
+    'P-6E23 文字間空白を跨いでも別ラベルと混同しない（創立 ≠ 設立）',
+    findLabeledDate(tableLayout, '創業') === '明治22年9月' && findLabeledDate(tableLayout, '創立') === null,
+  );
+  check(
+    'P-6E24 ★ ラベル照合は改行を跨がない（無関係な行と繋げない）',
+    findLabeledDate('設\n立\n1999年', '設立') === null,
+  );
+
+  // 誤検出しない側（散文の「設立以来」から年を拾わない）。
+  check('P-6E16 「設立以来80年」から年を拾わない', findLabeledDate('設立以来80年にわたり', '設立') === null);
+  check(
+    'P-6E17 「設立年月日」形式も拾える',
+    findLabeledDate('設立年月日 1947年11月20日', '設立') === '1947年11月20日',
+  );
+  check('P-6E18 日付の無い「設立」だけでは null', findLabeledDate('会社設立の歩み', '設立') === null);
+  check('P-6E19 空入力で throw しない', findLabeledDate('', '設立') === null && resolveFoundedYear(null, '') === null);
 
   const runtime = read('lib/careerCompanyPrefetch/runtime.server.ts');
   check('P-6s 抽出は temperature 0（決定論）', /temperature:\s*0\b/.test(runtime));
