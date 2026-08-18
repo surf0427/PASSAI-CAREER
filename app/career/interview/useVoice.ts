@@ -9,6 +9,14 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
+import {
+  RECOGNITION_STOPPED_MESSAGE,
+  RESTART_DELAY_MS,
+  decideRecognitionRestart,
+  pruneRestarts,
+  type RecognitionEndReason,
+} from '@/lib/careerVoice/recognitionRestartPolicy';
+
 // 機能対応判定を SSR セーフに行うための no-op subscribe（値は固定なので購読は不要）。
 const noopSubscribe = () => () => {};
 
@@ -73,9 +81,27 @@ function describeRecognitionError(raw: unknown): string {
 type UseVoiceOptions = {
   // 確定した発話テキストを 1 区切りごとに渡す（呼び出し側で回答欄に追記する）。
   onFinalTranscript?: (text: string) => void;
+  /**
+   * ブラウザ都合の予期しない停止（onend）から自動再開を試みるか。
+   *
+   * ★ opt-in（既定 false）。有効にするかは **呼び出し側の機能が決める**
+   *   （無音で認識が切れる長い発話を扱う画面で true にする）。
+   *   判定そのものは lib/careerVoice/recognitionRestartPolicy の純関数へ委譲する。
+   */
+  autoRestart?: boolean;
+  /**
+   * 「ユーザーが今この瞬間、話し続けるつもりでいるか」（発表中 / 回答中）。
+   * autoRestart が true のときだけ意味を持つ。false になったら再開しない
+   * （送信後・評価後などに勝手にマイクが復活しないようにする）。
+   */
+  presenting?: boolean;
 };
 
-export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
+export function useVoice({
+  onFinalTranscript,
+  autoRestart = false,
+  presenting = false,
+}: UseVoiceOptions = {}) {
   // 機能対応判定は SSR では false、hydration 後に実際の値（外部システムの状態）を返す。
   const sttSupported = useSyncExternalStore(
     noopSubscribe,
@@ -94,12 +120,32 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
   // TTS が読み上げ中かどうか（面接官アバターの「話しています」状態表示に使う）。
   const [speaking, setSpeaking] = useState(false);
 
+  // 予期しない停止（ブラウザ都合の onend）が起きて再開もできなかったことを UI へ伝える。
+  const [recognitionStopped, setRecognitionStopped] = useState(false);
+
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   // onFinalTranscript を ref に逃がし、recognition 再生成を避ける（ref 更新は effect 内で行う）。
   const onFinalRef = useRef(onFinalTranscript);
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
   }, [onFinalTranscript]);
+
+  // ── 自動再開のための ref 群（recognition を作り直さないよう全て ref で持つ）──
+  //   deps に入れて recognition を再生成すると、発話中に認識器が入れ替わって取りこぼす。
+  const autoRestartRef = useRef(autoRestart);
+  const presentingRef = useRef(presenting);
+  useEffect(() => {
+    autoRestartRef.current = autoRestart;
+  }, [autoRestart]);
+  useEffect(() => {
+    presentingRef.current = presenting;
+  }, [presenting]);
+
+  // 次の onend をどう解釈するか（stopListening / 時間切れ / エラー / unmount が印を付ける）。
+  const endReasonRef = useRef<RecognitionEndReason>('unexpected');
+  // rolling window の再開時刻。暴走（短時間の restart loop）検出に使う。
+  const restartTimesRef = useRef<number[]>([]);
+  const unmountedRef = useRef(false);
 
   // recognition 初期化（マウント後のみ）。
   useEffect(() => {
@@ -127,18 +173,60 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
     recognition.onerror = (e) => {
       setListening(false);
       setInterimText('');
-      const message = describeRecognitionError(
-        (e as SpeechRecognitionErrorEventLike | null)?.error,
-      );
+      const raw = (e as SpeechRecognitionErrorEventLike | null)?.error;
+      const message = describeRecognitionError(raw);
       if (message) setVoiceError(message);
+      // 'aborted' はユーザー操作・画面遷移由来なので通知不要。それ以外は error 停止として扱う。
+      if (endReasonRef.current === 'unexpected') {
+        endReasonRef.current = raw === 'aborted' ? 'manual_stop' : 'error';
+      }
     };
     recognition.onend = () => {
       setListening(false);
       setInterimText('');
+
+      // 直前に付いた印を消費する（次の onend は既定＝unexpected として解釈する）。
+      const reason: RecognitionEndReason = unmountedRef.current
+        ? 'unmounted'
+        : endReasonRef.current;
+      endReasonRef.current = 'unexpected';
+
+      const now = Date.now();
+      const decision = decideRecognitionRestart({
+        reason,
+        autoRestartEnabled: autoRestartRef.current,
+        presenting: presentingRef.current,
+        recentRestarts: restartTimesRef.current,
+        now,
+      });
+
+      if (decision === 'stop-silent') return;
+      if (decision === 'stop-notify') {
+        // ★ 無言で止めない（P1-3 の中核）。
+        setRecognitionStopped(true);
+        return;
+      }
+
+      // restart: 少し待ってから再開する（即時 start は InvalidStateError になりやすい）。
+      restartTimesRef.current = [...pruneRestarts(restartTimesRef.current, now), now];
+      setTimeout(() => {
+        if (unmountedRef.current || !presentingRef.current) return;
+        try {
+          recognition.start();
+          setListening(true);
+        } catch {
+          // 再開できなければ必ずユーザーに知らせる（無言停止を作らない）。
+          setRecognitionStopped(true);
+        }
+      }, RESTART_DELAY_MS);
     };
 
     recognitionRef.current = recognition;
+    unmountedRef.current = false;
     return () => {
+      // unmount 由来の onend で再開しないよう、abort より先に印を付ける。
+      unmountedRef.current = true;
+      endReasonRef.current = 'unmounted';
       try {
         recognition.abort();
       } catch {
@@ -157,6 +245,10 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
       return;
     }
     setVoiceError(null);
+    // ユーザーが自分で開始し直したので「停止した」表示と暴走カウンタをリセットする。
+    setRecognitionStopped(false);
+    restartTimesRef.current = [];
+    endReasonRef.current = 'unexpected';
     try {
       recognition.start();
       setListening(true);
@@ -168,9 +260,27 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
   // ユーザーが再試行したときにエラー表示を消す。
   const clearVoiceError = useCallback(() => setVoiceError(null), []);
 
-  const stopListening = useCallback(() => {
+  /** 「音声認識が停止しました」表示を閉じる。 */
+  const clearRecognitionStopped = useCallback(() => setRecognitionStopped(false), []);
+
+  /**
+   * 停止する。
+   *
+   * @param reason 'time_limit'（制限時間到達）のときだけ明示的に渡す。
+   *   それ以外（未指定・ユーザー操作）は 'manual_stop' 扱い。どちらも **自動再開しない**。
+   *
+   * ★ 本関数は `onClick={stopListening}` のように **DOM イベントハンドラへ直接渡される**
+   *   （面接・プレゼン双方の録音ボタン）。その場合 reason に MouseEvent が入るため、
+   *   受け取った値は必ず正規化し、既知の literal 以外は 'manual_stop' に倒す。
+   *   ここを素通しにすると、停止ボタンを押したのに「予期しない停止」と誤判定されて
+   *   マイクが勝手に再開する事故になる。
+   */
+  const stopListening = useCallback((reason?: unknown) => {
     const recognition = recognitionRef.current;
     if (!recognition) return;
+    // stop() が発火する onend を「意図された停止」として解釈させる。
+    endReasonRef.current = reason === 'time_limit' ? 'time_limit' : 'manual_stop';
+    restartTimesRef.current = [];
     try {
       recognition.stop();
     } catch {
@@ -218,6 +328,11 @@ export function useVoice({ onFinalTranscript }: UseVoiceOptions = {}) {
     speaking,
     voiceError,
     clearVoiceError,
+    /** 予期しない停止から復帰できなかったことを示す（UI で必ず表示する）。 */
+    recognitionStopped,
+    clearRecognitionStopped,
+    /** 停止の理由（UI に出す定型文）。 */
+    recognitionStoppedMessage: RECOGNITION_STOPPED_MESSAGE,
     startListening,
     stopListening,
     speak,
