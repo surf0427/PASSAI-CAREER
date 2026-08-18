@@ -5,7 +5,7 @@
  * 各機能が独自に企業情報を取りに行かないための single source of truth。
  *
  * 状態写像（既存 context loader の思想に揃える）:
- *   flag OFF            → disabled(flag_off)
+ *   read kill switch ON → disabled(flag_off)   ← ingest flag ではなく read 専用 switch
  *   env 未設定 / 未認証  → disabled(not_configured | unauthenticated)
  *   DDL 未適用（42P01） → unavailable(not_provisioned)   ← **エラーにしない**
  *   companyId 未解決     → unavailable(no_company)
@@ -29,7 +29,9 @@ import {
 import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 import { findCompanyCandidates, findCompanyById } from '@/lib/careerCompanyIdentity/repository.server';
 import { buildCompanyResolveResult } from '@/lib/careerCompanyIdentity/resolution';
-import { isCompanyPrefetchEnabled } from '@/lib/careerCompanyPrefetch/flags.server';
+// ★ read は ingest（prefetch）flag と分離する。取得を止めることと、取得済みの事実を
+//   読むことは別の判断であり、後者は外部 I/O ゼロ・冪等な SELECT のみだから。
+import { isCompanyOfficialReadEnabled } from './flags.server';
 import { devWarn } from '@/lib/devLog';
 import { summarizeFreshness } from './freshness';
 import { buildCompanyOfficialContext, type FactRow } from './projection';
@@ -145,8 +147,10 @@ async function loadFactRows(
 export async function loadCompanyOfficialContext(
   query: CompanyOfficialQuery,
 ): Promise<CompanyOfficialReadResult> {
-  // flag OFF のときは Supabase にも触れない（I/O ゼロ）。
-  if (!isCompanyPrefetchEnabled()) return { status: 'disabled', reason: 'flag_off' };
+  // read kill switch が OFF のときは Supabase にも触れない（I/O ゼロ）。
+  //   ★ ingest（CAREER_COMPANY_PREFETCH_ENABLED）とは独立。ingest を止めていても、
+  //     既に保存済みの出典付き fact は prompt へ供給し続ける。
+  if (!isCompanyOfficialReadEnabled()) return { status: 'disabled', reason: 'flag_off' };
 
   try {
     const client = await getCareerServerSupabaseClient();

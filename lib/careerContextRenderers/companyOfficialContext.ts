@@ -399,14 +399,165 @@ const SECTIONS: readonly { title: string; keys: readonly CompanyFactKey[] }[] = 
   },
 ];
 
-/** fact_key → section index / section 内の順序（決定論順を作るための索引）。 */
-const SECTION_INDEX: ReadonlyMap<string, { section: number; order: number }> = (() => {
+/**
+ * 面接（`interview_practice`）専用の section 順。
+ *
+ * ★ なぜ purpose で順序を変えるのか:
+ *   既定順（企業分析の観点）は `■ 会社概要` が先頭で、そこに登記系 18 key が並ぶ。
+ *   budget 超過時は **後ろの section から削る**ため、fact が多い企業ほど
+ *   「法人番号・カナ名称・資本金・本社所在地は残るのに、求める人物像・事業内容・理念が落ちる」
+ *   という、面接にとって価値の低い並びになっていた（Production Readiness Audit P1-2）。
+ *   面接官 AI が使うのは登記情報ではなく「人物像 → 事業 → 理念 → 競合 → 動向」なので、
+ *   その順に読み替える。**fact key は 1 つも増減させない**（順序と見出しだけの差）。
+ *
+ * ★ 先頭の `■ 会社` は識別のための最小限（正式名称・業種）だけを 2 key 置く。
+ *   これが無いと「どの会社の話か」を fact 側から確認できる情報が全部落ちうる
+ *   （block header には displayName が入るが、公式の正式名称は別情報）。
+ *
+ * ★ ここに無い key は既定と同じく末尾の「その他」へ落ちる（prompt から消えない）。
+ */
+const INTERVIEW_SECTIONS: readonly { title: string; keys: readonly CompanyFactKey[] }[] = [
+  {
+    // 識別に必要な最小限（§ 会社概要をゼロにはしない）。
+    title: '■ 会社',
+    keys: ['legalName', 'industryLabel'],
+  },
+  {
+    // 面接で最も価値が高い。求める人物像・社風・働き方は志望動機/適性の深掘りに直結する。
+    title: '■ 求める人物像・採用',
+    keys: [
+      'desiredCandidateProfile',
+      'recruitingOverview',
+      'organizationalCulture',
+      'workingStyle',
+      'jobCategories',
+      'careerDevelopment',
+      'trainingPrograms',
+    ],
+  },
+  {
+    // 「何をしている会社か」を学生の言葉で説明させるための材料。
+    title: '■ 事業',
+    keys: [
+      'businessDescription',
+      'mainProducts',
+      'businessSegments',
+      'businessModel',
+      'targetCustomers',
+      'overseasPresence',
+    ],
+  },
+  {
+    // 志望動機の固有性・価値観の接続を掘るための材料。
+    title: '■ 理念・戦略',
+    keys: [
+      'missionStatement',
+      'visionStatement',
+      'corporateValues',
+      'selfDescribedStrengths',
+      'midTermPlanSummary',
+      'growthStrategy',
+      'strategicInvestmentAreas',
+      'statedChallenges',
+    ],
+  },
+  {
+    // 「なぜ競合ではなくこの会社か」を問うための材料。
+    title: '■ 市場・競合',
+    keys: ['namedCompetitors', 'marketPositionClaims', 'marketEnvironment', 'businessRisks'],
+  },
+  {
+    // 直近の話題。企業理解の解像度を確認する質問に使える。
+    title: '■ 最近の動向',
+    keys: ['recentDevelopments', 'productLaunches', 'partnerships', 'mergersAcquisitions'],
+  },
+  {
+    // 規模感（会話の前提として有用だが、上の観点より優先はしない）。
+    title: '■ 規模・体制',
+    keys: [
+      'employeeCount',
+      'foundedYear',
+      'listingStatus',
+      'capital',
+      'headquartersPrefecture',
+      'representativeName',
+      'parentCompanyName',
+      'corporateGroupLabel',
+    ],
+  },
+  {
+    title: '■ 業績・財務',
+    keys: [
+      'fiscalPeriodLabel',
+      'revenue',
+      'operatingProfit',
+      'netProfit',
+      'segmentPerformance',
+      'financialHighlights',
+    ],
+  },
+  {
+    title: '■ 参照ページ',
+    keys: [
+      'officialUrl',
+      'recruitUrl',
+      'aboutPageUrl',
+      'philosophyPageUrl',
+      'irUrl',
+      'newsroomUrl',
+      'midTermPlanUrl',
+      'financialResultsUrl',
+      'officialDomain',
+    ],
+  },
+  {
+    // 登記・正式表記の詳細。面接では最も価値が低いので最後（＝最初に削られる）。
+    title: '■ 登記情報',
+    keys: [
+      'corporateNumber',
+      'legalNameKana',
+      'legalNameEn',
+      'headquartersAddress',
+      'registrationStatus',
+      'tickerCode',
+      'representativeTitle',
+      'groupCompanies',
+    ],
+  },
+];
+
+/** section 配列 → fact_key の索引（決定論順を作るための前計算）。 */
+function buildSectionIndex(
+  sections: readonly { title: string; keys: readonly CompanyFactKey[] }[],
+): ReadonlyMap<string, { section: number; order: number }> {
   const map = new Map<string, { section: number; order: number }>();
-  SECTIONS.forEach((section, sectionIndex) => {
+  sections.forEach((section, sectionIndex) => {
     section.keys.forEach((key, order) => map.set(key, { section: sectionIndex, order }));
   });
   return map;
-})();
+}
+
+/** 既定（企業分析の観点）の section plan。 */
+const DEFAULT_SECTION_PLAN = { sections: SECTIONS, index: buildSectionIndex(SECTIONS) } as const;
+/** 面接用の section plan。 */
+const INTERVIEW_SECTION_PLAN = {
+  sections: INTERVIEW_SECTIONS,
+  index: buildSectionIndex(INTERVIEW_SECTIONS),
+} as const;
+
+export type CompanyOfficialSectionPlan = {
+  sections: readonly { title: string; keys: readonly CompanyFactKey[] }[];
+  index: ReadonlyMap<string, { section: number; order: number }>;
+};
+
+/**
+ * purpose 別の section plan（fact の優先順位）。
+ *
+ * ★ `interview_practice` **以外は既定のまま**（既存 purpose の出力 byte を 1 bit も変えない）。
+ */
+export function sectionPlanForPurpose(purpose: string): CompanyOfficialSectionPlan {
+  return purpose === 'interview_practice' ? INTERVIEW_SECTION_PLAN : DEFAULT_SECTION_PLAN;
+}
 
 /** section 割当の無い key の置き場（key を足して割当を忘れても消えない）。 */
 const FALLBACK_SECTION_TITLE = '■ その他';
@@ -435,9 +586,12 @@ function renderFactLine(fact: CompanyOfficialFactView): string {
  * 企業分析の観点順（section → section 内の定義順）に並べる。
  * 未知 key は末尾の「その他」へ、key 名の辞書順で安定させる。
  */
-function sortFacts(facts: readonly CompanyOfficialFactView[]): CompanyOfficialFactView[] {
+function sortFacts(
+  facts: readonly CompanyOfficialFactView[],
+  plan: CompanyOfficialSectionPlan = DEFAULT_SECTION_PLAN,
+): CompanyOfficialFactView[] {
   const rank = (fact: CompanyOfficialFactView) =>
-    SECTION_INDEX.get(fact.factKey) ?? { section: SECTIONS.length, order: 0 };
+    plan.index.get(fact.factKey) ?? { section: plan.sections.length, order: 0 };
   return [...facts].sort((a, b) => {
     const ra = rank(a);
     const rb = rank(b);
@@ -453,14 +607,17 @@ function sortFacts(facts: readonly CompanyOfficialFactView[]): CompanyOfficialFa
  * ★ 空の section は見出しを出さない。「取得できなかった」ことを prompt に書くと
  *   AI がそれを「その企業には無い」という負の事実として扱いうる。
  */
-function renderSectionedLines(facts: readonly CompanyOfficialFactView[]): string[] {
+function renderSectionedLines(
+  facts: readonly CompanyOfficialFactView[],
+  plan: CompanyOfficialSectionPlan = DEFAULT_SECTION_PLAN,
+): string[] {
   const lines: string[] = [];
   let currentSection = -2;
   for (const fact of facts) {
-    const section = SECTION_INDEX.get(fact.factKey)?.section ?? SECTIONS.length;
+    const section = plan.index.get(fact.factKey)?.section ?? plan.sections.length;
     if (section !== currentSection) {
       currentSection = section;
-      lines.push(SECTIONS[section]?.title ?? FALLBACK_SECTION_TITLE);
+      lines.push(plan.sections[section]?.title ?? FALLBACK_SECTION_TITLE);
     }
     lines.push(renderFactLine(fact));
   }
@@ -484,6 +641,8 @@ export function renderCompanyOfficialContext(
     stale?: boolean;
     /** 末尾の注意書き（未指定なら企業研究版＝従来と byte 一致）。 */
     usageNote?: readonly string[];
+    /** fact の優先順位（未指定なら既定＝企業分析の観点。従来と byte 一致）。 */
+    sectionPlan?: CompanyOfficialSectionPlan;
   } = {},
 ): CompanyOfficialBlock {
   try {
@@ -496,7 +655,9 @@ export function renderCompanyOfficialContext(
     const staleNote = opts.stale ? '・一部は取得から時間が経過しています' : '';
     const header = `【公式情報（出典付き・${asOf || '取得日不明'}時点${staleNote}）: ${context.displayName}】`;
 
-    const sorted = sortFacts(context.facts).slice(0, maxFacts);
+    // ★ purpose 別の優先順位。未指定なら既定 plan＝従来と完全に同じ並び。
+    const plan = opts.sectionPlan ?? DEFAULT_SECTION_PLAN;
+    const sorted = sortFacts(context.facts, plan).slice(0, maxFacts);
 
     const sourceLines =
       context.sourceUrls.length > 0
@@ -509,7 +670,7 @@ export function renderCompanyOfficialContext(
 
     // ★ section 見出しは fact を削るたびに再計算する（空 section の見出しを残さない）。
     const build = (kept: readonly CompanyOfficialFactView[]): string =>
-      [header, ...renderSectionedLines(kept), ...sourceLines, ...usageNote].join('\n');
+      [header, ...renderSectionedLines(kept, plan), ...sourceLines, ...usageNote].join('\n');
 
     let text = build(sorted);
     if (byteLength(text) <= maxBytes) return { text, used: true };
@@ -549,6 +710,8 @@ export function renderCompanyOfficialForPurpose(
       maxFacts: opts.maxFacts ?? budget?.maxFacts,
       stale: result.status === 'stale',
       usageNote: USAGE_NOTE_BY_PURPOSE[purpose] ?? USAGE_NOTE_COMPANY_RESEARCH,
+      // ★ interview_practice だけ面接用の優先順位。他 purpose は既定のまま（byte 不変）。
+      sectionPlan: sectionPlanForPurpose(purpose),
     });
   } catch {
     return EMPTY;

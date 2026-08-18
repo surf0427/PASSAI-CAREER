@@ -470,10 +470,19 @@ console.log('[C-6] read repository の状態写像（静的契約）');
   {
     // import 節ではなく **公開関数の本体**で判定順を見る。
     const body = repo.split('export async function loadCompanyOfficialContext')[1] ?? '';
+    // ★ 判定する flag は **read 専用**（isCompanyOfficialReadEnabled）へ分離した。
+    //   ingest（isCompanyPrefetchEnabled）で read まで閉じると、取得を止めた瞬間に
+    //   保存済みの出典付き fact が全 consumer の prompt から消えるため（P1-1）。
+    //   守るべき契約（flag 判定が Supabase より先）は従来どおり。
     check(
-      'C-6b ★ flag OFF なら Supabase に触れない（判定が先）',
-      body.indexOf('isCompanyPrefetchEnabled()') >= 0 &&
-        body.indexOf('isCompanyPrefetchEnabled()') < body.indexOf('getCareerServerSupabaseClient'),
+      'C-6b ★ read flag OFF なら Supabase に触れない（判定が先）',
+      body.indexOf('isCompanyOfficialReadEnabled()') >= 0 &&
+        body.indexOf('isCompanyOfficialReadEnabled()') <
+          body.indexOf('getCareerServerSupabaseClient'),
+    );
+    check(
+      'C-6b2 ★ read は ingest（prefetch）flag を見ない（取得と読み出しを分離）',
+      !/isCompanyPrefetchEnabled/.test(body),
     );
   }
   check('C-6c DDL 未適用は unavailable(not_provisioned)（例外にしない）', repo.includes("reason: 'not_provisioned'") && repo.includes('42P01'));
