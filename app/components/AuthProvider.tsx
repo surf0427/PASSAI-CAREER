@@ -358,31 +358,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .catch(() => {});
       }
 
-      // ── STEP-CAREER-SUPABASE-01/02: 就活版（career）各機能の初回 backfill（上り）+ restore（下り）──
+      // ── 就活版（career）の backfill / restore は **ここでは起動しない** ────────────
       //
-      // 先行 backfill と同形・同じ場所で起動する独立した fire-and-forget。
-      // career 機能は localStorage canonical で、ログイン（member）確定後に:
-      //   1. 上り backfill: LS に貯まった career データ（profile / activity / values / 自己分析 /
-      //      自己PR / マッチング / ES / 面接 / プレゼン / 相談 / 企業研究）を career_* table
-      //      （durable mirror）へ一括 upsert する。
-      //   2. 下り restore: durable mirror 由来のログを LS へマージ復元する（別端末ログイン時に
-      //      マイページ /career/mypage が空にならないようにする）。単一レコードは LS 空のときだけ、
-      //      履歴系は id マージ（local 優先）で local を壊さない。
-      // 各 feature は backfillFlag（supabaseBackfill）で冪等・1 端末 1 回限り。受験版データには触れない。
+      // STEP-CAREER-PRESENTATION-HARDENING-P1-1（Production Readiness Audit P1-1）。
+      // かつてここで backfillCareerOnce / restoreCareerOnce を起動していたが、それは誤りだった:
+      //   本 provider は **受験版（Project A）** の identity（lib/supabase/auth）であり、
+      //   career の durable mirror（lib/supabase/career*.ts）は **Project B**
+      //   （lib/careerSupabase/browserClient）の auth.uid() に紐づく owner-scoped RLS で守られている。
+      //   したがって Project A の userId で呼ぶと:
+      //     - restore … 別 namespace の user_id で SELECT するため 0 行（別端末で履歴が空に見える）
+      //     - backfill … RLS の WITH CHECK に弾かれて無言で失敗
+      //   さらに CAREER 専用本番では Project A の member セッション自体が成立しないため、
+      //   実質「一度も起動しない」死んだ経路になっていた。
       //
-      // 契約（先行 backfill と同一）:
-      //   - await しない。認証 / profile フローをブロックしない。例外は握りつぶす。
-      //   - dynamic import で browser-only な repository を server bundle に引き込まない。
-      //   - cancelled guard: アンマウント後は起動しない。userId 空 / env 未設定なら no-op。
-      //   - backfill（上り）→ restore（下り）の順で走らせ、手元データ push 後に他端末由来行を merge する。
-      if (!cancelled) {
-        const careerUserId = session.userId;
-        void import('@/lib/repository/careerBackfill')
-          .then((mod) => mod.backfillCareerOnce({ userId: careerUserId }))
-          .then(() => import('@/lib/repository/careerRestore'))
-          .then((mod) => mod.restoreCareerOnce({ userId: careerUserId }))
-          .catch(() => {});
-      }
+      // 正しい起動点は Project B の identity を持つ CareerAuthProvider 側
+      //   （app/career/components/CareerAuthProvider.tsx）。そちらへ移設済み。
+      //   ★ ここに career の同期処理を再び足さないこと（Project 境界が壊れる）。
     })();
     return () => {
       cancelled = true;

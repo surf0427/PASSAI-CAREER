@@ -62,6 +62,7 @@
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",
     "qa:careerPresentationOrchestratorParity": "npx tsx scripts/career-presentation-orchestrator-parity-qa.ts",
     "qa:careerPresentationTargetSlimdown": "npx tsx scripts/career-presentation-target-slimdown-qa.ts",
+    "qa:careerRestoreTrigger": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-restore-trigger-qa.ts",
     "qa:careerInterviewOrchestratorParity": "npx tsx scripts/career-interview-orchestrator-parity-qa.ts",
     "qa:careerInterviewTargetOperative": "npx tsx scripts/career-interview-target-operative-qa.ts",
     "qa:careerInterviewModeDifferentiation": "npx tsx scripts/career-interview-mode-differentiation-qa.ts",

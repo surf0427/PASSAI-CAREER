@@ -118,6 +118,33 @@ export function CareerAuthProvider({ children }: { children: ReactNode }) {
       setAccountState(loaded.kind === 'ok' ? loaded.account : null);
     }
     setStatus('member');
+
+    // ── career 各機能の初回 backfill（上り）+ restore（下り）───────────────────
+    //
+    // STEP-CAREER-PRESENTATION-HARDENING-P1-1（Production Readiness Audit P1-1）。
+    // 以前は受験版 app/components/AuthProvider.tsx（**Project A** identity）から起動していたため、
+    // CAREER のログイン（Project B）では一度も走らず、別端末で
+    // プレゼン履歴 / マイページが空になっていた。identity の持ち主である本 provider へ移設する。
+    //
+    // ここが正しい理由（Project 境界）:
+    //   - `session.userId` は resolveCareerSession（lib/careerSupabase/auth）由来 = **Project B**。
+    //   - backfill / restore が使う mirror（lib/supabase/career*.ts）はすべて
+    //     getCareerBrowserSupabaseClient（Project B）経由で、RLS は auth.uid() = user_id。
+    //     ⇒ 書き手と読み手と RLS の user_id namespace が初めて一致する。
+    //   - 受験版データ（Project A）には一切触れない。
+    //
+    // 契約（移設前と同一）:
+    //   - await しない。ログイン / account 解決をブロックしない。例外は握りつぶす。
+    //   - dynamic import で browser-only な repository を server bundle に引き込まない。
+    //   - backfill（上り）→ restore（下り）の順。手元データを push した後に他端末由来行を merge する。
+    //   - 各 feature は backfillFlag（key='supabaseBackfill'・userId 単位）で冪等・1 端末 1 回限り。
+    //     restore は単一レコード＝LS 空のときだけ / 履歴系＝id マージ（local 優先）で local を壊さない。
+    const syncUserId = session.userId;
+    void import('@/lib/repository/careerBackfill')
+      .then((mod) => mod.backfillCareerOnce({ userId: syncUserId }))
+      .then(() => import('@/lib/repository/careerRestore'))
+      .then((mod) => mod.restoreCareerOnce({ userId: syncUserId }))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
