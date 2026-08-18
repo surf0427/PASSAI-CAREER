@@ -33,7 +33,16 @@ import {
 // Data Spine: 選択材料と **併用**する背景 context（選択の有無で見出し・ルールが変わる）。
 import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
 // Company Data Spine A 層。企業依存設問（志望動機 / 企業研究）でのみ背景に載せる。
-import { resolveEsDeepCompanyOfficialBlock } from '../resolveCompanyOfficial';
+import {
+  esDeepUsesCompanyOfficial,
+  resolveEsDeepCompanyOfficialBlock,
+} from '../resolveCompanyOfficial';
+// P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
+import { guardEsRequest } from '../requestGuard';
+// T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
+//   ★ 深掘りは企業依存設問（志望動機 / 企業研究）で Company Data Spine を読む唯一の入口。
+//     ここで warm-up しないと、添削まで進まない限り企業が Spine に登録されない。
+import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -99,12 +108,12 @@ function extractText(content: Array<{ type: string; text?: string }>): string {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
-  }
+  // P0（HARDENING）: identity 確定 → rate limit → body / 入力サイズ上限を **AI 到達前**に通す。
+  //   深掘りは ES 1 本で seed 1 回 + followup 最大 6 回と最も高頻度なので、
+  //   rate limit も添削より緩い専用ルール（deepMember / deepGuest）を使う。
+  const guard = await guardEsRequest(req, 'deep');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     question?: unknown;
@@ -151,6 +160,15 @@ export async function POST(req: Request) {
   const isSeed = turns.length === 0 && !answer;
 
   const hasKnownFacts = (context.knownFacts ?? []).length > 0;
+  // T1 trigger（Company Data Spine の warm-up）:
+  //   企業依存設問（志望動機 / 企業研究）のときだけ、企業名を prefetch 対象として登録する。
+  //   ★ これが無いと「深掘り → 添削」の順で進むユーザーは、添削まで到達するまで企業が
+  //     Spine に登録されず、企業情報が最も効く志望動機の深掘りが常に素のままになる。
+  //   ★ after() 登録のみ・本 request の応答時間に影響しない・flag OFF なら何も起きない。
+  //     同一企業への重複 trigger は company-scoped idempotency が畳む（添削側と二重でも安全）。
+  if (esDeepUsesCompanyOfficial(questionType)) {
+    triggerCompanyPrefetch(str(b.companyName), req);
+  }
   // 背景 context と企業公式情報は互いに独立なので並列に解決する（応答時間を増やさない）。
   //   ★ どちらも never-throw（Promise.all が reject する経路は無い）。
   const [fallbackBlock, companyBlock] = await Promise.all([

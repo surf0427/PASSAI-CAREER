@@ -7,41 +7,25 @@
  *     本 table はログイン済み（member）の durable mirror。natural key=(user_id, client_id)。
  *   - favorite / submitted は絞り込み用に列へ昇格。その他メタは meta（jsonb）へまとめる。
  *   - userInput / result / editedResult は jsonb。never throw（best-effort）。
+ *   - ES トレーニング本体（body / review / groupId / version / mode / deepDive）も meta へ
+ *     往復させる（Audit P1-A）。これが欠けていた間は、別端末 restore で添削結果・版履歴・
+ *     深掘りが失われ、現行 ES が LegacyView へ誤降格していた。
  */
 
 import { devWarn } from "@/lib/devLog";
 import { getCareerBrowserSupabaseClient } from "@/lib/careerSupabase/browserClient";
 import type { CareerEsLog } from "@/types/careerEs";
-// row→domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
+// row⇄domain の変換は Layer 1 共有 mapper（server reader と同一実装）へ委譲する。
+//   ★ write 側（careerEsLogToMeta）も read 側と同じ module に置く。別 module に置くと
+//     往復の対称性を検証できず、meta の落ちが今回のように長く残る（Audit P1-A）。
 import {
   CAREER_ES_SELECT_COLUMNS,
+  careerEsLogToMeta,
   rowToCareerEsLog,
   type CareerEsLogRow,
 } from "@/lib/careerSourceData/rowMappers";
 
 const TABLE = "career_es_logs";
-
-// CareerEsLog のメタ情報（昇格カラム以外）を meta jsonb にまとめる。
-function toMeta(log: CareerEsLog): Record<string, unknown> {
-  const meta: Record<string, unknown> = {};
-  if (log.companyName !== undefined) meta.companyName = log.companyName;
-  // Company Data Spine の canonical key（Phase A / R4）。旧ログでは欠損。
-  if (log.companyId !== undefined) meta.companyId = log.companyId;
-  if (log.question !== undefined) meta.question = log.question;
-  if (log.charLimit !== undefined) meta.charLimit = log.charLimit;
-  if (log.selectionType !== undefined) meta.selectionType = log.selectionType;
-  if (log.industry !== undefined) meta.industry = log.industry;
-  if (log.jobType !== undefined) meta.jobType = log.jobType;
-  if (log.sourceLogId !== undefined) meta.sourceLogId = log.sourceLogId;
-  if (log.sourceType !== undefined) meta.sourceType = log.sourceType;
-  if (log.companyResearchLogId !== undefined) {
-    meta.companyResearchLogId = log.companyResearchLogId;
-  }
-  if (log.companyResearchSnapshot !== undefined) {
-    meta.companyResearchSnapshot = log.companyResearchSnapshot;
-  }
-  return meta;
-}
 
 /** ES ログを upsert（1 件保存・backfill 兼用で配列を受ける / best-effort）。 */
 export async function upsertCareerEsLogsToSupabase(
@@ -60,7 +44,7 @@ export async function upsertCareerEsLogsToSupabase(
     edited_result: log.editedResult ?? null,
     favorite: !!log.favorite,
     submitted: !!log.submitted,
-    meta: toMeta(log),
+    meta: careerEsLogToMeta(log),
     created_at: log.createdAt,
   }));
 

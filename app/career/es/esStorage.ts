@@ -3,7 +3,8 @@ import type {
   CareerEsResult,
   CareerEsSelectionType,
 } from '@/types/careerEs';
-import { normalizeSelectedMaterials } from '@/lib/careerEs/materialCandidates';
+// deepDive の canonical shape は mirror boundary（rowMappers）と共有する（非対称禁止）。
+import { normalizeCareerEsDeepDive } from '@/lib/careerEs/logShape';
 // canonical shape は lib 側の純関数に一本化する（competing normalizer を作らない）。
 import {
   emptyCareerEsResult,
@@ -125,32 +126,10 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
     log.version = r.version;
   }
   if (r.mode === 'deep' || r.mode === 'write') log.mode = r.mode;
-  if (r.deepDive && typeof r.deepDive === 'object') {
-    const d = r.deepDive as Record<string, unknown>;
-    const turns = Array.isArray(d.turns)
-      ? d.turns
-          .map((t) => {
-            if (!t || typeof t !== 'object') return null;
-            const role = (t as { role?: unknown }).role;
-            const content = (t as { content?: unknown }).content;
-            if ((role === 'question' || role === 'answer') && typeof content === 'string') {
-              return { role, content };
-            }
-            return null;
-          })
-          .filter((t): t is { role: 'question' | 'answer'; content: string } => t !== null)
-      : [];
-    const memo = Array.isArray(d.memo)
-      ? d.memo.filter((m): m is string => typeof m === 'string')
-      : undefined;
-    // 選択材料（V1 で追加・optional）。旧ログには存在しないため欠損のままにする。
-    const materials = normalizeSelectedMaterials(d.materials);
-    log.deepDive = {
-      turns,
-      ...(memo ? { memo } : {}),
-      ...(materials.length > 0 ? { materials } : {}),
-    };
-  }
+  // 深掘り（Q&A / 整理メモ / 選択材料）。正規化は mirror boundary と共有する唯一の実装
+  // （lib/careerEs/logShape.ts）。非対称にすると Source Sync revision が永久不一致になる。
+  const deepDive = normalizeCareerEsDeepDive(r.deepDive);
+  if (deepDive) log.deepDive = deepDive;
   if (typeof r.sourceLogId === 'string') log.sourceLogId = r.sourceLogId;
   if (r.sourceType === 'generated' || r.sourceType === 'review_rewrite') {
     log.sourceType = r.sourceType;

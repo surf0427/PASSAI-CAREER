@@ -20,6 +20,8 @@
 import type { CareerProfile } from '@/types/careerProfile';
 // ES result は DDL 既定が '{}'::jsonb。read boundary で canonical shape へ正規化する。
 import { normalizeCareerEsResult } from '@/lib/careerEs/resultShape';
+// deepDive の canonical shape は client canonical（esStorage）と共有する（非対称禁止）。
+import { normalizeCareerEsDeepDive } from '@/lib/careerEs/logShape';
 import type { CareerActivity } from '@/types/careerActivity';
 import type {
   CareerValues,
@@ -180,6 +182,49 @@ export type CareerEsLogRow = {
 export const CAREER_ES_SELECT_COLUMNS =
   'client_id, user_input, result, edited_result, favorite, submitted, meta, created_at' as const;
 
+/**
+ * `CareerEsLog` → `career_es_logs.meta`（domain → row の write 側 mapper）。
+ *
+ * ★ read（`rowToCareerEsLog`）と **同じ module に置く**のが要点。
+ *   以前は書き手が `lib/supabase/careerEs.ts`（'use client'）の private 関数だったため、
+ *   往復の対称性を検証する QA が meta を手で組み直すしかなく、drift を検出できなかった。
+ *
+ * ★ ES Production Readiness Audit P1-A で追加した field:
+ *     body / review / groupId / version / mode / deepDive
+ *   これらが落ちていたため、別端末 restore で添削結果・版履歴・深掘りが失われ、
+ *   現行 ES が LegacyView へ誤降格していた。
+ *
+ * ★ `undefined` の field は **キーごと作らない**（旧 row と同じ形を保ち、
+ *   欠損を `null` という別の意味へ変換しない）。
+ */
+export function careerEsLogToMeta(log: CareerEsLog): Record<string, unknown> {
+  const meta: Record<string, unknown> = {};
+  if (log.companyName !== undefined) meta.companyName = log.companyName;
+  // Company Data Spine の canonical key（Phase A / R4）。旧ログでは欠損。
+  if (log.companyId !== undefined) meta.companyId = log.companyId;
+  if (log.question !== undefined) meta.question = log.question;
+  if (log.charLimit !== undefined) meta.charLimit = log.charLimit;
+  if (log.selectionType !== undefined) meta.selectionType = log.selectionType;
+  if (log.industry !== undefined) meta.industry = log.industry;
+  if (log.jobType !== undefined) meta.jobType = log.jobType;
+  if (log.sourceLogId !== undefined) meta.sourceLogId = log.sourceLogId;
+  if (log.sourceType !== undefined) meta.sourceType = log.sourceType;
+  if (log.companyResearchLogId !== undefined) {
+    meta.companyResearchLogId = log.companyResearchLogId;
+  }
+  if (log.companyResearchSnapshot !== undefined) {
+    meta.companyResearchSnapshot = log.companyResearchSnapshot;
+  }
+  // ── ES トレーニング本体（P1-A で往復させるようにした分）──────────────
+  if (log.body !== undefined) meta.body = log.body;
+  if (log.review !== undefined) meta.review = log.review;
+  if (log.groupId !== undefined) meta.groupId = log.groupId;
+  if (log.version !== undefined) meta.version = log.version;
+  if (log.mode !== undefined) meta.mode = log.mode;
+  if (log.deepDive !== undefined) meta.deepDive = log.deepDive;
+  return meta;
+}
+
 export function rowToCareerEsLog(row: CareerEsLogRow): CareerEsLog {
   const meta = (isObject(row.meta) ? row.meta : {}) as Record<string, unknown>;
   const log: CareerEsLog = {
@@ -209,6 +254,31 @@ export function rowToCareerEsLog(row: CareerEsLogRow): CareerEsLog {
   if (isObject(meta.companyResearchSnapshot))
     log.companyResearchSnapshot =
       meta.companyResearchSnapshot as CareerEsLog['companyResearchSnapshot'];
+
+  // ── ES トレーニング本体（P1-A）────────────────────────────────────
+  //   これらが復元されないと `/career/es/[id]` の legacy 判定
+  //   （body も mode も無い ⟹ 旧 AI 代筆ログ）に現行 ES が引っかかり、
+  //   read-only の LegacyView へ誤降格していた。
+  // ★ body は meta にあるときだけ復元する（`result.answer` からの合成は **しない**）。
+  //   理由: 旧「設問モードの AI 代筆」ログは `result.answer` に AI が書いた本文を持ち、
+  //   4 本文 field は空なので、`result` だけでは現行ログと区別できない。
+  //   ここで合成すると、本来 LegacyView に留めるべき旧代筆ログを編集画面へ昇格させてしまう
+  //   （＝ AI が書いた文章を「あなたが書いた本文」として提示する）。
+  //   また合成は client canonical に無い値を mirror 側だけに作るため、
+  //   Source Sync revision の対称性も壊す（career-source-sync-qa [1] が検出する）。
+  //   本拡張より前に書かれた行は body を持たないままだが、その ES を次に操作した時点で
+  //   `careerEsLogToMeta` が full meta を書き戻すので自然に回復する。
+  if (typeof meta.body === 'string') log.body = meta.body;
+  if (isObject(meta.review)) log.review = meta.review as CareerEsLog['review'];
+  if (typeof meta.groupId === 'string') log.groupId = meta.groupId;
+  if (typeof meta.version === 'number' && Number.isFinite(meta.version)) {
+    log.version = meta.version;
+  }
+  if (meta.mode === 'deep' || meta.mode === 'write') log.mode = meta.mode;
+  // 正規化は client canonical（esStorage.normalizeEsLog）と共有する唯一の実装を使う。
+  //   非対称にすると Source Sync revision が永久不一致になる（career-source-sync-qa [1]）。
+  const deepDive = normalizeCareerEsDeepDive(meta.deepDive);
+  if (deepDive) log.deepDive = deepDive;
   return log;
 }
 

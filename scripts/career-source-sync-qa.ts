@@ -38,6 +38,7 @@ import {
   EMPTY_SOURCE_SYNC_SIGNAL,
 } from '@/lib/careerSourceSync/signal';
 import {
+  careerEsLogToMeta,
   rowToCareerValues,
   rowToCareerEsLog,
   rowToCareerSelfAnalysisLog,
@@ -45,6 +46,7 @@ import {
   rowToCareerProfile,
   rowToCareerActivity,
 } from '@/lib/careerSourceData/rowMappers';
+import type { CareerEsLog } from '@/types/careerEs';
 import { SECTION_SOURCE_KINDS } from '@/lib/careerMemory/persistence/sourceProjection';
 import { normalizeCareerEsResult } from '@/lib/careerEs/resultShape';
 import {
@@ -92,15 +94,22 @@ const VALUES = {
   overallNote: '総合', updatedAt: CLIENT_TS,
 };
 const SELF_LOGS = [{ id: 'sa-1', createdAt: CLIENT_TS, userInput: 'in', result: { summary: 's', strengths: ['計画性'] } }];
-// ★ body / mode / groupId / version / deepDive は mirror の meta へ保存されない（toMeta 参照）。
+// ★ Audit P1-A 以降、body / review / groupId / version / mode / deepDive も meta へ往復する
+//   （careerEsLogToMeta ⇄ rowToCareerEsLog）。fixture もその実態に合わせる。
 // ★ client canonical は `loadEsLogs()` → `normalizeEsLog` を通るため、result は必ず
-//   canonical shape（4 string + 3 list、欠損は '' / []）になっている。
+//   canonical shape（4 string + 3 list、欠損は '' / []）に、deepDive は
+//   `normalizeCareerEsDeepDive` の出力形（turns 必須 / memo・materials は存在時のみ）になる。
 //   fixture もその実態に合わせる（生の部分オブジェクトは client 側に存在しない形）。
 //   `createEsWorkspaceLog` も `{ ...emptyEsResult(), answer: body }` を保存する。
 const ES_LOGS = [{
   id: 'es-1', createdAt: CLIENT_TS, userInput: '',
   result: normalizeCareerEsResult({ answer: '本文' }),
-  body: '本文', mode: 'write', groupId: 'es-1', version: 1, deepDive: { a: 1 },
+  body: '本文', mode: 'write', groupId: 'es-1', version: 1,
+  deepDive: {
+    turns: [{ role: 'question', content: 'なぜ取り組んだ？' }, { role: 'answer', content: '理由' }],
+    memo: ['整理メモ'],
+  },
+  review: { overallScore: 72, rank: 'B', overallComment: '総評', breakdown: { logic: 72, specificity: 72, originality: 72, readability: 72, persuasion: 72, companyFit: 72 }, strengths: ['S'], improvements: ['I'], missingElements: ['M'], recruiterComments: ['R'], priorityActions: ['P'] },
   companyName: 'A社', question: '設問', charLimit: 400, selectionType: 'main',
   favorite: true, submitted: false,
 }];
@@ -129,10 +138,12 @@ const MIRROR_BUNDLE = {
   selfAnalysisLogs: SELF_LOGS.map((l) => rowToCareerSelfAnalysisLog({
     client_id: l.id, user_input: l.userInput, result: l.result, created_at: PG_TS,
   })),
+  // ★ meta は **実際の write mapper**（careerEsLogToMeta）で組む。手で組み直すと
+  //   write 側の落ちを QA が検出できない（Audit P1-A の meta 欠落が長く残った原因）。
   esLogs: ES_LOGS.map((l) => rowToCareerEsLog({
     client_id: l.id, user_input: l.userInput, result: l.result, edited_result: null,
     favorite: l.favorite, submitted: l.submitted,
-    meta: { companyName: l.companyName, question: l.question, charLimit: l.charLimit, selectionType: l.selectionType },
+    meta: careerEsLogToMeta(l as unknown as CareerEsLog),
     created_at: PG_TS,
   })),
   interviewResults: INTERVIEW.map((l) => rowToCareerInterviewResult({
@@ -170,8 +181,16 @@ function main() {
     );
     check(
       computeSourceSyncRevision('es', CLIENT_BUNDLE) === computeSourceSyncRevision('es', MIRROR_BUNDLE),
-      'ES の body/mode/groupId/version（mirror 非保存）が revision に影響しない',
+      'ES の body/review/groupId/version/mode/deepDive が meta 往復後も revision 一致（P1-A）',
     );
+    // ★ P1-A 回帰: これらが meta から落ちると別端末 restore で添削・版履歴・深掘りが失われ、
+    //   現行 ES が LegacyView へ誤降格する。write mapper 側の欠落を直接固定する。
+    {
+      const meta = careerEsLogToMeta(ES_LOGS[0] as unknown as CareerEsLog);
+      for (const key of ['body', 'review', 'groupId', 'version', 'mode', 'deepDive']) {
+        check(meta[key] !== undefined, `es meta が ${key} を往復させる`);
+      }
+    }
   }
 
   console.log('[2] 内容差は必ず revision 差になる（安全方向）');

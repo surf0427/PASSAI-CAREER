@@ -145,7 +145,14 @@ export default function CareerEsEditorPage() {
       const data = (await res.json()) as { review: CareerEsReview };
       updateEsLog(log.id, { review: data.review });
       if (userId) {
-        void upsertCareerEsLogsToSupabase(userId, [{ ...log, body, review: data.review }]);
+        // ★ mirror へは localStorage canonical と **同じ内容**を送る。
+        //   `log` は render 時点の snapshot なので `log.result.answer` は persistBody 前の
+        //   古い本文のままであり、`body` だけ更新して送ると mirror 内で body と
+        //   result.answer が食い違う（body は Source Sync revision の対象なので、
+        //   ここがずれると server context が stale 判定で永久に veto されうる）。
+        void upsertCareerEsLogsToSupabase(userId, [
+          { ...log, body, result: { ...log.result, answer: body }, review: data.review },
+        ]);
       }
       // 添削完了 = 本人が確定保存した ES 本文が確定。canonical ログ確定後に Personal Memory を再構築する
       //   （AI 添削コメントは Memory へ載らない。設問メタのみ。同一 Source は CAS が unchanged で skip）。

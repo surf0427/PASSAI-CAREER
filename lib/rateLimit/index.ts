@@ -306,3 +306,67 @@ export const CAREER_INTERVIEW_RATE_LIMITS = {
     failClosed: true,
   },
 } as const satisfies Record<string, RateLimitRule>;
+
+// ── Career ES AI route の rate limit ルール（正本）────────────────────
+//
+// STEP-CAREER-ES-HARDENING-P0: /api/career/es/{materials,deep,organize} と
+// /api/career/es-review は Anthropic 課金に直結する公開 endpoint でありながら
+// guard を持っていなかった（ES Production Readiness Audit P0）。
+// プレゼン / 面接と **同じ 2 系統設計**を横展開する:
+//   member … user_id キー（通常上限・fail-open）
+//   guest  … IP キー（厳しめ・fail-closed）
+// ★ 401 では閉じない。ES は guest 利用を正式に許可した機能（localStorage canonical）。
+//
+// 値の根拠（正常な ES 1 本の call 回数。設問種別で最大となるガクチカ = 深掘り上限 7 問）:
+//   materials … 材料選択フェーズで 1 回（「探す」を押したとき）。再検索しても数回。
+//                候補は id + label のみで max_tokens 900 と軽い。member 8/分・40/時。
+//   deep      … **最頻**。seed 1 回 + followup 最大 6 回 = 1 ES あたり最大 7 回で、
+//                回答を書いてすぐ次の質問へ進むため短時間に連続する。
+//                review と同じ上限をコピーすると正常な深掘りが途中で 429 になる。
+//                member 20/分（1 ES を 1 分で駆け抜けても 3 倍近い余裕）・120/時。
+//   organize  … 深掘りの締めに 1 回（失敗時の再試行あり）。member 6/分・40/時。
+//   review    … **最も高価**（max_tokens 3000）。1 本目の添削 + 「もう一度添削」+
+//                改善版（v+1）の添削という UX ループがあるため evaluate 系より少し緩める。
+//                member 6/分・40/時。
+//
+// guest は member の 6 割程度。NAT（大学・オフィス）で IP が共有されうるため、
+// ES 1 本を書き切る体験が完走できない水準までは下げない
+// （guest でも 1 時間に 8 本ぶんの深掘り + 15 回の添削が可能）。
+export const CAREER_ES_RATE_LIMITS = {
+  materialsMember: {
+    namespace: 'career_es_materials_member',
+    windows: [{ limit: 8, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  materialsGuest: {
+    namespace: 'career_es_materials_guest',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  deepMember: {
+    namespace: 'career_es_deep_member',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 120, windowSeconds: 3600 }],
+  },
+  deepGuest: {
+    namespace: 'career_es_deep_guest',
+    windows: [{ limit: 12, windowSeconds: 60 }, { limit: 60, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  organizeMember: {
+    namespace: 'career_es_organize_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  organizeGuest: {
+    namespace: 'career_es_organize_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 16, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  reviewMember: {
+    namespace: 'career_es_review_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  reviewGuest: {
+    namespace: 'career_es_review_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 15, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+} as const satisfies Record<string, RateLimitRule>;

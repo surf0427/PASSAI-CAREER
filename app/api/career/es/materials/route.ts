@@ -23,6 +23,8 @@ import {
   ES_MATERIAL_CANDIDATE_LIMIT,
   ES_MATERIAL_LABEL_MAX_CHARS,
 } from '@/lib/careerEs/materialCandidates';
+// P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
+import { guardEsRequest } from '../requestGuard';
 
 export const maxDuration = 80;
 
@@ -57,12 +59,11 @@ function normalizeCandidates(value: unknown): EsMaterialPromptCandidate[] {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
-  }
+  // P0（HARDENING）: identity 確定 → rate limit → body / 入力サイズ上限を **AI 到達前**に通す。
+  //   関連度判定は材料選択フェーズで 1 回（再検索を見込んだ上限）。
+  const guard = await guardEsRequest(req, 'materials');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     question?: unknown;

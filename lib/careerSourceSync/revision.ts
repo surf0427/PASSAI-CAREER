@@ -17,8 +17,9 @@
 //   2. ただし **mirror を往復しないフィールドは含めない**（含めると永久不一致 → 機能が無効化される）。
 //      往復しないフィールドの実例:
 //        - career_values.updated_at は DB trigger が now() で上書きする（client 値と別物）
-//        - career_es_logs は body / mode / groupId / version / deepDive を meta へ保存していない
 //      → 各 kind の sync view で明示的に除外し、その根拠をコメントに残す。
+//      ★ かつて career_es_logs の body / mode / groupId / version / deepDive もここに該当したが、
+//        Audit P1-A で meta へ往復させたため除外を解除した（下の 'es' case 参照）。
 //        往復性は scripts/career-source-sync-qa.ts [1] が fixture で回帰検証する。
 //   3. 純関数 / deterministic / never-throw / browser 兼用（node:crypto を使わない）。
 //   4. revision は **内容の同一性 token** であり security hash ではない。値から内容は復元できないが、
@@ -106,10 +107,14 @@ function syncViewForKind(kind: CareerSourceKind, bundle: CareerSourceBundle): un
         userInput: (l as { userInput?: unknown }).userInput ?? '',
       }));
 
-    // career_es_logs: 昇格列 + meta の field のみ往復する。
-    //   body / mode / groupId / version / deepDive は meta へ保存されない（toMeta 参照）ため **除外**。
-    //   Layer 2 の ES projection は createdAt / companyName / question / result しか使わないため、
-    //   この view はそれらの superset になっている。
+    // career_es_logs: 昇格列 + meta の field が往復する。
+    //   ★ Audit P1-A 以降、body / review / groupId / version / mode / deepDive も
+    //     meta へ保存されるようになったため **view に含める**（除外理由が消えた）。
+    //     とくに body は cross-feature（面接 / プレゼン / マッチング）の prompt へ実際に
+    //     到達する消費対象なので、ここから漏らすと stale な本文を verified と誤認しうる
+    //     （career-es-cross-feature-closeout-qa が body の prompt 到達を固定している）。
+    //   ★ 含められる前提は「client canonical と mirror の正規化が対称」であること。
+    //     deepDive は lib/careerEs/logShape.ts の単一実装を両側が共有して対称性を担保する。
     case 'es':
       return (bundle.esLogs ?? []).map((l) => {
         const e = l as unknown as Record<string, unknown>;
@@ -124,6 +129,12 @@ function syncViewForKind(kind: CareerSourceKind, bundle: CareerSourceBundle): un
           favorite: !!e.favorite,
           submitted: !!e.submitted,
           editedResult: e.editedResult ?? null,
+          body: e.body ?? null,
+          review: e.review ?? null,
+          groupId: e.groupId ?? null,
+          version: e.version ?? null,
+          mode: e.mode ?? null,
+          deepDive: e.deepDive ?? null,
         };
       });
 

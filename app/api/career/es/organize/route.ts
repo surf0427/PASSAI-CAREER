@@ -24,6 +24,8 @@ import {
 // Data Spine: 選択材料と **併用**する背景 context（選択の有無で見出し・ルールが変わる）。
 //   ★ Organize に企業公式情報は載せない（Q&A を本人の言葉で構造化するのが目的のため）。
 import { resolveEsFallbackContextBlock } from '../resolveFallbackContext';
+// P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
+import { guardEsRequest } from '../requestGuard';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -81,12 +83,11 @@ function normalizeMemo(raw: unknown): string[] {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
-  }
+  // P0（HARDENING）: identity 確定 → rate limit → body / 入力サイズ上限を **AI 到達前**に通す。
+  //   材料整理は深掘りの締めに 1 回だけ走る（失敗時の再試行を見込んだ上限）。
+  const guard = await guardEsRequest(req, 'organize');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     question?: unknown;

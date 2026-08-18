@@ -40,6 +40,8 @@ import { buildCareerAiContext } from '@/lib/careerAi';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import { renderSelfAnalysis } from '@/lib/careerMemory/renderers/interviewCrossFeature';
 import { resolveEsReviewContextInputs } from './resolveContextInputs';
+// P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
+import { guardEsRequest } from '../es/requestGuard';
 // Company Data Spine A 層（公式情報）。未取得 / flag OFF / 企業未解決なら null（添削は成立）。
 import { resolveEsReviewCompanyOfficial } from './resolveCompanyOfficial';
 // T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
@@ -134,12 +136,12 @@ function normalizeReview(raw: unknown): CareerEsReview {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0（HARDENING）: identity 確定 → rate limit → body / 入力サイズ上限を **AI 到達前**に通す。
+  //   添削は 1 ES につき「初回 + もう一度添削 + 改善版」の複数回が正常系。
+  //   ★ answer はこれまで完全に無制限だった（Audit P0）。guard 側で 8,000 字上限を掛ける。
+  const guard = await guardEsRequest(req, 'review');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     answer?: string;
