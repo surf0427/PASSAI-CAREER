@@ -14,7 +14,23 @@ import { getRateLimitStore } from './store';
 
 export type RateLimitWindow = { limit: number; windowSeconds: number };
 
-export type RateLimitRule = { namespace: string; windows: readonly RateLimitWindow[] };
+export type RateLimitRule = {
+  namespace: string;
+  windows: readonly RateLimitWindow[];
+  /**
+   * STEP-GD-31: store 障害時の挙動。
+   *
+   * 既定（false）は **fail-open**（可用性優先）。store が落ちても機能が止まらない。
+   * true にすると **fail-closed**（安全性優先）で 429 を返す。
+   *
+   * ★ 使い分けの基準:
+   *   fail-closed … 「上限が消えると security が壊れる」もの。GD では合言葉 join が該当する
+   *                 （6 桁 = 10^6 空間の総当りを、上限消失中に許すわけにいかない）。
+   *   fail-open  … 「上限が消えても最悪うるさいだけ」のもの（発言・heartbeat・status polling）。
+   *                ここを fail-closed にすると、Redis 障害が即 GD 全停止になり本末転倒。
+   */
+  failClosed?: boolean;
+};
 
 export type RateLimitResult = {
   allowed: boolean;
@@ -41,6 +57,8 @@ export async function checkRateLimit(params: {
   windowSeconds: number;
   namespace: string;
   nowMs?: number;
+  /** store 障害時に拒否する（既定 false = 通す）。 */
+  failClosed?: boolean;
 }): Promise<RateLimitResult> {
   const nowMs = params.nowMs ?? Date.now();
   const nowSec = Math.floor(nowMs / 1000);
@@ -52,7 +70,11 @@ export async function checkRateLimit(params: {
   try {
     count = await getRateLimitStore().incr(storeKey, params.windowSeconds, nowMs);
   } catch {
-    // store 障害時は可用性を優先して通す（namespace のみログ・key は出さない）。
+    // store 障害時の挙動は rule 側の宣言に従う（namespace のみログ・key は出さない）。
+    if (params.failClosed) {
+      console.warn(`rate limit store error: namespace=${params.namespace} (request DENIED / fail-closed)`);
+      return { allowed: false, limit: params.limit, remaining: 0, resetAt, retryAfterSeconds: params.windowSeconds };
+    }
     console.warn(`rate limit store error: namespace=${params.namespace} (request allowed)`);
     return { allowed: true, limit: params.limit, remaining: params.limit, resetAt, retryAfterSeconds: 0 };
   }
@@ -88,6 +110,7 @@ export async function checkRateLimits(params: {
       windowSeconds: w.windowSeconds,
       namespace,
       nowMs: params.nowMs,
+      failClosed: params.rule.failClosed === true,
     });
     if (!r.allowed && !blocked) blocked = r; // 最初に引っかかった window を採用
     if (!tightest || r.remaining < tightest.remaining) tightest = r;
@@ -141,9 +164,12 @@ export const CAREER_GD_RATE_LIMITS = {
     windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
   },
   // 合言葉 join: 10/分・40/時。
+  //   ★ fail-closed。6 桁コード（10^6）への総当りを、store 障害中に無制限で許さない。
+  //     Upstash 障害時は join だけが一時的に 429 になる（create / 発言 / 進行は継続できる）。
   inviteJoin: {
     namespace: 'career_gd_invite_join',
     windows: [{ limit: 10, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+    failClosed: true,
   },
   // ランダムマッチ enter: 10/分・30/時（連打・二重投入を防ぐ）。
   matchEnter: {
@@ -159,5 +185,28 @@ export const CAREER_GD_RATE_LIMITS = {
   matchCancel: {
     namespace: 'career_gd_match_cancel',
     windows: [{ limit: 10, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  // ── STEP-GD-31 追加分 ───────────────────────────────────────
+  // 発言: 30/分・600/時。GD の実利用（1〜2 秒に 1 回打つことはない）より十分緩く、
+  //   スクリプトによる spam は止まる。fail-open（Redis 障害で GD が止まらない）。
+  message: {
+    namespace: 'career_gd_message',
+    windows: [{ limit: 30, windowSeconds: 60 }, { limit: 600, windowSeconds: 3600 }],
+  },
+  // AI 発言: 20/分・200/時。**Anthropic 課金に直結**するため発言より厳しくする。
+  aiTurn: {
+    namespace: 'career_gd_ai_turn',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 200, windowSeconds: 3600 }],
+  },
+  // 評価生成: 6/分・40/時。1 room 1 回が正常系（冪等なので再試行はある）。AI 課金に直結。
+  result: {
+    namespace: 'career_gd_result',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  // heartbeat: 既定 15 秒間隔 = 4/分。上限 20/分は「複数タブ・再接続直後の集中」を許容しつつ
+  //   暴走クライアントを止める水準。fail-open（presence が理由で GD を止めない）。
+  heartbeat: {
+    namespace: 'career_gd_heartbeat',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 600, windowSeconds: 3600 }],
   },
 } as const satisfies Record<string, RateLimitRule>;

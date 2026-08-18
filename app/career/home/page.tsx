@@ -10,6 +10,7 @@ import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import type { CareerProfile } from '@/types/careerProfile';
 import { isCareerCompanyMatchingUiEnabled } from '@/lib/careerMatchingGate/flag';
+import { isCareerGdUiEnabled } from '@/lib/careerGdGate/flag';
 
 // ── 機能カードの定義 ──────────────────────────────────────────────
 // 受験版 app/home/page.tsx の FEATURES をそのまま踏襲（title / description）。
@@ -94,11 +95,19 @@ const RECOMMENDED_STEPS = [
 // FEATURES は grid なので 1 枚減ってもレイアウトは崩れない。
 // build-time env なので module scope で 1 回だけ評価する（描画ごとの再計算は不要）。
 const MATCHING_UI_ENABLED = isCareerCompanyMatchingUiEnabled();
+
+// ── GD 公開ゲート（STEP-GD-31）────────────────────────────────────
+// 企業マッチングと同じ扱い: OFF なら「準備中」を出さず **定義ごと配列から落とす**。
+// ★ これは導線の可視性だけを制御する。実行権限は server flag（CAREER_GD_ENABLED）が
+//   単独で持つため、この値が誤って true でも API は 404 のまま（fail-closed）。
+const GD_UI_ENABLED = isCareerGdUiEnabled();
+
 const VISIBLE_FEATURES = FEATURES.filter(
-  (f) => MATCHING_UI_ENABLED || f.key !== 'company-matching',
+  (f) =>
+    (MATCHING_UI_ENABLED || f.key !== 'company-matching') && (GD_UI_ENABLED || f.key !== 'gd'),
 );
 const VISIBLE_RECOMMENDED_STEPS = RECOMMENDED_STEPS.filter(
-  (s) => MATCHING_UI_ENABLED || s.key !== 'company-matching',
+  (s) => (MATCHING_UI_ENABLED || s.key !== 'company-matching') && (GD_UI_ENABLED || s.key !== 'gd'),
 );
 
 // ── ページ本体 ───────────────────────────────────────────────────

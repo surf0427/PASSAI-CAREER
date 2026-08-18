@@ -75,10 +75,14 @@ export const DEFAULT_CAREER_CONTEXT_POLICY: CareerContextPolicy = {
 //             presentation_feedback(theme·evaluate·qa) / company_research_review /
 //             consultation / self_analysis(route.ts) / self_analysis_deep_dive(question) /
 //             es_review(es-review route)
-//   base 不使用の live route（INTENTIONALLY_CONTEXT_FREE）:
-//             gd 系（transcript 主体・静的 system prompt）
 //   base fallback のみ（材料未選択時に es_review policy を借りる）: es/deep / es/organize
-//   DORMANT（registry のみ・live callsite 0）: interview_complete / gd_feedback / mypage_summary
+//   DORMANT（registry のみ・live callsite 0）: interview_complete / mypage_summary
+//
+// ★ STEP-GD-31: gd_feedback を DORMANT から **live** へ昇格。
+//   GD（マルチ評価 / ソロ評価 / お題生成）が app/api/career/gd/resolveContextInputs.ts 経由で
+//   User Data Spine を、resolveCompanyOfficial.ts 経由で Company Data Spine を受け取る。
+//   「GD は INTENTIONALLY_CONTEXT_FREE」という旧方針はここで終了する（GD だけが Spine から
+//   孤立している状態を解消するため）。ただし採点根拠は transcript のみという原則は不変。
 //
 // ★ `es_generation` は Closure Batch で **retire**（`D-S12`）。
 //   ES 再設計（AI 代筆廃止）で live route が消滅し、orchestrator branch も renderer も
@@ -142,13 +146,28 @@ export const CAREER_CONTEXT_REGISTRY: Record<CareerContextPurpose, CareerContext
     notes: '司令塔。手組みアグリゲートは route の責務（P3-C は base のみ Orchestrator 経由）。P6-F で profile:minimal を通電し氏名を prompt から除外（PII pilot 完了）。',
   },
   gd_feedback: {
-    profile: 'exclude',
-    activity: 'exclude',
-    values: 'exclude',
-    recentLogs: 'exclude',
-    companyContext: 'exclude',
+    // STEP-GD-31: Data Spine 接続。GD だけが Spine から孤立している状態を解消する。
+    //
+    // ★ ただし「transcript 主体」という評価原則は変えない（要件 25）。
+    //   base context は **評価軸を歪めるためではなく、フィードバックの宛先を合わせるため**に使う:
+    //     - 志望業界 / 職種 / 選考種別を踏まえた「次に何を伸ばすべきか」の助言
+    //     - 本人の強み・価値観と GD 中の振る舞いのギャップの指摘
+    //   スコアそのものは **server が axisScores から決定論算出**するため、
+    //   base context が総合点・ランクを動かすことは構造的に起こらない（要件 29）。
+    //
+    // profile:minimal … 氏名(構造化 PII)は prompt から落とす（matching / interview と同じ pilot）。
+    //   GD 評価に本名は不要（表示名は transcript 側に既に出ている）。
+    profile: 'minimal',
+    activity: 'compact',
+    values: 'include',
+    // 直近の自己分析 / 過去 GD を route が別 block で付与する（横断ログ全部は読まない）。
+    recentLogs: 'include',
+    // 企業指定 GD（＝志望企業が解決できたとき）だけ Company Official を載せる。
+    companyContext: 'optional',
+    // transcript が主役なので base は絞る（既存 2000 を維持。肥大させない）。
     maxContextChars: 2000,
-    notes: 'GD 評価は transcript 主体。career base context は使わない。',
+    notes:
+      'GD 評価は transcript 主体（この原則は不変）。STEP-GD-31 で User Data Spine を接続し、志望業界・職種・価値観・自己分析を「助言の宛先合わせ」に使う。総合点/ランク/企業コミュ適性は server の決定論算出のままで、AI には axisScores と根拠しか作らせない。',
   },
   presentation_feedback: {
     // P6-D: PII 除外 pilot 横展開。matching(P6-C) と同じく profile を minimal に通電し、氏名を prompt から落とす。

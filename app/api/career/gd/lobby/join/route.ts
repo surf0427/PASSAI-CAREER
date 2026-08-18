@@ -23,10 +23,16 @@ import {
 } from '@/lib/careerGd/publicLobby';
 import type { LobbyJoinResponse } from '@/lib/careerGd/publicLobbyTypes';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 
 export const maxDuration = 30;
 
 export async function POST(req: Request) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   // ── 1) 入力 ──
   let body: unknown;
   try {

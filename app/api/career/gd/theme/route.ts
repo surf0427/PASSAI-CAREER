@@ -18,6 +18,10 @@ import {
   parseThemeJson,
 } from '../gdPrompt';
 import { coerceParticipantCount } from '@/lib/careerGd/participantCount';
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
+import { resolveGdContextInputs } from '../resolveContextInputs';
+import { resolveGdCompanyOfficial } from '../resolveCompanyOfficial';
+import { buildGdSpinePrompt, appendGdSpineBlock } from '../gdSpinePrompt';
 
 export const maxDuration = 80;
 
@@ -37,6 +41,11 @@ function resolveTimeLimit(value: unknown): number {
 }
 
 export async function POST(req: Request) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -52,6 +61,10 @@ export async function POST(req: Request) {
     jobType?: unknown;
     difficulty?: unknown;
     themeType?: unknown;
+    // STEP-GD-31: 企業指定（任意）。現行 UI は送らないため通常は未設定＝一般 GD のまま。
+    //   将来 GD に企業指定が付いたときの受け口として型だけ通しておく（挙動は変えない）。
+    companyId?: unknown;
+    companyName?: unknown;
   };
   const format = resolveFormat(b.format);
   const participantCount = resolveCount(b.participantCount);
@@ -59,7 +72,17 @@ export async function POST(req: Request) {
   // 任意の絞り込み条件（マルチGD テーマ設定ステップ用・未指定は AI にお任せ）。
   const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
 
-  const system = buildThemeSystem();
+  // ── STEP-GD-31: Data Spine（お題生成）──
+  //    志望業界・職種があれば「その領域で実際に出そうなお題」に寄せられる。
+  //    企業が指定されていれば Company 公式情報も背景として渡す（無ければ一般 GD のまま）。
+  //    ★ 解決できなければ block は '' となり、prompt は従来と byte 完全一致。
+  const spineCtx = await resolveGdContextInputs(req);
+  const themeCompany = await resolveGdCompanyOfficial({
+    companyId: typeof b.companyId === 'string' ? b.companyId : null,
+    companyName: typeof b.companyName === 'string' ? b.companyName : null,
+  });
+  const spine = buildGdSpinePrompt(spineCtx, themeCompany);
+  const system = appendGdSpineBlock(buildThemeSystem(), spine.block);
   const user = buildThemeUser({
     format,
     participantCount,

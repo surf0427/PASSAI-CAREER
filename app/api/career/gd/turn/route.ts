@@ -14,6 +14,7 @@ import type {
 import { anthropic } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import { CAREER_GD_MODEL, buildTurnSystem, buildTurnUser } from '../gdPrompt';
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 
 export const maxDuration = 80;
 
@@ -67,6 +68,11 @@ function normalizeTranscript(raw: unknown): GdUtterance[] {
 }
 
 export async function POST(req: Request) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   let body: unknown;
   try {
     body = await req.json();

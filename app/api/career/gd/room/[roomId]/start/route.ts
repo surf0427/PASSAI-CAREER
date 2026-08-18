@@ -24,6 +24,7 @@ import { buildRoomTheme } from '../../roomTheme';
 import { isThemeConfirmed } from '@/lib/careerGd/roomThemeInput';
 import type { GdFormat } from '@/types/careerGd';
 
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 export const maxDuration = 30;
 
 type Row = Record<string, unknown>;
@@ -36,6 +37,11 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ roomId: string }> },
 ) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) {
     return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);

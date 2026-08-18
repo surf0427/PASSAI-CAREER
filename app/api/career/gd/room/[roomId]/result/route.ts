@@ -38,12 +38,34 @@ import {
   normalizeRoomOverall,
 } from '../../roomFeedback';
 
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
+import { reportGdFailure } from '../../../gdObservability';
+import { resolveGdContextInputs } from '../../../resolveContextInputs';
+import { resolveGdCompanyOfficial } from '../../../resolveCompanyOfficial';
+import { buildGdSpinePrompt } from '../../../gdSpinePrompt';
 export const maxDuration = 80;
 
 type Row = Record<string, unknown>;
 
 function jsonError(error: string, detail: string, status: number): Response {
   return Response.json({ error, detail }, { status });
+}
+
+/**
+ * STEP-GD-31: room から「企業指定」を取り出す（現状は常に未指定）。
+ *
+ * career_gd_rooms には企業列が無く、GD の開始 UX を変えないため列も UI も追加していない
+ * （要件 27）。theme jsonb に将来 `companyName` / `companyId` を持たせたときに
+ * **ここ 1 箇所だけ**を変えれば Company Data Spine が通電するようにしてある。
+ * 推測で企業を当てはめない（誤った企業の事実を評価へ混ぜる方が有害）。
+ */
+function gdCompanyTarget(roomRow: Row): { companyId: string | null; companyName: string | null } | null {
+  const theme = roomRow.theme && typeof roomRow.theme === 'object' ? (roomRow.theme as Row) : null;
+  const companyName = theme && typeof theme.companyName === 'string' ? theme.companyName.trim() : '';
+  const companyId = theme && typeof theme.companyId === 'string' ? theme.companyId.trim() : '';
+  if (!companyName && !companyId) return null;
+  return { companyId: companyId || null, companyName: companyName || null };
 }
 
 function str(v: unknown): string {
@@ -91,12 +113,21 @@ function toResultView(roomId: string, row: Row): CareerGdRoomResultView {
   };
 }
 
-export async function POST(_req: Request, ctx: { params: Promise<{ roomId: string }> }) {
+export async function POST(req: Request, ctx: { params: Promise<{ roomId: string }> }) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);
 
   const auth = await authenticateGdMember();
   if (auth.kind === 'reject') return auth.response;
+
+  // STEP-GD-31: 評価生成は AI 課金に直結。冪等ではあるが連打の上限を掛ける。
+  const limited = await enforceRateLimit(auth.userId, CAREER_GD_RATE_LIMITS.result);
+  if (limited) return limited;
   const adminRes = getGdAdmin();
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
@@ -185,14 +216,25 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
       matchByPid.set(pid, { hints: [], summary: '発言が少なくマッチング傾向は判定できませんでした。' });
     }
   } else {
-    // AI 評価（人間のみ・発言本文が根拠）。
+    // ── STEP-GD-31: Data Spine 解決（never-throw / fail-open）──
+    //    ★ I/O は route の責務（orchestrator / renderer は純関数）という既存分離を守る。
+    //    ★ 解決できなくても評価は必ず成立する（block が '' になり prompt は従来と byte 一致）。
+    //    ★ 企業は「呼び出し側が明示指定したときだけ」解決する。GD には企業指定 UI が無いため
+    //      現状は常に null（＝一般 GD）。将来 UI が付いたときの受け口として配線だけ通しておく。
+    const spineCtx = await resolveGdContextInputs(req);
+    const companyOfficial = await resolveGdCompanyOfficial(gdCompanyTarget(roomRow as Row));
+    const spine = buildGdSpinePrompt(spineCtx, companyOfficial);
+
+    // AI 評価（人間のみ・発言本文が根拠。Spine は助言の宛先合わせにのみ使う）。
     const feedback = await generateRoomFeedback({
       theme: themeInput,
       humans: humansWithSpeech.map((m) => ({ participantId: String(m.participant_id), displayName: str(m.display_name) || '参加者', isAi: false })),
       ais: ais.map((m) => ({ participantId: String(m.participant_id), displayName: str(m.display_name) || 'AI', isAi: true })),
       transcript: messageRows.map((m) => ({ participantId: String(m.participant_id), content: str(m.content), kind: m.kind === 'system' ? 'system' : 'speech' })),
+      spineBlock: spine.block,
     });
     if (!feedback) {
+      reportGdFailure(new Error('gd room feedback generation returned null'), 'gd/room/result', 'AI_GD_EVAL_FAILED', 502);
       return jsonError('AI_GD_EVAL_FAILED', '評価の生成に失敗しました。時間をおいて再度お試しください。', 502);
     }
     // 議論全体の評価（人間参加者のみを roleEstimates の対象にする）。

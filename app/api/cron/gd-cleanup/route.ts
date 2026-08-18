@@ -34,6 +34,7 @@ import { NextResponse } from 'next/server';
 import { devWarn } from '@/lib/devLog';
 import { captureRouteException } from '@/lib/sentry/capture';
 import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
+import { GD_DISCONNECT_AFTER_SEC, GD_STALE_AFTER_SEC } from '@/lib/careerGd/presence';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -106,6 +107,39 @@ async function handle(req: Request) {
     });
     if (queueErr) throw new Error(`cleanup-queue: ${queueErr.message}`);
 
+    // ── 4) STEP-GD-31: 期限切れ room の finish（host 不在でも必ず終わる保険）──
+    //    通常はリクエスト経路（room GET / heartbeat / 発言）で finish されるが、
+    //    「誰も見ていない部屋」だけはここで回収する。
+    //    ★ 既存 TTL cleanup（activeTtlMin=180分）とは目的が違う:
+    //      こちらは time_limit_sec 到達で **正常終了** させる（結果を出せる状態にする）。
+    //      既存 cleanup は放置部屋を cancelled にする最終手段。順序上こちらが先に効くため、
+    //      「時間切れ → finished（結果あり）」が「放置 → cancelled（結果なし）」に化けない。
+    let expiredRoomCount = 0;
+    if (!dryRun) {
+      const { data, error } = await admin.rpc('career_gd_finish_expired_all');
+      // RPC 未適用（career_gd_realtime_apply.sql 未適用）でも cleanup 全体は止めない。
+      if (error) devWarn('[cron/gd-cleanup] finish-expired skipped', error.message ?? 'rpc unavailable');
+      else expiredRoomCount = typeof data === 'number' ? data : 0;
+    }
+
+    // ── 5) STEP-GD-31: presence sweep（全 room 横断）──
+    //    切断検知の閾値は lib/careerGd/presence.ts と共有する（cron 側で別値を持たない）。
+    let presenceSwept = { disconnected: 0, stale: 0 };
+    if (!dryRun) {
+      const { data, error } = await admin.rpc('career_gd_sweep_presence_all', {
+        p_disconnect_sec: GD_DISCONNECT_AFTER_SEC,
+        p_stale_sec: GD_STALE_AFTER_SEC,
+      });
+      if (error) devWarn('[cron/gd-cleanup] presence-sweep skipped', error.message ?? 'rpc unavailable');
+      else {
+        const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+        presenceSwept = {
+          disconnected: Number(row?.disconnected_count ?? 0) || 0,
+          stale: Number(row?.stale_count ?? 0) || 0,
+        };
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -116,6 +150,9 @@ async function handle(req: Request) {
         expiredQueueCount,
         rooms: rooms ?? {},
         queue: queue ?? {},
+        // STEP-GD-31: 件数のみ（PII / 識別子は含めない）。
+        expiredRoomCount,
+        presenceSwept,
       },
       { status: 200 },
     );

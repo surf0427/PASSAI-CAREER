@@ -27,6 +27,9 @@ import {
   clampScore,
   sanitizeTraits,
 } from '../gdPrompt';
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
+import { resolveGdContextInputs } from '../resolveContextInputs';
+import { buildGdSpinePrompt, appendGdSpineBlock } from '../gdSpinePrompt';
 
 export const maxDuration = 80;
 
@@ -130,6 +133,11 @@ function axisFrom(raw: unknown): GdAxisScores {
 }
 
 export async function POST(req: Request) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -162,7 +170,14 @@ export async function POST(req: Request) {
   const participationMode: GdParticipationMode =
     b.participationMode === 'multi' ? 'multi' : 'solo';
 
-  const system = buildFeedbackSystem();
+  // ── STEP-GD-31: User Data Spine（ソロ GD 評価）──
+  //    ソロは client が transcript を送る stateless route だが、評価の宛先合わせのために
+  //    本人 context を server 側で解決して別ブロックとして足す。
+  //    ★ 解決できなければ block は '' となり、prompt は従来と byte 完全一致。
+  //    ★ 企業指定はソロ GD にも無いため Company Spine は載せない（null）。
+  const spineCtx = await resolveGdContextInputs(req);
+  const spine = buildGdSpinePrompt(spineCtx, null);
+  const system = appendGdSpineBlock(buildFeedbackSystem(), spine.block);
   const user = buildFeedbackUser({
     theme,
     participants,

@@ -25,6 +25,7 @@ import {
   createTimeoutSignal,
 } from '@/lib/aiTimeout';
 import { CAREER_GD_MODEL } from '../gdPrompt';
+import { appendGdSpineBlock } from '../gdSpinePrompt';
 import { CAREER_GD_EVAL_AXIS_LABELS } from '@/app/career/gd/gdRoles';
 
 // ラベルは gdRoles.ts が単一ソース（client/server 共通）。desc は採点プロンプト専用。
@@ -316,12 +317,24 @@ export async function generateRoomFeedback(input: {
   humans: PromptParticipant[];
   ais: PromptParticipant[];
   transcript: PromptUtterance[];
+  /**
+   * STEP-GD-31: Data Spine block（User Data Spine + Company Data Spine）。
+   *
+   * ★ 静的な評価 system prompt の **後ろに別ブロックとして**結合する。
+   *   混ぜないのが Spine の中核契約（公式事実 / 本人登録情報 / AI 派生を分離する）。
+   * ★ 空文字 / 未指定なら prompt は従来と **byte 完全一致**（Spine 未通電環境で出力が変わらない）。
+   * ★ 採点契約は不変: AI は axisScores と根拠しか返さず、総合点・ランク・企業コミュ適性は
+   *   server の決定論算出（computeOverallScore / toRank / computeCommunicationGrade）が決める。
+   *   Spine はそこへ到達しない。
+   */
+  spineBlock?: string;
 }): Promise<{
   participants: Record<string, unknown>[];
   overall: Record<string, unknown> | null;
   truncated: boolean;
 } | null> {
-  const system = buildRoomFeedbackSystem();
+  // 静的な評価者 prompt（採点契約の正本）に、Data Spine block を別ブロックとして足す。
+  const system = appendGdSpineBlock(buildRoomFeedbackSystem(), input.spineBlock ?? '');
   const user = buildRoomFeedbackUser(input);
   // overall（議論全体）ぶんの出力余地を確保するため上限を少し引き上げる（STEP-GD-27）。
   const { truncated } = buildTranscript([...input.humans, ...input.ais], input.transcript);
