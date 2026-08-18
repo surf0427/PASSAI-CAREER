@@ -210,3 +210,53 @@ export const CAREER_GD_RATE_LIMITS = {
     windows: [{ limit: 20, windowSeconds: 60 }, { limit: 600, windowSeconds: 3600 }],
   },
 } as const satisfies Record<string, RateLimitRule>;
+
+// ── Career プレゼン AI route の rate limit ルール（正本）────────────
+//
+// STEP-CAREER-PRESENTATION-HARDENING-P0: /api/career/presentation/{theme,evaluate,qa} は
+// Anthropic 課金に直結する公開 endpoint。プレゼンは **guest 利用を正式に許可**した機能
+// （localStorage canonical / mirror は member のみ）なので、GD のように 401 で閉じず、
+// 「member = user_id キー」「guest = IP キー」の **2 系統**で上限を分ける。
+//
+// 値の根拠（通常利用を邪魔せず automated abuse を止める水準）:
+//   theme    … お題は納得いくまで作り直す（実利用で数回）。member 8/分・40/時。
+//   evaluate … 1 プレゼン 1 回が正常系（失敗時の再試行あり）。**最も高価**なので最も厳しい。
+//   qa       … kickoff + 回答 4 回 = 1 セッション最大 5 call。連続練習を見込んで緩め。
+//
+// guest 側は member の約 6 割に絞る。ただし NAT（学校・オフィス）で IP が共有される
+// 可能性があるため、体験版が完走できない水準までは下げない（evaluate 3/分・12/時 = 
+// 1 IP から 1 時間に 12 回の本評価が可能）。
+//
+// failClosed の使い分け（GD の思想に合わせる）:
+//   member … fail-open。Upstash 障害でログイン済みユーザーの機能を止めない。
+//   guest  … **fail-closed**。濫用面はまさに未認証経路であり、store 障害中に
+//            匿名から無制限の AI 課金を許すわけにいかない。
+export const CAREER_PRESENTATION_RATE_LIMITS = {
+  themeMember: {
+    namespace: 'career_presentation_theme_member',
+    windows: [{ limit: 8, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  themeGuest: {
+    namespace: 'career_presentation_theme_guest',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  evaluateMember: {
+    namespace: 'career_presentation_evaluate_member',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  evaluateGuest: {
+    namespace: 'career_presentation_evaluate_guest',
+    windows: [{ limit: 3, windowSeconds: 60 }, { limit: 12, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  qaMember: {
+    namespace: 'career_presentation_qa_member',
+    windows: [{ limit: 15, windowSeconds: 60 }, { limit: 80, windowSeconds: 3600 }],
+  },
+  qaGuest: {
+    namespace: 'career_presentation_qa_guest',
+    windows: [{ limit: 10, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+} as const satisfies Record<string, RateLimitRule>;

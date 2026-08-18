@@ -32,6 +32,8 @@ import {
   buildEvaluateInstruction,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
+// P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
+import { guardPresentationRequest } from '../requestGuard';
 // Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
 import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
 
@@ -125,12 +127,11 @@ function normalizeResult(raw: unknown): CareerPresentationFinalResult {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0（HARDENING）: identity 確定 → rate limit → body サイズ上限を **AI 到達前**に通す。
+  //   evaluate は 1 request 最大 2 attempt × 4000 tok と最も高価なため上限が最も厳しい。
+  const guard = await guardPresentationRequest(req, 'evaluate');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;
