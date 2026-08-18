@@ -260,3 +260,49 @@ export const CAREER_PRESENTATION_RATE_LIMITS = {
     failClosed: true,
   },
 } as const satisfies Record<string, RateLimitRule>;
+
+// ── Career 面接 AI route の rate limit ルール（正本）──────────────────
+//
+// STEP-CAREER-INTERVIEW-HARDENING-P0-1: /api/career/interview/{start,turn,complete} は
+// Anthropic 課金に直結する公開 endpoint でありながら guard を持っていなかった
+// （Production Readiness Audit P0-1）。プレゼンと **同じ 2 系統設計**を横展開する:
+//   member … user_id キー（通常上限・fail-open）
+//   guest  … IP キー（厳しめ・fail-closed）
+// ★ 401 では閉じない。面接は guest 利用を正式に許可した機能（localStorage canonical）。
+//
+// 値の根拠（正常な 1 面接 = start 1 回 + turn 最大 4 回 + complete 1 回）:
+//   start    … 面接開始。モードを選び直して開始し直す程度は許す。member 6/分・30/時。
+//   turn     … 最頻。5 問を早口で進めても 1 分に 4 回程度。member 20/分は 5 倍の余裕。
+//   complete … **最も高価**（max_tokens 4000）。1 面接 1 回が正常系（失敗時の再試行あり）。
+//
+// guest は member の 6 割程度。NAT（大学・オフィス）で IP が共有されうるため、
+// 体験が完走できない水準までは下げない（guest でも 1 時間に 12 面接ぶんの complete が可能）。
+export const CAREER_INTERVIEW_RATE_LIMITS = {
+  startMember: {
+    namespace: 'career_interview_start_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  startGuest: {
+    namespace: 'career_interview_start_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 15, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  turnMember: {
+    namespace: 'career_interview_turn_member',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 150, windowSeconds: 3600 }],
+  },
+  turnGuest: {
+    namespace: 'career_interview_turn_guest',
+    windows: [{ limit: 12, windowSeconds: 60 }, { limit: 75, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  completeMember: {
+    namespace: 'career_interview_complete_member',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  completeGuest: {
+    namespace: 'career_interview_complete_guest',
+    windows: [{ limit: 3, windowSeconds: 60 }, { limit: 12, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+} as const satisfies Record<string, RateLimitRule>;

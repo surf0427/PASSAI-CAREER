@@ -41,6 +41,8 @@ import { resolveInterviewContextInputs } from '../resolveContextInputs';
 import { resolveInterviewCompanyOfficial } from '../resolveCompanyOfficial';
 // Data Spine Layer 2（Personal Memory）。flag OFF / gate deny では I/O ゼロで空配列（従来 prompt）。
 import { resolveInterviewPersonalMemory } from '../resolvePersonalMemory';
+// P0-1（HARDENING）: 認証 identity / rate limit / body・turns サイズ上限の共通ガード。
+import { guardInterviewRequest } from '../requestGuard';
 
 export const maxDuration = 80;
 
@@ -113,12 +115,11 @@ function normalizeResult(raw: unknown): CareerInterviewFinalResult {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0-1（HARDENING）: identity 確定 → rate limit → body / turns 上限を **AI 到達前**に通す。
+  //   complete は max_tokens 4000 と最も高価なため、上限が最も厳しい。
+  const guard = await guardInterviewRequest(req, 'complete');
+  if (!guard.ok) return guard.response;
+  const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;

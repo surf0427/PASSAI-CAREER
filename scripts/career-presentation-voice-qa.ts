@@ -145,10 +145,18 @@ check(
 );
 
 // ════════════════════════════════════════════════════════════════════
-section('F. 面接 session は従来どおり（autoRestart を渡していない）');
+section('F. 共有 hook は各機能が opt-in で使う（既定は従来挙動）');
+
+// autoRestart は共有 hook の opt-in capability であり、有効化するかは呼び出し側の機能が決める。
+//   面接側の詳細な契約は scripts/career-interview-voice-resilience-qa.ts が検証する。
+const useVoiceSrc = read('app/career/interview/useVoice.ts');
+check(/autoRestart = false/.test(useVoiceSrc), '共有 hook の autoRestart 既定は false（opt-in）');
 
 const interview = read('app/career/interview/session/page.tsx');
-check(!/autoRestart/.test(interview), '面接は autoRestart を渡していない（挙動不変）');
+check(
+  /presenting:\s*recording/.test(interview),
+  '面接は「録音中だけ再開してよい」条件を hook へ渡している',
+);
 check(interview.includes('voiceError'), '面接は従来どおり voiceError を表示している');
 
 // ════════════════════════════════════════════════════════════════════

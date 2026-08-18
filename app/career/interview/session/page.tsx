@@ -34,6 +34,12 @@ import { shadowWriteInterviewMemory } from '@/app/career/personalMemoryShadowWri
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
 import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
+// P0-2（HARDENING）: 音声が使えない環境／失敗時の緊急テキスト回答（正常時は出さない）。
+import {
+  shouldOfferTextFallback,
+  TEXT_FALLBACK_NOTICE,
+  INTERVIEW_RECOGNITION_STOPPED_MESSAGE,
+} from '../textFallbackPolicy';
 import type {
   CareerInterviewSession,
   CareerInterviewResult,
@@ -91,6 +97,10 @@ export default function CareerInterviewSessionPage() {
   const onFinalTranscript = useCallback((text: string) => {
     setAnswer((prev) => (prev ? `${prev} ${text}` : text));
   }, []);
+  // P0-2: 「ユーザーが今この瞬間、録音するつもりでいるか」。
+  //   ブラウザ都合の onend から自動再開してよいのはこの間だけ（AI 生成中・読み上げ中・
+  //   面接終了後に勝手にマイクが復活しないための唯一の条件）。
+  const [recording, setRecording] = useState(false);
   const {
     sttSupported,
     ttsSupported,
@@ -99,11 +109,55 @@ export default function CareerInterviewSessionPage() {
     speaking,
     voiceError,
     clearVoiceError,
+    recognitionStopped,
     startListening,
     stopListening,
     speak,
     cancelSpeak,
-  } = useVoice({ onFinalTranscript });
+  } = useVoice({ onFinalTranscript, autoRestart: true, presenting: recording });
+
+  // P0-2: 音声トラブルの回数を数える（緊急テキスト回答を出すかの判定材料）。
+  //   voiceError は「無し → 有り」の遷移だけを 1 回と数える（同じ文言の再表示で二重に数えない）。
+  const [voiceErrorCount, setVoiceErrorCount] = useState(0);
+  const [unexpectedStopCount, setUnexpectedStopCount] = useState(0);
+  const hadVoiceErrorRef = useRef(false);
+  useEffect(() => {
+    if (voiceError && !hadVoiceErrorRef.current) {
+      hadVoiceErrorRef.current = true;
+      setVoiceErrorCount((n) => n + 1);
+    } else if (!voiceError) {
+      hadVoiceErrorRef.current = false;
+    }
+  }, [voiceError]);
+  // 予期しない停止から復帰できなかった（useVoice が通知した）。録音状態も実態に合わせて畳む。
+  const hadStoppedRef = useRef(false);
+  useEffect(() => {
+    if (recognitionStopped && !hadStoppedRef.current) {
+      hadStoppedRef.current = true;
+      setUnexpectedStopCount((n) => n + 1);
+      setRecording(false);
+    } else if (!recognitionStopped) {
+      hadStoppedRef.current = false;
+    }
+  }, [recognitionStopped]);
+
+  // 緊急テキスト回答を出すか（正常時は false ＝ 従来どおり音声のみの UI）。
+  const textFallbackOffered = shouldOfferTextFallback({
+    sttSupported,
+    voiceErrorCount,
+    unexpectedStopCount,
+  });
+
+  // 録音の開始 / 停止（recording と音声認識の状態を必ず一緒に動かす）。
+  const handleStartRecording = useCallback(() => {
+    clearVoiceError();
+    setRecording(true);
+    startListening();
+  }, [clearVoiceError, startListening]);
+  const handleStopRecording = useCallback(() => {
+    setRecording(false);
+    stopListening();
+  }, [stopListening]);
 
   const question = currentQuestion(session);
   const answered = countAnswers(session);
@@ -153,6 +207,8 @@ export default function CareerInterviewSessionPage() {
     if (!session || phase !== 'answering') return;
     const trimmed = answer.trim();
     if (!trimmed) return;
+    // P0-2: AI 生成中に自動再開しないよう、送信の時点で録音意思を畳む。
+    setRecording(false);
     if (listening) stopListening();
     cancelSpeak();
     setPhase('thinking');
@@ -228,6 +284,8 @@ export default function CareerInterviewSessionPage() {
     if (countAnswers(session) === 0) return;
     setPhase('evaluating');
     setError(null);
+    // P0-2: 面接終了後にマイクが復活しないよう録音意思を畳む。
+    setRecording(false);
     cancelSpeak();
 
     const ctx = buildInterviewContextPayload(session.companyResearchLogId);
@@ -420,15 +478,8 @@ export default function CareerInterviewSessionPage() {
                   ? 'w-full gap-2 px-8 py-4 text-base shadow-sm sm:w-auto sm:min-w-[18rem] sm:text-lg'
                   : ''
               }
-              onClick={
-                listening
-                  ? stopListening
-                  : () => {
-                      clearVoiceError();
-                      startListening();
-                    }
-              }
-              disabled={phase === 'thinking'}
+              onClick={listening ? handleStopRecording : handleStartRecording}
+              disabled={phase === 'thinking' || !sttSupported}
             >
               {listening ? '■ 録音を止める' : '🎙 録音して回答'}
             </Button>
@@ -482,14 +533,45 @@ export default function CareerInterviewSessionPage() {
 
           {!sttSupported && (
             <p className="mt-3 text-sm text-amber-700 leading-relaxed" role="alert">
-              このブラウザは音声認識に対応していません。面接は音声で行うため、Chrome
-              など対応ブラウザで開き直し、マイクの使用を許可してください。
+              このブラウザは音声認識に対応していません。音声で面接するには Chrome
+              など対応ブラウザで開き直し、マイクの使用を許可してください。下のテキスト欄でもそのまま回答できます。
             </p>
           )}
           {voiceError && (
             <p className="mt-3 text-sm text-amber-700 leading-relaxed" role="alert">
               {voiceError}
             </p>
+          )}
+          {/* P0-2: ブラウザ都合で認識が止まり自動再開もできなかったことを必ず知らせる
+              （「話しているのに録音されていない」を無言で発生させない）。 */}
+          {recognitionStopped && (
+            <p className="mt-3 text-sm text-amber-700 leading-relaxed" role="alert">
+              {INTERVIEW_RECOGNITION_STOPPED_MESSAGE}
+            </p>
+          )}
+          {/* P0-2: 緊急テキスト回答。音声が使えない環境・音声が失敗したときだけ出す
+              （正常時は表示しない＝廃止した text / voice セレクタの復活ではない）。
+              送信経路は音声と同一で、API へは従来どおり answer: string を送る。 */}
+          {textFallbackOffered && phase !== 'thinking' && (
+            <div className="mt-4 rounded-xl bg-white ring-1 ring-amber-200 px-3 py-3">
+              <label
+                htmlFor="career-interview-text-fallback"
+                className="block text-xs font-bold text-amber-800 mb-1.5"
+              >
+                テキストで回答する
+              </label>
+              <p className="text-xs text-slate-500 leading-relaxed mb-2">
+                {TEXT_FALLBACK_NOTICE}
+              </p>
+              <textarea
+                id="career-interview-text-fallback"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                rows={4}
+                className="w-full rounded-lg ring-1 ring-slate-200 px-3 py-2 text-sm text-slate-800 leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="回答を入力してください。"
+              />
+            </div>
           )}
           {error && (
             <p className="mt-3 text-sm text-red-600 leading-relaxed" role="alert">

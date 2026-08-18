@@ -87,8 +87,9 @@ export default function CareerInterviewSetupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 音声面接が唯一の runtime path のため、STT 対応可否は開始 gate として使う
-  // （非対応でもテキスト面接へは倒さない。本番仕様は音声のみ）。
+  // 音声面接が唯一の runtime path。ただし STT 非対応環境で **開始そのものを塞がない**
+  // （P0-2: 面接不能を作らない）。非対応のときは session 画面が緊急テキスト回答を出す。
+  //   ★ ここで mode を 'text' に倒したり、text / voice セレクタを復活させたりはしない。
   const { sttSupported } = useVoice();
 
   const isMounted = useSyncExternalStore(
@@ -123,8 +124,7 @@ export default function CareerInterviewSetupPage() {
   const activityReady = hasAnyActivity(ctx?.activity ?? null);
   const selfAnalysisReady = !!ctx?.selfAnalysis;
   const esReady = !!ctx?.es;
-  const canStart =
-    (profileReady || activityReady) && targetReady && sttSupported;
+  const canStart = (profileReady || activityReady) && targetReady;
 
   async function handleStart() {
     if (!canStart || loading || !ctx) return;
@@ -266,16 +266,17 @@ export default function CareerInterviewSetupPage() {
         </div>
       </Card>
 
-      {/* 音声のみ運用のため、マイク（音声認識）が使えない環境では開始させない。
-          ここでテキスト面接へは倒さない（本番仕様は音声のみ）。 */}
+      {/* 音声のみ運用だが、非対応環境でも面接を始められるようにする（P0-2）。
+          音声を勧めたうえで、テキストでも続行できることを事前に伝える。 */}
       {isMounted && !sttSupported && (
         <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
           <p className="text-sm font-bold text-amber-700 mb-1">
-            この環境では音声面接を開始できません
+            この環境では音声入力を使えません
           </p>
           <p className="text-xs text-slate-600 leading-relaxed">
-            面接は音声で行います。お使いのブラウザが音声認識（マイク入力）に対応していないため開始できません。
-            Chrome など音声認識に対応したブラウザで開き直し、マイクの使用を許可してください。
+            面接は音声で行います。お使いのブラウザが音声認識（マイク入力）に対応していないため、
+            このまま始めるとテキストでの回答になります。音声で練習する場合は Chrome
+            など音声認識に対応したブラウザで開き直し、マイクの使用を許可してください。
           </p>
         </Card>
       )}
