@@ -7,6 +7,7 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 import { CONTACT_EMAIL } from '@/lib/legal';
 
 // STEP-LEGAL-02: PASSAI の正式プライバシーポリシー (初版)。
+// STEP-LEGAL-03: PASSAI CAREER (新卒就活版) の取得情報・保存・委託先を追加 (2026-08-18)。
 //
 // LEGAL-01 利用規約との整合性:
 //   - 「当サービス」呼称統一 / ます調 / 制定日揃え (2026-06-02)
@@ -15,19 +16,33 @@ import { CONTACT_EMAIL } from '@/lib/legal';
 //   - 利用規約 LEGAL-01 残課題だった「未成年者の保護者同意」を本ポリシー第 10 条で補完
 //   - 利用規約 第4条 のカード情報非保持を本ポリシー第 2 / 8 条で再明示
 //
+// STEP-LEGAL-03 で追記した CAREER の事実は、すべて現行コードから実証したものだけに限る:
+//   - localStorage が canonical、ログイン時のみ Supabase (CAREER 専用プロジェクト) へ
+//     ミラーする … app/career/*/*Storage.ts + lib/supabase/career*.ts
+//   - AI は Anthropic Claude のみ。CAREER は OpenAI を呼ばない
+//     … app/api/career/** に OPENAI_API_KEY 参照なし (受験版のみが音声認識で利用)
+//   - 面接の音声認識はブラウザの Web Speech API。当サービスのサーバは音声を受信しない
+//     … app/career/interview/useVoice.ts
+//   - 企業研究のアップロード資料はテキスト抽出後に破棄し、ファイル本体を保存しない
+//     … app/api/career/company-research/extract/route.ts
+//   - GD マルチプレイの発言は同じ部屋の参加者に表示される
+//     … app/api/career/gd/room/[roomId]/messages/route.ts
+//   ★ 保持期間・削除 SLA など、コードから実証できない新しい条件は追加しない。
+//
 // 文体: スタートアップ SaaS として自然なます調、平易な日本語、当サービス/ユーザー統一。
 
 export const metadata: Metadata = {
   title: 'プライバシーポリシー | PASSAI',
   description:
-    'PASSAI が取得する情報の種類・利用目的・第三者提供・保存期間・ユーザーの権利について定めたプライバシーポリシーです。',
+    'PASSAI および PASSAI CAREER が取得する情報の種類・利用目的・第三者提供・保存期間・ユーザーの権利について定めたプライバシーポリシーです。',
 };
 
 const ENACTED_AT = '2026年6月2日';
-// プレゼン対策の録画動画・発表資料を原則 90 日で自動削除する旨、および発表後 Q&A
-// 練習（質問・回答・AI フィードバック）をアカウント有効期間 保存する旨の追記に伴う改定。
-// (文字起こし・AI 評価結果はアカウント有効期間の保存を維持。)
-const LAST_REVISED_AT = '2026年6月17日';
+// 2026-06-17: プレゼン対策の録画動画・発表資料を原則 90 日で自動削除する旨、および発表後 Q&A
+//   練習（質問・回答・AI フィードバック）をアカウント有効期間 保存する旨の追記に伴う改定。
+//   (文字起こし・AI 評価結果はアカウント有効期間の保存を維持。)
+// 2026-08-18: PASSAI CAREER (新卒就活版) の取得情報・保存場所・委託先を追記した改定。
+const LAST_REVISED_AT = '2026年8月18日';
 
 export default function PrivacyPage() {
   return (
@@ -50,14 +65,19 @@ export default function PrivacyPage() {
 
         <div className="space-y-3 text-slate-700 leading-relaxed mb-10">
           <p className="text-sm">
-            PASSAI 運営チーム (以下「当サービス」) は、サービス「PASSAI」
-            (以下「本サービス」) を提供するにあたり、ユーザー (以下「ユーザー」)
+            PASSAI 運営チーム (以下「当サービス」) は、大学受験向けサービス「PASSAI」
+            および新卒就活向けサービス「PASSAI CAREER」 (以下あわせて「本サービス」)
+            を提供するにあたり、ユーザー (以下「ユーザー」)
             から取得する情報の取り扱いについて本プライバシーポリシー (以下「本ポリシー」)
             を定めます。本ポリシーは{' '}
             <Link href="/terms" className="text-brand-700 hover:underline">
               利用規約
             </Link>{' '}
             と一体のものとして適用されます。
+          </p>
+          <p className="text-sm">
+            本ポリシーは両サービスに共通して適用されます。いずれか一方にのみ該当する
+            事項については、その旨を明記します。
           </p>
         </div>
 
@@ -95,7 +115,7 @@ export default function PrivacyPage() {
                 識別子、利用モデル、処理結果のステータス (成功 / エラー / 利用上限超過)
               </li>
               <li>
-                <strong>ユーザーが入力した内容</strong>:
+                <strong>ユーザーが入力した内容 (PASSAI / 大学受験向け)</strong>:
                 <ul className="list-disc pl-5 mt-1 space-y-0.5 text-slate-600">
                   <li>志望理由書原稿、整理メモ</li>
                   <li>小論文原稿、改善方針メモ</li>
@@ -105,6 +125,86 @@ export default function PrivacyPage() {
                   <li>Tutor の会話履歴</li>
                   <li>基本情報 (学年、志望校・志望学部、受験方式、評定等)</li>
                 </ul>
+              </li>
+              <li>
+                <strong>ユーザーが入力した内容 (PASSAI CAREER / 新卒就活向け)</strong>:
+                <ul className="list-disc pl-5 mt-1 space-y-0.5 text-slate-600">
+                  <li>
+                    基本情報 (ニックネーム、学年、卒業予定年、大学・学部・学科、
+                    性別 (任意))
+                  </li>
+                  <li>
+                    活動整理の内容 (学業、サークル、アルバイト、インターン、留学・海外
+                    経験、資格、語学、趣味・特技、表彰・実績等)
+                  </li>
+                  <li>
+                    就活軸整理の選択内容および自由記述 (重視する条件、避けたい条件、
+                    志望業界・職種、働き方、社風等)
+                  </li>
+                  <li>自己分析の回答、深掘りの質問と回答、まとめ結果</li>
+                  <li>
+                    エントリーシートの設問、下書き、本文、深掘りの質問と回答、
+                    整理メモ、AI による添削結果
+                  </li>
+                  <li>
+                    志望企業名、志望業界、志望職種、選考種別など、各機能で指定した
+                    企業・選考に関する情報
+                  </li>
+                  <li>
+                    面接練習の質問、回答内容 (音声から変換されたテキスト)、および評価結果
+                  </li>
+                  <li>
+                    グループディスカッション練習のテーマ、発言内容、および評価結果
+                  </li>
+                  <li>
+                    プレゼン対策のお題、発表内容、質疑応答、および評価結果
+                  </li>
+                  <li>
+                    企業研究メモ、および添削のためにアップロードされた資料から抽出した
+                    テキスト
+                  </li>
+                  <li>就活相談AI との会話履歴</li>
+                  <li>
+                    各機能の利用イベント (どの機能をいつ利用したかの記録。入力本文は
+                    含みません)
+                  </li>
+                </ul>
+                <span className="text-slate-500">
+                  ※ PASSAI CAREER では、これらの情報はまずご利用中のブラウザ内
+                  (ローカルストレージ) に保存されます。メールアドレスでログインしている
+                  場合に限り、同じ内容が当サービスのデータベースにも保存されます
+                  (第 7 条参照)。
+                </span>
+              </li>
+              <li>
+                <strong>PASSAI CAREER の面接練習における音声の取り扱い</strong>:
+                <ul className="list-disc pl-5 mt-1 space-y-0.5 text-slate-600">
+                  <li>
+                    面接練習では、ブラウザに標準で搭載されている音声認識機能を利用して
+                    発話をテキストに変換します。
+                  </li>
+                  <li>
+                    当サービスのサーバは音声データそのものを受信・保存しません。保存
+                    されるのは変換後のテキストのみです。
+                  </li>
+                  <li>
+                    ブラウザによっては、音声認識の処理がブラウザ提供事業者 (Google、
+                    Apple 等) のサーバで行われる場合があります。その場合の音声データの
+                    取り扱いは、当該ブラウザ提供事業者のプライバシーポリシーに従います。
+                  </li>
+                </ul>
+              </li>
+              <li>
+                <strong>
+                  PASSAI CAREER の企業研究でアップロードされた資料
+                </strong>
+                : 企業研究の入力補助として PDF・画像ファイルをアップロードできます。
+                <span className="text-slate-500">
+                  ※ アップロードされたファイルは、記載されている文字を抽出する目的での
+                  み処理し、<strong>ファイル本体は保存しません</strong> (抽出後に破棄
+                  します)。保存されるのは、ユーザーが確認・編集したうえで企業研究メモへ
+                  反映したテキストのみです。
+                </span>
               </li>
               <li>
                 <strong>プレゼン対策の録画・評価データ</strong> (Premium 限定機能):
@@ -172,19 +272,40 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>Anthropic, PBC</strong> (米国) — AI 推論 (Claude API)。
-                取扱情報: ユーザーが AI 機能に入力した文章 (志望理由書、小論文、
-                自己分析の回答、面接質問・回答、Tutor への質問、プレゼンの文字起こし・
-                発表内容・発表後 Q&A の回答等)
+                取扱情報: ユーザーが AI 機能に入力した文章。
+                <br />
+                <span className="text-slate-500">
+                  PASSAI: 志望理由書、小論文、自己分析の回答、面接質問・回答、Tutor への
+                  質問、プレゼンの文字起こし・発表内容・発表後 Q&A の回答等。
+                  <br />
+                  PASSAI CAREER: 基本情報、活動整理、就活軸整理、自己分析の回答、
+                  エントリーシートの設問・本文・深掘り回答、面接練習の質問・回答、
+                  グループディスカッションの発言、プレゼンの発表内容・質疑応答、
+                  企業研究メモ、アップロード資料から抽出したテキスト、就活相談の会話等。
+                  <br />
+                  PASSAI CAREER の AI 機能は、すべて Anthropic Claude のみを利用します。
+                </span>
               </li>
               <li>
                 <strong>OpenAI, L.L.C.</strong> (米国) — 音声認識 (文字起こし)。
                 取扱情報: 面接 AI・プレゼン対策の録音／録画から抽出した音声データ
                 (文字起こしのために送信。文字起こし後の音声ファイルは保存しません)
+                <br />
+                <span className="text-slate-500">
+                  ※ 本項は PASSAI (大学受験向け) の機能に限られます。PASSAI CAREER は
+                  OpenAI を利用しません (面接練習の音声認識はブラウザの機能を利用します。
+                  第 2 条参照)。
+                </span>
               </li>
               <li>
                 <strong>Supabase, Inc.</strong> (米国) — データベースおよび認証基盤。
                 取扱情報: アカウント情報、メールアドレス、利用履歴、購読状態、
                 ユーザー入力内容のうちサーバ側で保存するもの
+                <br />
+                <span className="text-slate-500">
+                  ※ PASSAI と PASSAI CAREER は、それぞれ独立した Supabase プロジェクト
+                  (データベース) を使用しており、両サービスのデータは相互に混在しません。
+                </span>
               </li>
               <li>
                 <strong>Vercel, Inc.</strong> (米国) — ホスティング、CDN、エッジ配信。
@@ -193,6 +314,25 @@ export default function PrivacyPage() {
             </ul>
             <p className="text-xs text-slate-500">
               各事業者のプライバシーポリシーは、各社の公式サイトをご確認ください。
+            </p>
+
+            <p className="font-semibold text-slate-900 mt-4">
+              他のユーザーに表示される情報 (PASSAI CAREER)
+            </p>
+            <p>
+              PASSAI CAREER のグループディスカッション練習を他のユーザーと同じ部屋で
+              行う場合、その部屋の中では以下の情報が他の参加者に表示されます。これは
+              練習の性質上必要な範囲に限られ、第三者提供ではありません。
+            </p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>ディスカッション中の発言内容</li>
+              <li>表示名 (基本情報で設定したニックネーム)</li>
+              <li>担当した役割および参加状況</li>
+            </ul>
+            <p className="text-xs text-slate-500">
+              ※ メールアドレス、アカウント ID、参加コードのハッシュ等は他の参加者に
+              表示されません。ディスカッションの内容には、ご自身や第三者を特定できる
+              情報を必要以上に含めないようご注意ください。
             </p>
           </LegalSection>
 
@@ -221,8 +361,21 @@ export default function PrivacyPage() {
                 ユーザーの作業状態の保持 (志望理由書下書き、自己分析回答、面接記録等の
                 ローカルストレージ保存)
               </li>
+              <li>
+                PASSAI CAREER における入力内容の保存。PASSAI CAREER では、第 2 条に
+                記載した入力内容 (活動整理、就活軸整理、自己分析、エントリーシート、
+                面接・GD・プレゼンの記録、企業研究メモ、就活相談の履歴等) を、
+                <strong>ログインの有無にかかわらずローカルストレージに保存します</strong>。
+                ログインしていない場合、これらはご利用中のブラウザ内にのみ存在します。
+              </li>
               <li>サービスの基本的な動作維持に必要な技術的識別子</li>
             </ul>
+            <p className="text-sm text-slate-600">
+              ※ ブラウザのデータ (サイトデータ・ローカルストレージ) を削除すると、
+              PASSAI CAREER でログインせずに入力した内容は復元できません。別の端末や
+              ブラウザとの引き継ぎ、および削除からの復元をご希望の場合は、
+              メールアドレスでのログインをご利用ください。
+            </p>
             <p>
               当サービスは、広告配信および第三者によるトラッキングを目的とした Cookie を
               使用していません。
@@ -254,6 +407,20 @@ export default function PrivacyPage() {
               <li>
                 <strong>ユーザーが入力した文章</strong>: ユーザーがアカウントを利用して
                 いる期間、ブラウザ側のローカルストレージおよびサーバ側のデータベースに保存
+              </li>
+              <li>
+                <strong>PASSAI CAREER の入力内容</strong>: ブラウザのローカルストレージ
+                には、ユーザーが削除するか、ブラウザのサイトデータを消去するまで保存
+                されます。メールアドレスでログインしている場合は、同じ内容がアカウントが
+                有効である期間、当サービスのデータベースにも保存されます。ユーザーは
+                各機能の履歴画面から個別に削除できるほか、第 9 条に基づく削除請求を
+                行うことができます。
+              </li>
+              <li>
+                <strong>PASSAI CAREER のグループディスカッションの部屋・発言記録</strong>:
+                練習の進行および結果表示のためにデータベースへ保存されます。使用が
+                終了した部屋および長時間放置された部屋は、定期的な整理処理により削除
+                されます。
               </li>
               <li>
                 <strong>プレゼン対策の録画動画・発表資料</strong>: 録画動画および
@@ -331,13 +498,20 @@ export default function PrivacyPage() {
               当サービスのデータベースから削除を行うとともに、委託先事業者の規約および
               技術仕様に従って削除依頼を行います。
             </p>
+            <p className="text-xs text-slate-500">
+              PASSAI CAREER をログインせずにご利用の場合、入力内容はご利用中のブラウザ内
+              にのみ保存されており、当サービスは当該データを保有していません。この場合は、
+              各機能の履歴画面から削除いただくか、ブラウザのサイトデータを消去することで
+              削除できます。
+            </p>
           </LegalSection>
 
           <LegalSection number={10} title="未成年者の利用">
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-2">
               <p className="text-sm text-amber-900 leading-relaxed">
-                本サービスは大学受験を中心とした対象層を想定しており、高校生をはじめとする
-                未成年者の利用が想定されます。
+                PASSAI (大学受験向け) は高校生をはじめとする未成年者の利用が想定されます。
+                PASSAI CAREER (新卒就活向け) は主に大学生・大学院生等を対象としますが、
+                いずれのサービスも未成年者が利用する可能性があります。
               </p>
             </div>
             <ol className="list-decimal pl-5 space-y-1.5">

@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { FooterSection } from '@/app/components/landing/FooterSection';
 
 // STEP-LEGAL-01: PASSAI の正式利用規約 (初版)。
+// STEP-LEGAL-03: PASSAI CAREER (新卒就活版) を適用対象へ追加 (2026-08-18)。
 //
 // 設計方針:
 //   - スタートアップ SaaS として読める平易な文章。ます調統一、難解な法律用語を最小化。
@@ -18,6 +19,17 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 //   - 過度にユーザーへ不利な内容は避ける (例: 損害賠償の上限を月額支払額に限定するが、
 //     当サービスの故意・重過失は除外)。
 //
+// STEP-LEGAL-03 の方針 (PASSAI CAREER 追加):
+//   - 本ページは LP footer から **両プロダクト共通で**参照される (app/components/landing/
+//     FooterSection.tsx)。従来は受験版の機能しか記載が無く、CAREER 利用者に適用される
+//     条項が存在しなかったため、適用対象を 2 プロダクトへ明示的に広げる。
+//   - 記載する CAREER 機能は **実装済み route があるものだけ** (app/career/home/page.tsx の
+//     FEATURES と /career/consultation)。企業マッチングは flag 既定 OFF のため記載しない。
+//   - CAREER は課金導線を持たない (app/components/PlanGate.tsx の PROTECTED_PREFIXES に
+//     /career が無い = 未課金でも全機能に到達できる)。よって第 4 / 5 条の有料プランは
+//     受験版の機能に対するものである旨を明記し、CAREER を有料であるかのように読ませない。
+//   - 料金・返金・保持期間など、コードから実証できない新しい事業条件は追加しない。
+//
 // 構成:
 //   第1条  適用 / 第2条  サービス内容 / 第3条  アカウント / 第4条  利用料金 /
 //   第5条  解約 / 第6条  AI 機能の重要事項 / 第7条  禁止事項 / 第8条  利用制限 /
@@ -27,10 +39,12 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 export const metadata: Metadata = {
   title: '利用規約 | PASSAI',
   description:
-    'PASSAI の利用規約です。サービス内容・料金・解約・AI機能に関する重要事項・禁止事項・免責などの利用条件を定めています。',
+    'PASSAI および PASSAI CAREER の利用規約です。サービス内容・料金・解約・AI機能に関する重要事項・禁止事項・免責などの利用条件を定めています。',
 };
 
 const ENACTED_AT = '2026年6月2日';
+// PASSAI CAREER (新卒就活版) を適用対象へ追加した改定。
+const LAST_REVISED_AT = '2026年8月18日';
 
 export default function TermsPage() {
   return (
@@ -45,14 +59,23 @@ export default function TermsPage() {
 
         <PageHeader title="利用規約" />
 
-        <p className="text-sm text-slate-500 mb-8">制定日: {ENACTED_AT}</p>
+        <p className="text-sm text-slate-500 mb-8">
+          制定日: {ENACTED_AT}
+          <span className="mx-2">/</span>
+          最終改定日: {LAST_REVISED_AT}
+        </p>
 
         <div className="space-y-3 text-slate-700 leading-relaxed mb-10">
           <p className="text-sm">
             本利用規約 (以下「本規約」) は、PASSAI 運営チーム (以下「当サービス」) が
-            提供するサービス「PASSAI」 (以下「本サービス」) の利用条件を、利用者
+            提供する大学受験向けサービス「PASSAI」および新卒就活向けサービス
+            「PASSAI CAREER」 (以下あわせて「本サービス」) の利用条件を、利用者
             (以下「ユーザー」) と当サービスとの間で定めるものです。本サービスを
             利用される場合、本規約のすべての条項に同意したものとみなされます。
+          </p>
+          <p className="text-sm">
+            本規約は両サービスに共通して適用されます。いずれか一方にのみ適用される
+            条項については、その旨を各条において明記します。
           </p>
         </div>
 
@@ -74,8 +97,15 @@ export default function TermsPage() {
 
           <LegalArticle number={2} title="サービス内容">
             <p>
-              本サービスは、大学受験を中心とした進路準備をサポートする AI 機能を中核とした
-              Web アプリケーションです。主な機能は以下のとおりです。
+              本サービスは、進路準備および就職活動をサポートする AI 機能を中核とした
+              Web アプリケーションです。当サービスは以下の 2 つのサービスを提供します。
+            </p>
+
+            <p className="font-semibold text-slate-900 mt-3">
+              (1) PASSAI (大学受験向け)
+            </p>
+            <p>
+              大学受験を中心とした進路準備をサポートします。主な機能は以下のとおりです。
             </p>
             <ul className="list-disc pl-5 space-y-1">
               <li>志望理由書の整理メモ作成および添削</li>
@@ -89,17 +119,57 @@ export default function TermsPage() {
                 プレゼン対策 (録画 → AI評価 → 発表後Q&A、Premium プラン限定)
               </li>
             </ul>
+
+            <p className="font-semibold text-slate-900 mt-3">
+              (2) PASSAI CAREER (新卒就活向け)
+            </p>
             <p>
+              新卒就職活動の準備をサポートします。主な機能は以下のとおりです。
+            </p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>活動整理 (学生時代の経験・実績の棚卸し)</li>
+              <li>自己分析 (AIとの壁打ちおよび結果のまとめ)</li>
+              <li>就活軸整理</li>
+              <li>企業研究メモの添削</li>
+              <li>ES (エントリーシート) の材料整理・深掘り・添削</li>
+              <li>面接練習 (音声によるターン形式の模擬面接および評価)</li>
+              <li>
+                グループディスカッション (GD) 練習 (AI参加者との練習、および他の
+                ユーザーと同じ部屋で行うマルチプレイ形式の練習)
+              </li>
+              <li>プレゼン対策 (お題生成・発表・質疑応答・AI評価)</li>
+              <li>就活相談AI</li>
+            </ul>
+            <p className="text-sm text-slate-600">
+              ※ PASSAI CAREER は現在、有料プランの契約なしにすべての機能をご利用
+              いただけます (第 4 条参照)。
+            </p>
+
+            <p className="mt-3">
               当サービスは、本サービスの内容、仕様、機能、料金プランその他の条件を予告なく
-              変更、追加、または廃止することがあります。
+              変更、追加、または廃止することがあります。開発中の機能は、告知なく提供が
+              開始または終了される場合があります。
             </p>
           </LegalArticle>
 
           <LegalArticle number={3} title="アカウント">
             <ol className="list-decimal pl-5 space-y-1.5">
               <li>
-                本サービスはブラウザからアクセス可能で、初回利用時に匿名アカウントが自動的に
-                発行されます。
+                PASSAI (大学受験向け) はブラウザからアクセス可能で、初回利用時に匿名
+                アカウントが自動的に発行されます。
+              </li>
+              <li>
+                PASSAI CAREER (新卒就活向け) は、アカウントを作成しなくてもご利用
+                いただけます。この場合、入力内容はご利用中のブラウザ内にのみ保存され、
+                当サービスのサーバには保存されません。したがって、ブラウザのデータを
+                消去した場合や別の端末・ブラウザからアクセスした場合、入力内容は
+                引き継がれません。
+              </li>
+              <li>
+                PASSAI CAREER でメールアドレスによるログインを行った場合、入力内容は
+                当サービスのサーバにも保存され、同じアカウントであれば別の端末からも
+                利用できます。ログインは、メールアドレス宛に送信される確認コードにより
+                行います。
               </li>
               <li>
                 有料プランへの契約、領収書の受領、サポート対応等の一部機能の利用には、
@@ -122,10 +192,22 @@ export default function TermsPage() {
           </LegalArticle>
 
           <LegalArticle number={4} title="利用料金">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-2">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                本条および第 5 条 (解約) は、<strong>PASSAI (大学受験向け)</strong> の
+                有料プランについて定めるものです。PASSAI CAREER (新卒就活向け) には
+                現在、有料プランおよび決済の仕組みがありません。
+              </p>
+            </div>
             <ol className="list-decimal pl-5 space-y-1.5">
               <li>
-                本サービスの一部機能は、有料プラン (Basic、Premium) への契約により利用
-                可能となります。
+                PASSAI (大学受験向け) の一部機能は、有料プラン (Basic、Premium) への
+                契約により利用可能となります。
+              </li>
+              <li>
+                PASSAI CAREER (新卒就活向け) は、現在すべての機能を無料で提供して
+                います。将来、有料プランを導入する場合は、第 12 条に従い事前に告知
+                します。
               </li>
               <li>
                 各プランの料金、利用可能な機能、機能ごとの月次利用上限は、本サービス内の
@@ -184,13 +266,21 @@ export default function TermsPage() {
               </li>
               <li>
                 AI出力には誤り (事実誤認、不適切な表現、論理の飛躍、古い情報等) が含まれる
-                場合があります。提出書類、出願書類、面接対策等の重要な意思決定にあたっては、
-                必ずユーザー自身が内容を確認し、必要に応じて学校・予備校・保護者等の
-                信頼できる第三者に相談してください。
+                場合があります。提出書類、出願書類、エントリーシート、面接対策等の重要な
+                意思決定にあたっては、必ずユーザー自身が内容を確認し、必要に応じて学校・
+                予備校・大学のキャリアセンター・保護者等の信頼できる第三者に相談して
+                ください。
               </li>
               <li>
-                本サービスは、特定の学校への合格、学校選考の通過、評定の向上、その他の
-                結果を一切保証するものではありません。
+                本サービスは、特定の学校への合格、学校選考の通過、評定の向上、
+                <strong>特定の企業からの内定・採用選考の通過</strong>、その他の結果を
+                一切保証するものではありません。
+              </li>
+              <li>
+                PASSAI CAREER が表示する企業に関する情報は、公開情報をもとに機械的に
+                収集・整理したものを含みます。正確性・最新性を保証するものではないため、
+                応募・選考に関する判断にあたっては、必ず企業の公式発表および募集要項を
+                ユーザー自身がご確認ください。
               </li>
               <li>
                 AI出力の利用、転載、加工、提出の判断および結果に関する責任はユーザーが
@@ -241,6 +331,11 @@ export default function TermsPage() {
                 第三者のプライバシー、肖像権、著作権その他の権利を侵害する内容、または
                 公序良俗に反する不適切な内容を、録画その他の入力に含める行為
               </li>
+              <li>
+                PASSAI CAREER のグループディスカッション練習において、他の参加者を
+                誹謗中傷する行為、他の参加者の個人情報を取得・記録・公開する行為、
+                または練習の進行を妨害する行為
+              </li>
               <li>その他、当サービスが不適切と合理的に判断する行為</li>
             </ol>
           </LegalArticle>
@@ -248,9 +343,11 @@ export default function TermsPage() {
           <LegalArticle number={8} title="利用制限">
             <ol className="list-decimal pl-5 space-y-1.5">
               <li>
-                本サービスの一部AI機能には、プランおよび機能ごとに月次の利用上限を
-                設けています。利用上限の具体的な回数は、料金プランページおよびマイページの
-                「今月の利用状況」にて表示します。
+                PASSAI (大学受験向け) の一部AI機能には、プランおよび機能ごとに月次の
+                利用上限を設けています。利用上限の具体的な回数は、料金プランページおよび
+                マイページの「今月の利用状況」にて表示します。PASSAI CAREER には現在
+                プランに基づく月次利用上限はありませんが、システムの安定運用のため、
+                短時間に集中した連続利用に対して一時的な回数制限を行うことがあります。
               </li>
               <li>
                 利用上限は、運営状況や原価構造の変化に応じて予告なく変更されることが
@@ -318,8 +415,9 @@ export default function TermsPage() {
                 よる場合はこの限りではありません。
               </li>
               <li>
-                学校または大学が行う入学者選考の結果、評価、合否判定、その他の判断について、
-                当サービスは一切の責任を負いません。
+                学校または大学が行う入学者選考の結果、評価、合否判定、その他の判断、
+                および企業その他の採用主体が行う採用選考の結果、評価、合否判定、その他の
+                判断について、当サービスは一切の責任を負いません。
               </li>
             </ol>
           </LegalArticle>
@@ -338,7 +436,8 @@ export default function TermsPage() {
               </li>
               <li>
                 ユーザーが本サービスに入力した文章・データ (志望理由書原稿、自己分析の
-                回答、面接記録等) の著作権はユーザーに帰属します。
+                回答、面接記録、エントリーシート原稿、活動整理の内容、企業研究メモ等) の
+                著作権はユーザーに帰属します。
               </li>
               <li>
                 ユーザーは、当サービスが本サービスの提供、運用、品質改善、不正利用防止、
