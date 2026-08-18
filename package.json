@@ -13,6 +13,7 @@
     "qa:careerGdRoomThemeInput": "npx tsx scripts/gd-qa/roomThemeInput.qa.ts",
     "qa:careerGdRoomClose": "npx tsx scripts/gd-qa/roomClose.qa.ts",
     "qa:careerGd": "npm run qa:careerGdThemeMode && npm run qa:careerGdRoomThemeInput && npm run qa:careerGdRoomClose",
+    "qa:careerGdProduction": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/gd-qa/production.qa.ts",
     "qa:careerGenerationJobSql": "npx tsx scripts/career-generation-job-sql-contract-qa.ts",
     "qa:careerGenerationJobCore": "npx tsx scripts/career-generation-job-core-qa.ts",
     "qa:careerGenerationJobStep2": "npx tsx scripts/career-generation-job-step2-qa.ts",

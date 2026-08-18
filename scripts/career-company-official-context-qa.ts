@@ -258,18 +258,23 @@ check(
 // ── purpose allowlist / status 写像 ──────────────────────────────────
 const READY: CompanyOfficialReadResult = { status: 'ready', data: ctx };
 check('C-3m allowlist 内 purpose では出る', renderCompanyOfficialForPurpose('company_research_review', READY).used);
-// ★ allowlist 外の代表として **GD / マッチング**を使う（どちらも企業公式情報を必要としない
-//   purpose で、registry でも companyContext:'exclude'）。
-//   ES / プレゼンは Data Spine connection で opt-in 済みのため、ここでは使わない。
-check('C-3n allowlist 外 purpose では出さない', !renderCompanyOfficialForPurpose('gd_feedback', READY).used);
+// ★ allowlist 外の代表として **相談AI / マッチング / 自己分析**を使う。
+//   STEP-GD-31 で gd_feedback は allowlist へ **意図的に追加**されたため負例から外した
+//   （GD は Company Data Spine を使う purpose になった）。
+//   ES / プレゼン / 面接も opt-in 済みのため負例には使えない。
+check('C-3n allowlist 外 purpose では出さない', !renderCompanyOfficialForPurpose('consultation', READY).used);
 check('C-3n2 マッチングにも投入しない', !renderCompanyOfficialForPurpose('matching', READY).used);
 check('C-3n3 自己分析にも投入しない', !renderCompanyOfficialForPurpose('self_analysis', READY).used);
 // Phase 2 で面接、Data Spine connection で ES / プレゼンを明示的に opt-in。
 //   allowlist は **列挙で固定**する（件数だけの assert だと、意図しない purpose が紛れ込んでも通る）。
 check(
-  'C-3o allowlist は company_research_review / interview_practice / es_review / es_deep_dive / presentation_feedback の 5 つだけ',
+  'C-3o allowlist は company_research_review / interview_practice / es_review / es_deep_dive / presentation_feedback / gd_feedback の 6 つだけ',
   [...COMPANY_OFFICIAL_PURPOSES].sort().join(',') ===
-    'company_research_review,es_deep_dive,es_review,interview_practice,presentation_feedback',
+    'company_research_review,es_deep_dive,es_review,gd_feedback,interview_practice,presentation_feedback',
+);
+check(
+  'C-3o1d ★ GD purpose で公式情報 block が出る（A 層 → gd_feedback・STEP-GD-31）',
+  renderCompanyOfficialForPurpose('gd_feedback', READY).used,
 );
 check(
   'C-3o1c ★ ES 深掘り purpose で公式情報 block が出る（A 層 → es_deep_dive）',
@@ -440,7 +445,11 @@ console.log('[C-5] Orchestrator parity（company 未指定なら byte 一致）'
   check('C-5g data があれば companyOfficialContext が出る', withData.companyOfficialContext !== '');
   check(
     'C-5h 対象外 purpose では data があっても ""',
-    buildCareerContextForPurpose('gd_feedback', base, { company: READY }).companyOfficialContext === '',
+    buildCareerContextForPurpose('consultation', base, { company: READY }).companyOfficialContext === '',
+  );
+  check(
+    'C-5h1 ★ gd_feedback では data があれば出る（STEP-GD-31）',
+    buildCareerContextForPurpose('gd_feedback', base, { company: READY }).companyOfficialContext !== '',
   );
   check(
     'C-5h2 ★ es_review / es_deep_dive / presentation_feedback では data があれば出る（Data Spine connection）',

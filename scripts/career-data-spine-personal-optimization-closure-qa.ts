@@ -112,7 +112,10 @@ const PURPOSE_MANIFEST: PurposeClaim[] = [
   //   usage note を purpose 単位で分ける必要があり es_review とは別 purpose にしている。
   { purpose: 'es_deep_dive', classification: 'FULL_SERVER', callsites: ['app/api/career/es/resolveCompanyOfficial.ts'] },
   { purpose: 'interview_complete', classification: 'DORMANT_INTENTIONAL', callsites: [] },
-  { purpose: 'gd_feedback', classification: 'DORMANT_INTENTIONAL', callsites: [] },
+  // STEP-GD-31: GD を Data Spine へ接続した。gd_feedback は DORMANT から **live** へ昇格。
+  //   単一 callsite（gdSpinePrompt）が multi 評価 / solo 評価 / お題生成の 3 route から共有される。
+  //   server 側の Layer 1 read（resolveContextInputs）で base + cross-feature を解決するため FULL_SERVER。
+  { purpose: 'gd_feedback', classification: 'FULL_SERVER', callsites: ['app/api/career/gd/gdSpinePrompt.ts'] },
   { purpose: 'mypage_summary', classification: 'DORMANT_INTENTIONAL', callsites: [] },
 ];
 
@@ -124,6 +127,8 @@ const PURPOSE_SOURCES: Partial<Record<CareerContextPurpose, readonly CareerSourc
   matching: ['profile', 'activity', 'values', 'self_analysis', 'es', 'interview', 'consultation', 'gd_room'],
   presentation_feedback: ['profile', 'activity', 'values', 'self_analysis', 'es', 'interview', 'matching', 'consultation'],
   self_analysis: ['profile', 'activity', 'values', 'self_analysis'],
+  // STEP-GD-31: GD 評価が使う最小集合（base 3 + 自己分析 + 過去 GD）。
+  gd_feedback: ['profile', 'activity', 'values', 'self_analysis', 'gd_room'],
   self_analysis_deep_dive: ['profile', 'activity', 'values', 'self_analysis'],
   // ES 添削: base 3 + 自己分析（横断ログは読まない）。
   es_review: ['profile', 'activity', 'values', 'self_analysis'],

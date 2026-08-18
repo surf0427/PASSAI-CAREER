@@ -786,15 +786,23 @@ async function main(): Promise<void> {
     check('X-9b renderer は AI 派生（derived）を扱わない', !renderer.includes('CompanyDerivedRecord'));
     check('X-9c renderer は Layer 5 を import しない', !renderer.includes('careerCompanyKnowledge'));
     // ★ 元の意図（= purpose へ勝手に流し込まない）はそのまま維持する。
-    //   ES / プレゼンは Data Spine connection で **意図的に** opt-in したため、
+    //   ES / プレゼン / GD は Data Spine connection で **意図的に** opt-in したため、
     //   「未 opt-in の purpose は空」+「opt-in した purpose は専用 usage note を伴う」の
     //   2 点で「事故で流れ込んでいないこと」を固定する（allowlist の意味を弱めない）。
+    //   STEP-GD-31: gd_feedback は opt-in 済みになったため、負例は matching / self_analysis を使う。
     check(
       'X-9d 未 opt-in purpose は allowlist 外のまま（勝手に流し込まない）',
-      renderCompanyOfficialForPurpose('gd_feedback', { status: 'ready', data: fullContext() })
+      renderCompanyOfficialForPurpose('matching', { status: 'ready', data: fullContext() })
         .text === '' &&
-        renderCompanyOfficialForPurpose('matching', { status: 'ready', data: fullContext() })
+        renderCompanyOfficialForPurpose('self_analysis', { status: 'ready', data: fullContext() })
           .text === '',
+    );
+    check(
+      'X-9d3 GD purpose は **意図的な opt-in**（GD 専用 usage note を伴う・STEP-GD-31）',
+      renderCompanyOfficialForPurpose('gd_feedback', {
+        status: 'ready',
+        data: fullContext(),
+      }).text.includes('採点根拠にすること'),
     );
     check(
       'X-9d2 ES purpose は **意図的な opt-in**（ES 専用 usage note を伴う）',
