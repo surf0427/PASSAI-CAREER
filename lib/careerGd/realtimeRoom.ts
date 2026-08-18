@@ -18,11 +18,18 @@
 //     信頼する実データの再取得は既存 API（GET /api/career/gd/room/[roomId]）経由に委ねる。
 //     row の best-effort 写像（onRoomUpdate / onMemberUpsert / onMemberRemove）も提供するが、
 //     現行 UI の正本は従来どおり API 経由のまま（ポーリングを残す）。
-//   - career_gd_* は RLS deny-by-default で、realtime publication 未追加のため、現行 DB では
-//     postgres_changes が配信されない場合がある。その場合も Presence は機能する（channel 層）。
-//     配信を有効化するには運用者が publication 追加 + owner-select RLS を適用する必要がある
-//     （SQL 変更は本 STEP 非対象。GD-14.5 / GD-19 と同じ「コード先行」方式）。
-//   - 本 STEP では Broadcast / 発言 Realtime / AI / 評価 / タイマー / 音声 / OpenAI は扱わない。
+//   - ★ STEP-GD-31 で **実配信が有効化された**（supabase/career_gd_realtime_apply.sql）:
+//       ① supabase_realtime publication へ rooms / members / messages を追加
+//       ② authenticated へ membership-scoped な **SELECT のみ** の RLS policy を付与
+//          （career_gd_is_room_member() で「在籍中の room」に限定。room UUID を知っていても
+//            member でなければ 1 行も配信されない）
+//       ③ career_gd_rooms は列単位 GRANT で join_code_hash を除外（member にも hash を渡さない）
+//       ④ career_gd_room_results は **publication に入れない**（本人 FB を配信経路に載せない）
+//     → mutation は従来どおり service_role の API route のみ。Realtime のために
+//       書き込み権限を開けていない（security architecture を弱めていない）。
+//   - DDL 未適用の環境では従来どおり postgres_changes が届かないが、Presence は channel 層で
+//     機能し、実データは polling fallback で同期されるため GD は成立する（degraded mode）。
+//   - 本モジュールでは Broadcast / 音声 / WebRTC は扱わない（音声は別 Phase）。
 
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 

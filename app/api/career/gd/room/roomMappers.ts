@@ -3,6 +3,7 @@
 // join_code_hash / pepper 等の秘密はクライアントへ出さない（本モジュールでは扱わない）。
 // snake_case DB 行 → camelCase の client 型（types/careerGd.ts）へ写すだけの純粋関数。
 
+import { asGdConnectionState } from '@/lib/careerGd/presence';
 import type {
   CareerGdRoom,
   CareerGdRoomMember,
@@ -91,6 +92,11 @@ export function mapMemberRow(row: Row): CareerGdRoomMember {
     role: asRole(row.role),
     joinedAt: str(row.joined_at),
     leftAt: (row.left_at as string | null) ?? null,
+    // STEP-GD-31: presence（切断検知）。career_gd_realtime_apply.sql 未適用の環境では
+    //   列が無く undefined になるため、lastSeenAt=null / connectionState='online' に倒れる
+    //   （＝従来と同じ「全員オンライン扱い」で degrade する。表示が壊れない）。
+    lastSeenAt: (row.last_seen_at as string | null) ?? null,
+    connectionState: asGdConnectionState(row.connection_state),
   };
   if (persona) {
     const a = persona.assertiveness;

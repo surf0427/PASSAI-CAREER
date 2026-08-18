@@ -9,6 +9,13 @@
 //   - 'careerGdResults'  : 完了結果（評価・企業評価・個別FB・順位・matchingHints）
 // DB / Supabase / usage には接続しない（Phase1）。
 
+// STEP-GD-31: 接続状態の型は lib/careerGd/presence.ts が単一ソース（閾値と同居させる）。
+//   本ファイルでは local 利用のために import し、consumer 向けに re-export もする
+//   （型定義を 2 箇所に置かない＝閾値と状態の enum が乖離しない）。
+import type { GdConnectionState } from '@/lib/careerGd/presence';
+
+export type { GdConnectionState };
+
 // GD 形式。MVP は 自由/ケース/抽象。将来 'industry' | 'company' を追加できる。
 export type GdFormat = 'free' | 'case' | 'abstract';
 
@@ -189,6 +196,18 @@ export type CareerGdRoomMember = {
   };
   joinedAt: string;
   leftAt?: string | null;
+  /**
+   * STEP-GD-31: 最終 heartbeat 時刻（career_gd_room_members.last_seen_at）。
+   * null は「まだ heartbeat が届いていない」（＝ joined_at を基準に判定する）。
+   * AI メンバーは常時在席のため presence の対象外（値は使わない）。
+   */
+  lastSeenAt?: string | null;
+  /**
+   * STEP-GD-31: 接続状態。**退室（leftAt）とは別概念**。
+   * 通信断・タブクローズ・スリープで online → disconnected → stale と落ちるが、
+   * 再接続すれば online へ戻る（leftAt は立たない）。
+   */
+  connectionState?: GdConnectionState;
 };
 
 // career_gd_room_messages のクライアント表現（STEP-GD-14 まで空配列でよい）。
@@ -231,6 +250,15 @@ export type CareerGdRoomDetailResponse = {
   isHost: boolean;
   currentUserMember: CareerGdRoomMember | null;
   status: GdRoomStatus;
+  /**
+   * STEP-GD-31: このレスポンスを作った時点の **サーバ時刻**（ISO）。
+   *
+   * クライアントはこれと自分の Date.now() の差から clock offset を求め、
+   * 残り時間を `started_at + timeLimitSec - (localNow + offset)` で計算する。
+   * → 端末時計がずれていても全参加者で同じ残り時間が表示される。
+   * 省略時（旧サーバ）は offset 0 として従来どおり動く（後方互換）。
+   */
+  serverNow?: string;
 };
 
 // ── STEP-GD-14: 発言 / 進行 / 結果 API のレスポンス型 ──────────────────

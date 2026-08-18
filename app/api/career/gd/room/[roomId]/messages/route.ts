@@ -23,7 +23,11 @@ import {
 } from '../../roomAuth';
 import { mapMessageRow } from '../../roomMappers';
 import { postRoomMessage, loadRoomMessages } from '../../roomMessages';
+import { finishRoomIfExpired, sweepRoomPresence } from '../../roomLifecycle';
+import { reportGdFailure } from '../../../gdObservability';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 export const maxDuration = 30;
 
 const MAX_CONTENT_CHARS = 600;
@@ -65,6 +69,11 @@ async function loadRoomAndMember(admin: SupabaseClient, roomId: string, userId: 
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ roomId: string }> }) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);
 
@@ -77,6 +86,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ roomId: string 
   const loaded = await loadRoomAndMember(admin, roomId, auth.userId);
   if (loaded.kind === 'reject') return loaded.response;
 
+  // STEP-GD-31: 発言ポーリングだけを回している画面でも切断検知が進むように sweep する
+  //   （never-throw・DDL 未適用なら no-op）。
+  await sweepRoomPresence(admin, roomId);
+
   const afterSeqRaw = new URL(req.url).searchParams.get('afterSeq');
   const afterSeq = afterSeqRaw != null && afterSeqRaw !== '' ? Number(afterSeqRaw) : null;
 
@@ -85,7 +98,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ roomId: string 
     rows = await loadRoomMessages(admin, roomId, afterSeq);
   } catch (e) {
     if (isUndefinedTable(e)) return dbNotAppliedResponse();
-    console.error('Career GD messages GET: load error', e);
+    reportGdFailure(e, 'gd/room/messages', 'MESSAGES_FETCH_FAILED', 500);
     return jsonError('MESSAGES_FETCH_FAILED', '発言の取得に失敗しました。', 500);
   }
 
@@ -95,6 +108,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ roomId: string 
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ roomId: string }> }) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);
 
@@ -115,6 +133,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
 
   const auth = await authenticateGdMember();
   if (auth.kind === 'reject') return auth.response;
+
+  // STEP-GD-31: 発言 spam の上限（user 単位・fail-open）。
+  const limited = await enforceRateLimit(auth.userId, CAREER_GD_RATE_LIMITS.message);
+  if (limited) return limited;
+
   const adminRes = getGdAdmin();
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
@@ -122,6 +145,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
   const loaded = await loadRoomAndMember(admin, roomId, auth.userId);
   if (loaded.kind === 'reject') return loaded.response;
   const { roomRow, currentRow } = loaded;
+
+  // ── STEP-GD-31: server-side timer enforcement ──
+  //    「時間切れなのに host のクライアントが落ちていて finish されていない」room へ
+  //    発言が入り続けるのを防ぐ。判定・更新はすべて DB 側 now() で atomic に行うため、
+  //    クライアント時計を偽装しても期限を越えて投稿できない。
+  //    ★ 既存の race 契約（status='active' 条件付き UPDATE）をそのまま使う。
+  if (roomRow.status === 'active') {
+    const expiry = await finishRoomIfExpired(admin, roomId);
+    if (expiry.kind === 'finished') {
+      return jsonError('ROOM_TIME_EXPIRED', '制限時間が終了したため、この発言は送信できません。', 409);
+    }
+  }
 
   // active のみ投稿可。
   if (roomRow.status !== 'active') {
@@ -147,7 +182,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
     return Response.json({ message: mapMessageRow(row), idempotent });
   } catch (e) {
     if (isUndefinedTable(e)) return dbNotAppliedResponse();
-    console.error('Career GD messages POST: post error', e instanceof Error ? e.message : e);
+    reportGdFailure(e, 'gd/room/messages', 'MESSAGE_POST_FAILED', 500);
     return jsonError('MESSAGE_POST_FAILED', '発言の投稿に失敗しました。時間をおいて再度お試しください。', 500);
   }
 }

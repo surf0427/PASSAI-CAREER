@@ -13,7 +13,10 @@ import {
   dbNotAppliedResponse,
 } from '../roomAuth';
 import { mapRoomRow, mapMemberRow, mapMessageRow } from '../roomMappers';
+import { maintainRoom } from '../roomLifecycle';
+import { reportGdFailure } from '../../gdObservability';
 
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 export const maxDuration = 30;
 
 function jsonError(error: string, detail: string, status: number): Response {
@@ -24,6 +27,11 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ roomId: string }> },
 ) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) {
     return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);
@@ -38,7 +46,13 @@ export async function GET(
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
 
-  // ── room 取得 ──
+  // ── STEP-GD-31: ライフサイクル強制（room を「見る」たびに実行）──
+  //    ① 時間切れなら server 時刻基準で atomic に finished 化（host のクライアントに依存しない）
+  //    ② heartbeat 途絶を disconnected / stale へ落とす（他参加者へ realtime / poll で伝わる）
+  //    never-throw。DDL 未適用環境では no-op になり、従来どおり動作する。
+  await maintainRoom(admin, roomId);
+
+  // ── room 取得（maintainRoom の結果を含んだ最新行を読む）──
   const { data: roomRow, error: roomErr } = await admin
     .from('career_gd_rooms')
     .select('*')
@@ -46,7 +60,7 @@ export async function GET(
     .maybeSingle();
   if (roomErr) {
     if (isUndefinedTable(roomErr)) return dbNotAppliedResponse();
-    console.error('Career GD room get: room lookup error', roomErr.message);
+    reportGdFailure(roomErr, 'gd/room/get', 'ROOM_FETCH_FAILED', 500);
     return jsonError('ROOM_FETCH_FAILED', 'ルーム情報の取得に失敗しました。', 500);
   }
   if (!roomRow) {
@@ -63,7 +77,7 @@ export async function GET(
       .order('joined_at', { ascending: true });
     if (error) {
       if (isUndefinedTable(error)) return dbNotAppliedResponse();
-      console.error('Career GD room get: members lookup error', error.message);
+      reportGdFailure(error, 'gd/room/get', 'ROOM_FETCH_FAILED', 500);
       return jsonError('ROOM_FETCH_FAILED', 'ルーム情報の取得に失敗しました。', 500);
     }
     memberRows = (data ?? []) as Record<string, unknown>[];
@@ -91,7 +105,7 @@ export async function GET(
     const { data, error } = await q;
     if (error) {
       if (isUndefinedTable(error)) return dbNotAppliedResponse();
-      console.error('Career GD room get: messages lookup error', error.message);
+      reportGdFailure(error, 'gd/room/get', 'ROOM_FETCH_FAILED', 500);
       return jsonError('ROOM_FETCH_FAILED', 'ルーム情報の取得に失敗しました。', 500);
     }
     messageRows = (data ?? []) as Record<string, unknown>[];
@@ -106,5 +120,7 @@ export async function GET(
     isHost: currentRow.is_host === true,
     currentUserMember,
     status: room.status,
+    // STEP-GD-31: clock drift 補正の基準。クライアントはこれで offset を求める。
+    serverNow: new Date().toISOString(),
   });
 }

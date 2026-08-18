@@ -22,6 +22,10 @@ import {
 import { mapMessageRow } from '../../roomMappers';
 import { postRoomMessage, loadRoomMessages } from '../../roomMessages';
 
+import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
+import { finishRoomIfExpired } from '../../roomLifecycle';
+import { reportGdFailure } from '../../../gdObservability';
+import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 export const maxDuration = 80;
 
 const MAX_UTTERANCE_CHARS = 400;
@@ -100,11 +104,21 @@ function pickNextAiMember(aiMembers: Row[], messages: Row[]): Row | null {
 }
 
 export async function POST(_req: Request, ctx: { params: Promise<{ roomId: string }> }) {
+  // ── STEP-GD-31: GD kill switch（server flag が最終権限）──
+  //    OFF なら body parse / auth / DB / AI へ到達する前に 404。UI flag は権限に影響しない。
+  const gdGate = requireCareerGdEnabled();
+  if (gdGate) return gdGate;
+
   const { roomId } = await ctx.params;
   if (!roomId) return jsonError('BAD_REQUEST', 'ルームIDが不正です。', 400);
 
   const auth = await authenticateGdMember();
   if (auth.kind === 'reject') return auth.response;
+
+  // STEP-GD-31: AI 発言は Anthropic 課金に直結するため user 単位の上限を掛ける。
+  const limited = await enforceRateLimit(auth.userId, CAREER_GD_RATE_LIMITS.aiTurn);
+  if (limited) return limited;
+
   const adminRes = getGdAdmin();
   if (adminRes.kind === 'reject') return adminRes.response;
   const admin = adminRes.admin;
@@ -117,7 +131,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     .maybeSingle();
   if (roomErr) {
     if (isUndefinedTable(roomErr)) return dbNotAppliedResponse();
-    console.error('Career GD ai-turn: room lookup error', roomErr.message);
+    reportGdFailure(roomErr, 'gd/room/ai-turn', 'ROOM_FETCH_FAILED', 500);
     return jsonError('ROOM_FETCH_FAILED', 'ルーム情報の取得に失敗しました。', 500);
   }
   if (!roomRow) return jsonError('ROOM_NOT_FOUND', 'ルームが見つかりません。', 404);
@@ -130,12 +144,21 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     .order('joined_at', { ascending: true });
   if (memberErr) {
     if (isUndefinedTable(memberErr)) return dbNotAppliedResponse();
-    console.error('Career GD ai-turn: members lookup error', memberErr.message);
+    reportGdFailure(memberErr, 'gd/room/ai-turn', 'ROOM_FETCH_FAILED', 500);
     return jsonError('ROOM_FETCH_FAILED', 'ルーム情報の取得に失敗しました。', 500);
   }
   const memberRows = (memberData ?? []) as Row[];
   const currentRow = memberRows.find((m) => m.user_id === auth.userId) ?? null;
   if (!currentRow) return jsonError('NOT_A_MEMBER', 'このルームの参加者ではありません。', 403);
+  // ── STEP-GD-31: server-side timer enforcement ──
+  //    時間切れ後に AI 発言（＝ Anthropic 課金）が走り続けないよう、生成前に DB 側 now() で判定する。
+  if ((roomRow as Row).status === 'active') {
+    const expiry = await finishRoomIfExpired(admin, roomId);
+    if (expiry.kind === 'finished') {
+      return jsonError('ROOM_TIME_EXPIRED', '制限時間が終了したため、AI発言は生成できません。', 409);
+    }
+  }
+
   if ((roomRow as Row).status !== 'active') {
     return jsonError('ROOM_NOT_ACTIVE', 'このルームは進行中ではありません。', 409);
   }
@@ -151,7 +174,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     messageRows = await loadRoomMessages(admin, roomId, null);
   } catch (e) {
     if (isUndefinedTable(e)) return dbNotAppliedResponse();
-    console.error('Career GD ai-turn: messages load error', e);
+    reportGdFailure(e, 'gd/room/ai-turn', 'MESSAGES_FETCH_FAILED', 500);
     return jsonError('ROOM_FETCH_FAILED', '発言の取得に失敗しました。', 500);
   }
 
@@ -206,7 +229,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
     content = raw.trim().slice(0, MAX_UTTERANCE_CHARS);
   } catch (error) {
-    console.error('Career GD ai-turn: generation error', error instanceof Error ? error.message : error);
+    reportGdFailure(error, 'gd/room/ai-turn', 'AI_TURN_FAILED', 500);
     return jsonError('AI_REQUEST_FAILED', 'AI発言の生成に失敗しました。時間をおいて再度お試しください。', 502);
   }
   if (!content) {
@@ -230,7 +253,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
     return Response.json({ message: mapMessageRow(row), speakerParticipantId });
   } catch (e) {
     if (isUndefinedTable(e)) return dbNotAppliedResponse();
-    console.error('Career GD ai-turn: save error', e instanceof Error ? e.message : e);
+    reportGdFailure(e, 'gd/room/ai-turn', 'AI_TURN_SAVE_FAILED', 500);
     return jsonError('MESSAGE_POST_FAILED', 'AI発言の保存に失敗しました。', 500);
   }
 }

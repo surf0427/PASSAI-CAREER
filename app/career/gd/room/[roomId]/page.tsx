@@ -19,6 +19,21 @@ import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { useCareerGdRealtime } from '@/hooks/useCareerGdRealtime';
 import { useCareerGdMessages, type GdPendingMessage } from '@/hooks/useCareerGdMessages';
 import { useCareerGdTimer } from '@/hooks/useCareerGdTimer';
+import { useCareerGdServerClock } from '@/hooks/useCareerGdServerClock';
+import { useCareerGdHeartbeat } from '@/hooks/useCareerGdHeartbeat';
+import {
+  deriveGdSyncMode,
+  gdPollIntervalMs,
+  GD_SYNC_MODE_LABELS,
+  isGdSyncModeAlarming,
+  type GdSyncMode,
+} from '@/lib/careerGd/syncMode';
+import {
+  deriveGdConnectionState,
+  mergeGdConnectionState,
+  GD_CONNECTION_LABELS,
+  type GdConnectionState,
+} from '@/lib/careerGd/presence';
 import type {
   GdPresenceMap,
   GdRealtimeConnectionState,
@@ -45,7 +60,8 @@ const STATUS_LABELS: Record<GdRoomStatus, string> = {
   cancelled: '中止',
 };
 
-const POLL_INTERVAL_MS = 3000;
+// STEP-GD-31: ポーリング間隔は同期モードで変わる（Realtime 接続中は reconcile のみに落とす）。
+//   正本は lib/careerGd/syncMode.ts。ここでは fallback 値だけを別名で保持しない。
 
 // ── ルート（auth / 初期ロード / status ルーティング） ──────────────────
 
@@ -59,6 +75,10 @@ export default function CareerGdRoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ── STEP-GD-31: server clock offset（clock drift 補正）──
+  //   すべての API 応答の serverNow をここへ集約し、タイマー / presence 判定に使う。
+  const { clockOffsetMs, observeServerNow, correctedNowMs } = useCareerGdServerClock();
+
   const refresh = useCallback(async () => {
     if (!roomId) return;
     setLoading(true);
@@ -71,6 +91,7 @@ export default function CareerGdRoomPage() {
       if (!res.ok || !data?.room) {
         throw new Error(data?.detail ?? 'ルーム情報の取得に失敗しました。');
       }
+      observeServerNow(data.serverNow);
       setDetail(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'ルーム情報の取得に失敗しました。');
@@ -78,7 +99,7 @@ export default function CareerGdRoomPage() {
     } finally {
       setLoading(false);
     }
-  }, [roomId]);
+  }, [roomId, observeServerNow]);
 
   useEffect(() => {
     if (authStatus === 'loading' || !isMember) return;
@@ -107,6 +128,21 @@ export default function CareerGdRoomPage() {
     enabled: isMember && (roomStatus === 'waiting' || roomStatus === 'active'),
     onSyncSignal: refresh,
   });
+
+  // ── STEP-GD-31: heartbeat（DB 側の切断検知の権威的な信号）──
+  //   Presence（channel）は Realtime が無効だと機能しないため、DB heartbeat と二重化する。
+  const liveRoom = roomStatus === 'waiting' || roomStatus === 'active';
+  const { consecutiveFailures: heartbeatFailures } = useCareerGdHeartbeat({
+    roomId,
+    enabled: isMember && liveRoom,
+    onServerNow: observeServerNow,
+    // server 側が期限切れで finished 化したら即座に反映（host 不在でも結果へ進める）。
+    onRoomFinished: refresh,
+  });
+
+  // ── STEP-GD-31: 同期モード（LIVE / DEGRADED / OFFLINE）──
+  //   Realtime が落ちても polling で続行できる限り「異常」とは扱わない（degraded）。
+  const syncMode: GdSyncMode = deriveGdSyncMode(connectionState, heartbeatFailures);
 
   if (authStatus === 'loading') {
     return (
@@ -181,6 +217,10 @@ export default function CareerGdRoomPage() {
           onStatusChanged={refresh}
           presenceMap={presenceMap}
           connectionState={connectionState}
+          syncMode={syncMode}
+          clockOffsetMs={clockOffsetMs}
+          nowMs={correctedNowMs}
+          onServerNow={observeServerNow}
         />
       ) : status === 'waiting' ? (
         <WaitingView
@@ -190,6 +230,9 @@ export default function CareerGdRoomPage() {
           onStarted={setDetail}
           presenceMap={presenceMap}
           connectionState={connectionState}
+          syncMode={syncMode}
+          nowMs={correctedNowMs}
+          onServerNow={observeServerNow}
         />
       ) : status === 'finished' ? (
         <FinishedView detail={detail} onRefresh={refresh} />
@@ -235,6 +278,9 @@ function WaitingView({
   onStarted,
   presenceMap,
   connectionState,
+  syncMode,
+  nowMs,
+  onServerNow,
 }: {
   detail: CareerGdRoomDetailResponse;
   loading: boolean;
@@ -242,6 +288,9 @@ function WaitingView({
   onStarted: (d: CareerGdRoomDetailResponse) => void;
   presenceMap: GdPresenceMap;
   connectionState: GdRealtimeConnectionState;
+  syncMode: GdSyncMode;
+  nowMs: number;
+  onServerNow: (iso: string | null | undefined) => void;
 }) {
   const { room, members, isHost } = detail;
   const humanCount = members.filter((m) => !m.isAi && !m.leftAt).length;
@@ -257,6 +306,9 @@ function WaitingView({
   // onStarted は root の setDetail。status が waiting でなくなれば root が active/finished へ再ルーティングする。
   // Realtime（GD-24 の onSyncSignal→refresh）が有効なら即時、無効でもこの poll で破綻しない。
   const roomId = room.id;
+  // STEP-GD-31: Realtime 接続中（live）は reconcile 間隔まで落とし、
+  //   Realtime が無効 / 切断のときだけ従来の 3 秒 fallback へ戻る。
+  const pollMs = gdPollIntervalMs(syncMode);
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -264,17 +316,18 @@ function WaitingView({
         const res = await fetch(`/api/career/gd/room/${encodeURIComponent(roomId)}`);
         const data = (await res.json().catch(() => null)) as CareerGdRoomDetailResponse | null;
         if (cancelled || !res.ok || !data?.room) return;
+        onServerNow(data.serverNow);
         onStarted(data);
       } catch {
-        // ポーリングの一時失敗は無視（次周期 / 手動更新で回復）。
+        // ポーリングの一時失敗は無視（次周期 / 手動更新 / Realtime で回復）。
       }
     };
-    const id = setInterval(tick, POLL_INTERVAL_MS);
+    const id = setInterval(tick, pollMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [roomId, onStarted]);
+  }, [roomId, onStarted, pollMs, onServerNow]);
 
   const start = useCallback(async () => {
     setStarting(true);
@@ -372,6 +425,8 @@ function WaitingView({
         plannedCount={room.plannedParticipantCount}
         presenceMap={presenceMap}
         connectionState={connectionState}
+        syncMode={syncMode}
+        nowMs={nowMs}
       />
 
       {isHost ? (
@@ -426,11 +481,19 @@ function ActiveView({
   onStatusChanged,
   presenceMap,
   connectionState,
+  syncMode,
+  clockOffsetMs,
+  nowMs,
+  onServerNow,
 }: {
   initial: CareerGdRoomDetailResponse;
   onStatusChanged: () => void;
   presenceMap: GdPresenceMap;
   connectionState: GdRealtimeConnectionState;
+  syncMode: GdSyncMode;
+  clockOffsetMs: number;
+  nowMs: number;
+  onServerNow: (iso: string | null | undefined) => void;
 }) {
   const roomId = initial.room.id;
   const [room, setRoom] = useState(initial.room);
@@ -481,6 +544,8 @@ function ActiveView({
     startedAt: room.startedAt ?? null,
     timeLimitSec: room.timeLimitSec,
     enabled: room.status === 'active',
+    // STEP-GD-31: server 補正。端末時計がずれていても全参加者で残り時間が一致する。
+    clockOffsetMs,
   });
 
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -491,6 +556,8 @@ function ActiveView({
   }, [latestSeq]);
 
   // ポーリング（room / members / status のみ。messages は useCareerGdMessages が担当）。
+  // STEP-GD-31: Realtime を主同期にし、polling は reconcile / fallback に降格する。
+  const pollMs = gdPollIntervalMs(syncMode);
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -500,21 +567,22 @@ function ActiveView({
         );
         const data = (await res.json().catch(() => null)) as CareerGdRoomDetailResponse | null;
         if (cancelled || !res.ok || !data?.room) return;
+        onServerNow(data.serverNow);
         setRoom(data.room);
         setMembers(data.members);
         if (data.room.status !== 'active') {
           onStatusChanged();
         }
       } catch {
-        // ポーリングの一時失敗は無視（次周期で回復）。
+        // ポーリングの一時失敗は無視（次周期 / Realtime で回復）。
       }
     };
-    const id = setInterval(tick, POLL_INTERVAL_MS);
+    const id = setInterval(tick, pollMs);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [roomId, onStatusChanged]);
+  }, [roomId, onStatusChanged, pollMs, onServerNow]);
 
   // 新着（確定 or pending）で最下部へスクロール。
   useEffect(() => {
@@ -636,6 +704,8 @@ function ActiveView({
         className="mb-4"
         presenceMap={presenceMap}
         connectionState={connectionState}
+        syncMode={syncMode}
+        nowMs={nowMs}
       />
 
       <Card variant="soft" padding="md" className="mb-4">
@@ -1079,12 +1149,20 @@ function MembersCard({
   className,
   presenceMap,
   connectionState,
+  syncMode,
+  nowMs,
 }: {
   members: CareerGdRoomMember[];
   plannedCount: number;
   className?: string;
   presenceMap?: GdPresenceMap;
   connectionState?: GdRealtimeConnectionState;
+  syncMode?: GdSyncMode;
+  /**
+   * server 補正済みの現在時刻（ms）。**render 中に Date.now() を呼ばない**ため、
+   * 呼び出し側が useCareerGdServerClock の state（correctedNowMs）を渡す。
+   */
+  nowMs: number;
 }) {
   const humanCount = members.filter((m) => !m.isAi && !m.leftAt).length;
   return (
@@ -1093,17 +1171,34 @@ function MembersCard({
         <p className="text-[11px] font-bold text-blue-700 tracking-widest">
           参加者（{humanCount} / {plannedCount}）
         </p>
-        {connectionState && <ConnectionBadge state={connectionState} />}
+        {syncMode ? <SyncModeBadge mode={syncMode} /> : connectionState ? <ConnectionBadge state={connectionState} /> : null}
       </div>
       <ul className="flex flex-col gap-2.5">
         {members.map((m) => {
-          // 人間参加者のみ presence を表示（AI は常時参加＝presence 対象外）。
-          const online = !m.isAi && !!presenceMap && !!presenceMap[m.participantId];
+          // ── STEP-GD-31: 接続状態は 3 つの情報源をマージして決める ──
+          //   ① DB connection_state（sweep 済み・server 権威・Realtime で配信される）
+          //   ② last_seen_at からのクライアント側即時導出（sweep 前の空白を埋める）
+          //   ③ Realtime Presence（channel 接続。最も即時だが Realtime 無効環境では空）
+          //   Presence に居れば online を優先し、居なければ ①②の「悪い方」を採る。
+          //   AI は常時在席のため対象外。
+          const inPresence = !!presenceMap && !!presenceMap[m.participantId];
+          const derived = deriveGdConnectionState(m.lastSeenAt ?? m.joinedAt, nowMs);
+          const memberState: GdConnectionState = m.isAi
+            ? 'online'
+            : inPresence
+              ? 'online'
+              : mergeGdConnectionState(m.connectionState, derived);
           return (
             // E2E test hook (STEP-GD-20-H): non-functional attrs for Playwright roster assertions.
-            <li key={m.id} className="text-sm" data-testid="gd-member-row" data-ai={String(m.isAi)}>
+            <li
+              key={m.id}
+              className="text-sm"
+              data-testid="gd-member-row"
+              data-ai={String(m.isAi)}
+              data-connection={m.isAi ? 'online' : memberState}
+            >
             <div className="flex flex-wrap items-center gap-2">
-              {presenceMap && !m.isAi && <PresenceDot online={online} />}
+              {!m.isAi && <PresenceDot state={memberState} />}
               <span className="font-semibold text-slate-800">{m.displayName}</span>
               {m.isHost && (
                 <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">ホスト</span>
@@ -1127,18 +1222,44 @@ function MembersCard({
 
 // ── STEP-GD-24: Realtime presence / connection の最小 UI ────────────────
 
-// ● オンライン / ○ オフライン（人間参加者のみ）。既存デザインに馴染む控えめな dot。
-function PresenceDot({ online }: { online: boolean }) {
+// ● オンライン / ◐ 接続不安定 / ○ 不在（人間参加者のみ）。既存デザインに馴染む控えめな dot。
+//   STEP-GD-31 で 2 値（online/offline）から 3 値へ拡張した。
+//   data-online は既存 E2E との後方互換のために残す（online のときだけ true）。
+function PresenceDot({ state }: { state: GdConnectionState }) {
+  const label = GD_CONNECTION_LABELS[state];
+  const dotClass =
+    state === 'online' ? 'bg-emerald-500' : state === 'disconnected' ? 'bg-amber-400' : 'bg-slate-300';
   return (
     <span
       data-testid="gd-presence-dot"
-      data-online={String(online)}
-      aria-label={online ? 'オンライン' : 'オフライン'}
-      title={online ? 'オンライン' : 'オフライン'}
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-        online ? 'bg-emerald-500' : 'bg-slate-300'
-      }`}
+      data-online={String(state === 'online')}
+      data-state={state}
+      aria-label={label}
+      title={label}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
     />
+  );
+}
+
+// ── STEP-GD-31: 同期モード表示（LIVE / DEGRADED / OFFLINE）──
+//
+// ★ degraded を「エラー」として見せない（要件 37）。Realtime が落ちても polling で
+//   GD は続くので、ユーザーにとっては異常ではない。本当に通信が切れているときだけ強調する。
+function SyncModeBadge({ mode }: { mode: GdSyncMode }) {
+  const alarming = isGdSyncModeAlarming(mode);
+  const dotClass =
+    mode === 'live' ? 'bg-emerald-500' : mode === 'degraded' ? 'bg-slate-300' : 'bg-amber-500';
+  return (
+    <span
+      data-testid="gd-sync-mode"
+      data-mode={mode}
+      className={`inline-flex items-center gap-1.5 text-[11px] ${
+        alarming ? 'font-semibold text-amber-700' : 'text-slate-400'
+      }`}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`} />
+      {GD_SYNC_MODE_LABELS[mode]}
+    </span>
   );
 }
 
