@@ -24,10 +24,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { usePathname } from 'next/navigation';
 
-import { resolveSession } from '@/lib/supabase/auth';
-import { ensureProfile } from '@/lib/supabase/profile';
+import { isExamIdentityPath } from '@/lib/examRuntimeRoutes';
 import type { Profile } from '@/types/profile';
+
+// ★ Project A（受験版 Supabase）の module は **静的 import しない**。
+//   本 provider はルート layout 経由で CAREER surface にも mount されるため、静的 import すると
+//   CAREER のページに Project A の client / env / table 境界が同梱されてしまう。
+//   下の route gate を通過した受験版ルートでだけ dynamic import で読み込む。
+//   （import type は型のみで実行時 import を生まないため、そのままでよい。）
 
 // STEP-AUTH-REDESIGN: 認証状態の単一定義。
 //   - loading: セッション読み取りが未確定。
@@ -85,10 +91,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     currentUserIdRef.current = currentUserId;
   }, [currentUserId]);
 
+  // ── Project 境界ゲート（PASSAI CAREER 404 修正）─────────────────────────
+  //
+  // 本 provider は **受験版（Supabase Project A）** の identity と、受験版 feature の
+  // backfill / restore を起動する。ところがルート layout は全ルート共通のため、
+  // CAREER surface（CAREER LP と /career 配下）でも mount されてしまう。
+  //
+  // CAREER 本番では公開 env も CAREER の Supabase（Project B）を指すため、
+  // @supabase/ssr の cookie storage key（project ref 単位）が CAREER ログインの session と
+  // 共有される。その結果 resolveSession() が member を返し、Project B に存在しない
+  // 受験版 table（profiles / basic_info_logs / diagnosis_logs / activity_logs /
+  // self_analysis_logs）へ REST request が飛んで 404 になっていた。
+  // 失敗時は backfill flag を立てない設計のため、ページを開くたび再発していた。
+  //
+  // 対策は default-deny。受験版ルート（lib/examRuntimeRoutes.ts の allowlist）でだけ
+  // identity / bootstrap を起動し、それ以外では **Supabase を一切呼ばない**。
+  // CAREER の identity と persistence は app/career/components/CareerAuthProvider.tsx
+  // （Project B）が独立して持つため、ここを不活性にしても CAREER 側は影響を受けない。
+  const pathname = usePathname();
+  const examIdentityRoute = isExamIdentityPath(pathname);
+
   useEffect(() => {
+    // CAREER surface / 共通の法務・情報ページでは Project A へ一切接続しない。
+    // 公開される context 値は下の `value` が inert（guest 確定）に差し替える。
+    if (!examIdentityRoute) return;
+
     let cancelled = false;
     (async () => {
       // STEP-AUTH-REDESIGN: セッションは「読むだけ」。anonymous は発行しない。
+      const { resolveSession } = await import('@/lib/supabase/auth');
       const session = await resolveSession();
       if (cancelled) return;
 
@@ -122,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAuthError(null);
       setAuthReady(true);
 
+      const { ensureProfile } = await import('@/lib/supabase/profile');
       const profileResult = await ensureProfile(session.userId);
       if (cancelled) return;
       if (profileResult.kind === 'ok') {
@@ -378,7 +410,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+    // 受験版ルートに入った / 出たときだけ再評価する。受験版ルート同士の遷移では
+    // 値が変わらないため再実行されない（従来の 1 回起動と等価）。
+  }, [examIdentityRoute]);
 
   const setProfile = useCallback((next: Profile) => {
     setProfileState(next);
@@ -388,8 +422,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const retryProfile = useCallback(async () => {
     const userId = currentUserIdRef.current;
+    // 受験版ルート以外では userId が確定しないため、ここに到達しない（Project A 非接触）。
     if (!userId) return;
     setProfileReady(false);
+    const { ensureProfile } = await import('@/lib/supabase/profile');
     const result = await ensureProfile(userId);
     if (result.kind === 'ok') {
       setProfileState(result.profile);
@@ -402,9 +438,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileReady(true);
   }, []);
 
-  return (
-    <AuthContext.Provider
-      value={{
+  // 受験版ルート以外では identity を解決していないため、内部 state ではなく
+  // 「guest 確定」を公開する（loading のまま固まらせない）。CAREER route は PlanGate の
+  // 保護対象外なので、guest 固定でも受験版の認可挙動には影響しない。
+  const value: AuthContextValue = examIdentityRoute
+    ? {
         status,
         currentUserId,
         profile,
@@ -416,11 +454,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         retryProfile,
         isPermanentUser: status === 'member',
         userEmail,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+      }
+    : {
+        status: 'guest',
+        currentUserId: null,
+        profile: null,
+        authReady: true,
+        profileReady: true,
+        authError: null,
+        profileError: null,
+        setProfile,
+        retryProfile,
+        isPermanentUser: false,
+        userEmail: null,
+      };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useCurrentUserId(): string | null {
