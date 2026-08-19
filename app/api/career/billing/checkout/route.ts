@@ -43,9 +43,9 @@ import { hasCareerPaidAccess } from '@/lib/careerBilling/entitlementPolicy';
 import { getOrCreateCareerStripeCustomer } from '@/lib/careerBilling/customer';
 import { isCareerPaidPlanId } from '@/lib/careerBilling/plans';
 import {
-  getCareerStripePriceId,
   getStripeClient,
   isCareerPlanConfigured,
+  retrieveCareerPlanPrice,
 } from '@/lib/careerBilling/stripe';
 import { CAREER_METADATA_USER_ID_KEY } from '@/lib/careerBilling/subscription';
 import { resolveCareerAppOrigin } from '@/lib/careerBilling/origin';
@@ -168,18 +168,32 @@ export async function POST(req: Request) {
     return jsonError('ORIGIN_UNRESOLVED', 'サーバ設定が未完了です。', 503);
   }
 
-  let priceId: string;
-  try {
-    priceId = getCareerStripePriceId(plan);
-  } catch (err) {
-    // env 名だけをログに出す（実値は出さない）。
-    devWarn('[career/billing/checkout] price env unresolved', String(err));
+  // Price は Stripe から実物を引き、**実行環境の test/live と一致すること**まで
+  // 確認してから使う。未設定・不在・モード混線はいずれも「売らない」に倒す
+  // （fail-closed。取り違えた Price で課金を作らせない）。
+  const priceCheck = await retrieveCareerPlanPrice(plan);
+  if (priceCheck.kind !== 'ok') {
+    // 原因は server ログにのみ残す。client には理由を出し分けない
+    // （env の設定状況を外から推測させない）。
+    devWarn('[career/billing/checkout] price unusable', {
+      plan,
+      reason: priceCheck.kind,
+    });
     return jsonError(
       'BILLING_UNCONFIGURED',
       'ただいまお申し込みを受け付けていません。',
       503,
     );
   }
+  if (!priceCheck.price.active) {
+    devWarn('[career/billing/checkout] price is archived', { plan });
+    return jsonError(
+      'BILLING_UNCONFIGURED',
+      'ただいまお申し込みを受け付けていません。',
+      503,
+    );
+  }
+  const priceId = priceCheck.price.id;
 
   // ── 7) Checkout Session ──
   const params: Stripe.Checkout.SessionCreateParams = {

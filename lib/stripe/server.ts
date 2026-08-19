@@ -3,10 +3,13 @@
  *
  * - `STRIPE_SECRET_KEY` は server-only secret。`import 'server-only'` で
  *   client bundle に紛れ込んだら build error にする。
- * - **環境ごとの key モードガード**:
- *     - `NODE_ENV=production` では `sk_live_*` を要求（それ以外は起動時 throw）。
- *     - development / test / 未定義では `sk_test_*` を要求（誤設定の早期検出）。
- *   本番に test key、開発に live key が紛れ込む取り違えを起動時に弾く。
+ * - **環境ごとの key モードガード**: 判定は `lib/stripe/environment.ts` に集約:
+ *     - `VERCEL_ENV=production`  → `sk_live_*` のみ
+ *     - `VERCEL_ENV=preview`     → `sk_test_*` のみ（Vercel Preview は NODE_ENV=production
+ *                                   になるため、旧 NODE_ENV 判定では Test 検証ができなかった）
+ *     - `VERCEL_ENV=development` → `sk_test_*` のみ
+ *     - VERCEL_ENV 未設定        → NODE_ENV=production なら live、それ以外は test
+ *   本番に test key、Preview / 開発に live key が紛れ込む取り違えを利用時に弾く。
  * - Singleton。re-init コストを避けるため module-scope cache。
  * - apiVersion は SDK 同梱版を明示 pin（2026-05-27.dahlia / stripe v22）。SDK
  *   upgrade 時はここを変更して挙動差分を意識的にレビューする。
@@ -19,6 +22,7 @@ import 'server-only';
 import Stripe from 'stripe';
 
 import { PLANS, PLAN_IDS, type PlanId } from '@/lib/billing/plans';
+import { checkStripeSecretKeyMode } from './environment';
 
 /**
  * Stripe SDK 同梱版に合わせて明示 pin。SDK upgrade 時はここを更新し、
@@ -29,22 +33,16 @@ const STRIPE_API_VERSION = '2026-05-27.dahlia';
 
 function readStripeSecretKey(): string {
   const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    throw new Error('STRIPE_SECRET_KEY is not set');
+  // モード判定は environment.ts の唯一のポリシーに委譲する（VERCEL_ENV 優先）。
+  // 失敗メッセージに key の実値・部分文字列は含まれない。
+  const check = checkStripeSecretKeyMode(key, {
+    VERCEL_ENV: process.env.VERCEL_ENV,
+    NODE_ENV: process.env.NODE_ENV,
+  });
+  if (!check.ok) {
+    throw new Error(check.message);
   }
-
-  // 本番は live、それ以外（development / test / 未定義）は test を要求する。
-  const isProd = process.env.NODE_ENV === 'production';
-  const expectedPrefix = isProd ? 'sk_live_' : 'sk_test_';
-
-  if (!key.startsWith(expectedPrefix)) {
-    const mode = isProd ? 'production' : (process.env.NODE_ENV ?? 'development');
-    throw new Error(
-      `STRIPE_SECRET_KEY must start with "${expectedPrefix}" in ${mode} ` +
-        `(NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}).`,
-    );
-  }
-  return key;
+  return key as string;
 }
 
 let cachedClient: Stripe | null = null;

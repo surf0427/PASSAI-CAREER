@@ -42,6 +42,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { devWarn } from '@/lib/devLog';
 import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
 import { getStripeClient } from '@/lib/careerBilling/stripe';
+import {
+  currentExpectedStripeLivemode,
+  currentStripeRuntimeEnv,
+} from '@/lib/stripe/environment';
 import { syncCareerSubscriptionFromStripe } from '@/lib/careerBilling/subscription';
 import { isUndefinedTable } from '@/lib/careerBilling/customer';
 
@@ -96,6 +100,24 @@ export async function POST(req: Request) {
       err instanceof Error ? err.message : 'unknown',
     );
     return Response.json({ error: 'invalid signature' }, { status: 400 });
+  }
+
+  // ── 2.5) test ⇄ live 混線ガード ──
+  //    署名が通っている＝ endpoint に対応する Stripe 環境からの event ではあるが、
+  //    「Preview（test 期待）に live の webhook secret を貼ってしまった」ような
+  //    設定ミスでは live の event が test 想定の DB に同期されてしまう。
+  //    event.livemode は Stripe が付ける真の所属モードなので、実行環境の期待と
+  //    突き合わせて弾く。永続的な設定ミスなので 400（retry させない）。
+  const expectedLivemode = currentExpectedStripeLivemode();
+  if (event.livemode !== expectedLivemode) {
+    devWarn('[career/billing/webhook] livemode mismatch — event rejected', {
+      id: event.id,
+      type: event.type,
+      runtimeEnv: currentStripeRuntimeEnv(),
+      expectedLivemode,
+      actualLivemode: event.livemode,
+    });
+    return Response.json({ error: 'livemode mismatch' }, { status: 400 });
   }
 
   let supabase: SupabaseClient;

@@ -222,9 +222,15 @@ console.log('[3] checkout route security contract');
     /isCareerPaidPlanId\(planRaw\)/.test(src),
     'plan は server-side allowlist（isCareerPaidPlanId）で検証する',
   );
+  // priceId は plan key → server allowlist → env → Stripe 実物照合、の順でのみ決まる。
+  // （retrieveCareerPlanPrice が内部で getCareerStripePriceId を呼び、livemode まで検証する）
   check(
-    /getCareerStripePriceId\(plan\)/.test(src),
-    'priceId は plan key から server 側で解決する',
+    /retrieveCareerPlanPrice\(plan\)/.test(src),
+    'priceId は plan key から server 側で解決する（livemode 検証つき）',
+  );
+  check(
+    /const priceId = priceCheck\.price\.id/.test(src),
+    'Checkout に渡す priceId は Stripe から取得した実 Price の id',
   );
   // identity は server session。
   check(

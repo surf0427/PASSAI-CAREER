@@ -19,7 +19,12 @@ import 'server-only';
 
 import type Stripe from 'stripe';
 
+import { devWarn } from '@/lib/devLog';
 import { getStripeClient } from '@/lib/stripe/server';
+import {
+  currentExpectedStripeLivemode,
+  currentStripeRuntimeEnv,
+} from '@/lib/stripe/environment';
 import {
   CAREER_PAID_PLAN_IDS,
   CAREER_PLANS,
@@ -120,6 +125,62 @@ export function isCareerBillingConfigured(): boolean {
  * を正本として読む。取得に失敗した plan は一覧から落とす
  * （壊れた価格・名前の無い商品を売らない = fail-closed）。
  */
+/**
+ * Stripe Price を取得し、**実行環境の期待モードと一致するか**を検証して返す。
+ *
+ * Secret key のモードは environment.ts が env で固定しているが、Price ID 側は
+ * 別 env（STRIPE_PRICE_ID_CAREER_*）なので取り違えが独立に起こり得る:
+ *   例) Vercel Preview に test key を入れたまま、Price だけ live のものを貼ってしまう。
+ * その場合 Stripe は "No such price" を返すため原因が分かりにくい。ここで
+ * `price.livemode`（Stripe が返す真の所属モード）を明示的に突き合わせ、
+ * test/live 混線として **はっきり失敗**させる。fail-closed（曖昧なら売らない）。
+ */
+export type CareerPriceCheck =
+  | { kind: 'ok'; price: Stripe.Price }
+  | { kind: 'unconfigured' }
+  | { kind: 'not-found' }
+  | { kind: 'mode-mismatch'; expectedLivemode: boolean; actualLivemode: boolean };
+
+export async function retrieveCareerPlanPrice(
+  plan: CareerPaidPlanId,
+): Promise<CareerPriceCheck> {
+  let priceId: string;
+  try {
+    priceId = getCareerStripePriceId(plan);
+  } catch (err) {
+    // 未設定 / 形式不正 / 受験版 Price との衝突。env 名のみログに出す。
+    devWarn('[careerBilling/stripe] price env unusable', String(err));
+    return { kind: 'unconfigured' };
+  }
+
+  let price: Stripe.Price;
+  try {
+    // product を expand して商品名・説明も同時に取得する。
+    price = await getStripeClient().prices.retrieve(priceId, {
+      expand: ['product'],
+    });
+  } catch {
+    return { kind: 'not-found' };
+  }
+
+  const expectedLivemode = currentExpectedStripeLivemode();
+  if (price.livemode !== expectedLivemode) {
+    devWarn('[careerBilling/stripe] price livemode mismatch', {
+      plan,
+      runtimeEnv: currentStripeRuntimeEnv(),
+      expectedLivemode,
+      actualLivemode: price.livemode,
+    });
+    return {
+      kind: 'mode-mismatch',
+      expectedLivemode,
+      actualLivemode: price.livemode,
+    };
+  }
+
+  return { kind: 'ok', price };
+}
+
 export type CareerPlanOffer = {
   plan: CareerPaidPlanId;
   /** repo 側の plan key ラベル（'Basic' / 'Premium'）。 */
@@ -137,24 +198,13 @@ export type CareerPlanOffer = {
 };
 
 export async function listCareerPlanOffers(): Promise<CareerPlanOffer[]> {
-  const stripe = getStripeClient();
   const offers: CareerPlanOffer[] = [];
 
   for (const plan of CAREER_PAID_PLAN_IDS) {
-    let priceId: string;
-    try {
-      priceId = getCareerStripePriceId(plan);
-    } catch {
-      continue; // 未設定 / 不正 → 販売しない
-    }
-
-    let price: Stripe.Price;
-    try {
-      // product を expand して商品名・説明も取得する（下の注記参照）。
-      price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
-    } catch {
-      continue; // Stripe 側に無い / 権限違い → 販売しない
-    }
+    // 未設定 / Stripe に無い / test⇄live 混線 はいずれも「販売しない」に倒す。
+    const checked = await retrieveCareerPlanPrice(plan);
+    if (checked.kind !== 'ok') continue;
+    const price = checked.price;
     if (!price.active) continue;
 
     // Stripe Product は expand 済みなら object、失敗時は id 文字列 or 削除済み。
