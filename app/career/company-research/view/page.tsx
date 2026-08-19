@@ -3,8 +3,8 @@
 // PASSAI 就活版 — 企業研究 一覧・詳細表示画面
 //
 // careerCompanyResearchLogs（localStorage）から保存済み企業研究を読み、一覧（企業名・日時）＋
-// 選択中の詳細を表示する。詳細では研究メモ原文・抽出テキスト・確認済みテキスト・AI添削・
-// 本人情報とのすり合わせ・面接連携要約・添削履歴を確認でき、「修正して再添削」で do?id= へ戻る。
+// 選択中の詳細を表示する。詳細では研究メモ原文・抽出テキスト・分析対象テキスト・企業分析結果・
+// 本人情報とのすり合わせ・面接連携要約・分析履歴を確認でき、「修正して再分析」で do?id= へ戻る。
 // ?id=<logId> で詳細を直接開ける（保存直後の遷移先）。DB / 課金 / usage には接続しない。
 
 import {
@@ -92,7 +92,7 @@ function CareerCompanyResearchViewInner() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
         title="保存した企業研究"
-        description="添削済みの企業研究です。研究メモ原文・AI添削・あなたの情報とのすり合わせ・添削履歴を確認できます。"
+        description="分析済みの企業研究です。研究メモ原文・企業分析結果・あなたの情報とのすり合わせ・分析履歴を確認できます。"
       />
 
       {logs === null ? (
@@ -102,13 +102,13 @@ function CareerCompanyResearchViewInner() {
       ) : logs.length === 0 ? (
         <Card variant="soft" padding="md">
           <p className="text-sm text-slate-600 mb-4">
-            まだ企業研究がありません。入力画面から添削を受けてください。
+            まだ企業研究がありません。入力画面から企業分析を実行してください。
           </p>
           <Link
             href="/career/company-research/do"
             className="inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline"
           >
-            企業研究を添削する →
+            企業分析する →
           </Link>
         </Card>
       ) : (
@@ -139,7 +139,7 @@ function CareerCompanyResearchViewInner() {
                         {' '}
                         — {formatDate(log.updatedAt || log.createdAt)}
                         {interestBadge(log) && ` ・${interestBadge(log)}`}
-                        {log.revisionHistory.length > 1 && ` ・添削${log.revisionHistory.length}回`}
+                        {log.revisionHistory.length > 1 && ` ・分析${log.revisionHistory.length}回`}
                       </span>
                     </button>
                   </li>
@@ -164,7 +164,7 @@ function CareerCompanyResearchViewInner() {
           href="/career/company-research/do"
           className="inline-flex items-center justify-center gap-1 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg px-4 py-2 transition-colors"
         >
-          別の企業を添削する →
+          別の企業を分析する →
         </Link>
         <Link
           href="/career/company-research"
@@ -201,7 +201,7 @@ function CompanyResearchDetail({
 
   return (
     <>
-      {/* メタ + お気に入りトグル + 修正して再添削 */}
+      {/* メタ + お気に入りトグル + 修正して再分析 */}
       <Card variant="soft" padding="md" className="mb-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="min-w-0">
@@ -228,11 +228,11 @@ function CompanyResearchDetail({
           href={`/career/company-research/do?id=${encodeURIComponent(log.id)}`}
           className="inline-flex w-full sm:w-auto items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 transition-colors"
         >
-          修正して再添削する →
+          修正して再分析する →
         </Link>
       </Card>
 
-      {/* AI添削: 総合スコア / ランク / 総評 */}
+      {/* 企業分析: 総合スコア / ランク / 総評 */}
       <Card variant="soft" padding="md" className="mb-4">
         <div className="flex items-center gap-4 mb-3">
           <div>
@@ -316,9 +316,9 @@ function CompanyResearchDetail({
         )}
       </Section>
 
-      {/* 確認済みテキスト（添削対象になった本文） */}
+      {/* 分析対象になった本文（素材から合成） */}
       <Section
-        title="添削対象のテキスト（確認済み）"
+        title="企業分析の対象になったテキスト"
         action={
           input.verifiedResearchText ? (
             <CopyButton
@@ -357,9 +357,9 @@ function CompanyResearchDetail({
         </Section>
       )}
 
-      {/* 添削履歴 */}
+      {/* 分析履歴 */}
       {log.revisionHistory.length > 1 && (
-        <Section title={`添削履歴（${log.revisionHistory.length}回）`}>
+        <Section title={`分析履歴（${log.revisionHistory.length}回）`}>
           <ul className="flex flex-col gap-2">
             {log.revisionHistory.map((rev, i) => (
               <li
@@ -377,7 +377,7 @@ function CompanyResearchDetail({
             ))}
           </ul>
           <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
-            「修正して再添削する」で内容を直すたびに、新しい版が履歴に追加されます。
+            「修正して再分析する」で内容を直すたびに、新しい版が履歴に追加されます。
           </p>
         </Section>
       )}

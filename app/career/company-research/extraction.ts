@@ -8,8 +8,8 @@
 //   - 抽出結果（extractedText / extractionStatus / extractionError）を CareerCompanyResearchFile に
 //     まとめる。ファイル本体は保存しない（メタ + 抽出テキストのみ）。
 //
-// 抽出結果は AI添削に直接使わない。呼び出し側（do ページ）でユーザーが確認・修正し、
-// verifiedResearchText に反映してから添削する流れを必ず通す。
+// 抽出結果は呼び出し側（do ページ）でその場で確認・修正でき、企業分析の実行時に
+// 他の素材と決定論的に結合されて verifiedResearchText（分析対象本文）になる。
 
 import type {
   CareerCompanyResearchExtractionStatus,

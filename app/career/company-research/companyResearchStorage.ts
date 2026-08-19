@@ -245,7 +245,7 @@ export function appendCompanyResearchLog(log: CareerCompanyResearchLog): void {
   saveCompanyResearchLogs([log, ...loadCompanyResearchLogs()]);
 }
 
-// 指定 ID の 1 件に部分更新を適用して保存する（再添削・お気に入りトグル等）。
+// 指定 ID の 1 件に部分更新を適用して保存する（再分析・お気に入りトグル等）。
 // 該当が無ければ何もしない。id は不変。
 export function updateCompanyResearchLog(
   id: string,

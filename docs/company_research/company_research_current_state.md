@@ -4,19 +4,22 @@ PASSAI CAREER の企業研究機能の現在仕様。受験版には一切影響
 
 ## 設計思想（最重要）
 
-本機能は **「AI が企業分析を生成する機能」ではない**。ユーザーが自分で行った企業研究（手入力・テキスト貼り付け・PDF/画像アップロード＋抽出テキスト）を一次データとして受け入れ、AI は **家庭教師として添削・不足指摘・本人情報とのすり合わせ**を行う「添削者」として振る舞う。
+本機能は **「AI が企業情報を代わりに調べる機能」ではない**。ユーザーが自分で行った企業研究（手入力・テキスト貼り付け・PDF/画像アップロード＋抽出テキスト）を一次データとして受け入れ、AI は **不足指摘・本人情報とのすり合わせ**を行う「添削者（＝企業情報の生成者ではない）」として振る舞う。
+
+> 2026-08-19: 旧 STEP 3「内容を確認・修正する（添削対象）」の**手動確認 UI を廃止**した。分析対象本文（`verifiedResearchText`）は素材から **決定論的に**合成される（`app/career/company-research/researchText.ts` の `combineSources`。純粋な文字列結合・AI call ゼロ）。UI 文言も実態に合わせ「添削」→「企業分析」へ統一した。API contract・prompt・出力・persistence は不変。
 
 - AI は企業情報の正解を断定しない。「あなたの記述を見る限り〜」「根拠が不足しています」「公式情報や説明会資料で再確認してください」という文体に徹する（system prompt で強制）。
-- **AI 添削の対象は、アップロードファイルそのものではなく、ユーザーが確認・修正した `verifiedResearchText` のみ**。OCR 結果に誤りがある可能性があるため、ユーザー確認ステップを必須にする。
+- **分析対象は、アップロードファイルそのものではなく、素材から合成した `verifiedResearchText` のみ**。OCR 結果はファイル行の textarea でその場で確認・修正できる（巨大な確認欄への再集約は不要）。
 - ユーザー脳死・コピペ就活を促進しない。企業研究力の向上を目的にする。
 
 ## ルート（do / view 構成）
 
 - `/career/company-research` — ハブ。
-- `/career/company-research/do` — **新規作成・既存編集・再添削を兼用する単一ページ**。
+- `/career/company-research/do` — **新規作成・既存編集・再分析を兼用する単一ページ**。
   - 新規: `?id` なしで空状態から開始。
-  - 編集/再添削: `/career/company-research/do?id=<logId>` で既存ログを読み込み編集状態に。
-- `/career/company-research/view` — 一覧・詳細。`?id=<logId>` で詳細を直接開ける（保存直後の遷移先）。詳細から「修正して再添削する」で `do?id=` へ戻る。
+  - 編集/再分析: `/career/company-research/do?id=<logId>` で既存ログを読み込み編集状態に。
+  - 旧ログ後方互換: 素材（manualMemo / pastedText / ファイル抽出）が空で `verifiedResearchText` だけ持つログは、本文を手入力メモへ戻して読み込む（`hasAnyMaterial`）。
+- `/career/company-research/view` — 一覧・詳細。`?id=<logId>` で詳細を直接開ける（保存直後の遷移先）。詳細から「修正して再分析する」で `do?id=` へ戻る。
 
 新規用・編集用に do ページを重複作成しない（単一ページの使い回し）。
 
@@ -32,15 +35,15 @@ PASSAI CAREER の企業研究機能の現在仕様。受験版には一切影響
      - **TXT**: そのまま読む。
      - OCR プロンプトは「原文抽出のみ・推測/補完/要約/分析を禁止・判読不可は [判読不可]・出力は抽出テキストのみ」。
      - `ANTHROPIC_API_KEY` 未設定時は自動 OCR をスキップし `manual_required` を返す（手入力・貼り付けは不変）。サーバでもサイズ/MIME を再検証。
-   - 抽出結果は添削に直接使わず、必ず `verifiedResearchText`（人が確認・修正）を経由する。
+   - 抽出結果はファイル行の textarea でその場で確認・修正でき、分析実行時に他の素材と結合される。
    - ファイル本体（バイト列・base64）は保存しない。ファイル名・型・サイズ・抽出テキスト・抽出ステータス・`extractionError` のみ保持（`storagePath` は将来 Supabase Storage 用に予約）。
-4. 「素材を確認欄にまとめる」で `verifiedResearchText` に流し込み、ユーザーが確認・修正
-5. AI 添削（`verifiedResearchText` を対象）。`verifiedResearchText` を編集すると添削結果は破棄され、再添削が必要
+4. 「参考にした情報源（任意）」— 素材入力（STEP 2）の一部。分析 prompt・保存データ・結果画面で使う
+5. 「企業分析する →」— 押下時に `combineSources(manualMemo, pastedText, files)` で `verifiedResearchText` を合成し、`/api/career/company-research` へ送る（**唯一の企業分析 AI call**）。素材を編集すると結果は対象とずれるため、分析時のテキストと一致するときだけ有効な結果として扱う（`activeResult`）
 6. 保存: 新規は新規ログ、`?id` ありは既存ログ更新（`revisionHistory` に新版を先頭追加）
 
 対応入力: 手入力 / テキスト貼り付け / PDF / 画像（PNG・JPG・JPEG・WEBP）/ スクショ / TXT。
 
-## AI 添削の出力（`/api/career/company-research`）
+## 企業分析の出力（`/api/career/company-research`・唯一の企業分析 AI call）
 
 - `review`: overallScore（6 軸平均から決定論導出）/ rank（決定論導出）/ overallComment / breakdown（企業理解度・業界理解度・競合理解度・根拠の質・考察の深さ・志望理由への接続度）/ goodPoints / missingInfo / weakAssumptions / nextResearchActions。
 - `fitAnalysis`: selfAnalysisFit / valuesFit / activityFit / matchingFit（各 1〜3 文）/ gaps / strengthsToUse。本人情報（自己分析・就活軸・活動整理・マッチング）が無い/不足なら断定せず不足と述べる。
@@ -52,7 +55,7 @@ PASSAI CAREER の企業研究機能の現在仕様。受験版には一切影響
 
 - canonical: localStorage `careerCompanyResearchLogs`（`companyResearchStorage.ts`）。型は `types/careerCompanyResearch.ts` の `CareerCompanyResearchLog`。
   - `input`（一次データ）: companyName / industry / interestLevel / manualMemo / pastedText / uploadedFiles / extractedText / verifiedResearchText / sources。
-  - `review` / `fitAnalysis` / `interviewContextSummary` / `revisionHistory`（添削履歴・新しい順。再添削のたびに先頭追加 → 学習ループの記録）。
+  - `review` / `fitAnalysis` / `interviewContextSummary` / `revisionHistory`（分析履歴・新しい順。再分析のたびに先頭追加 → 学習ループの記録）。
   - 旧スキーマ（業界・強み等の構造化フィールド）のログは normalize で `manualMemo` へ畳み込み後方互換。
 - durable mirror（member のみ・best-effort・env 未設定時 no-op）: `lib/supabase/careerCompanyResearch.ts` → `career_company_research_logs`（DDL は `supabase/schema.sql` §92 / `supabase/career_features_apply.sql` §92。`revision_history jsonb` 列を含む）。
 

@@ -44,7 +44,7 @@ const FEATURES = [
   {
     key: 'company-research',
     title: '企業研究',
-    description: '自分で調べた企業研究メモをAIが家庭教師として添削し、不足や思い込みを指摘します。',
+    description: '自分で調べた企業研究の素材をもとに、AIが企業分析を行い不足や思い込みを指摘します。',
     href: '/career/company-research',
   },
   {

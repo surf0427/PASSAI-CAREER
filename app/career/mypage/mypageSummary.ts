@@ -612,9 +612,9 @@ function buildNextActions(ctx: NextActionCtx): NextAction[] {
       done: ctx.companyResearch > 0,
       action: {
         key: 'companyResearch',
-        title: '企業研究をAIに添削してもらう',
+        title: '企業研究の素材から企業分析する',
         description:
-          '調べた企業研究メモの不足や思い込みを、AIが家庭教師として指摘します。',
+          '調べた企業研究の素材をもとにAIが企業分析し、不足や思い込みを指摘します。',
         href: '/career/company-research',
         cta: '企業研究へ',
       },

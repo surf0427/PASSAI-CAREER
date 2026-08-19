@@ -1,18 +1,19 @@
 'use client';
 
-// PASSAI 就活版 — 企業研究 入力・編集・AI添削 兼用ページ（単一）
+// PASSAI 就活版 — 企業研究 入力・編集・企業分析 兼用ページ（単一）
 //
-// 1 ページで「新規作成 / 既存ログの編集 / 再添削」をすべて担う。
+// 1 ページで「新規作成 / 既存ログの編集 / 再分析」をすべて担う。
 //   - 新規: /career/company-research/do（?id なし）→ 空状態から開始。
-//   - 編集/再添削: /career/company-research/do?id=<logId> → 既存ログを読み込み編集状態に。
+//   - 編集/再分析: /career/company-research/do?id=<logId> → 既存ログを読み込み編集状態に。
 //
-// 入力フロー:
+// 入力フロー（2 ステップ）:
 //   1. 企業名・志望度・業界などの基本情報
-//   2. 手入力メモ / テキスト貼り付け / PDF・画像アップロード
-//   3. アップロードファイルのテキスト抽出（MVP: text のみ自動。PDF/画像は手動書き写し）
-//   4. 抽出テキストを確認欄へまとめ、ユーザーが確認・修正（verifiedResearchText）
-//   5. 確認済みテキストを対象に AI添削（アップロードファイルそのものは添削対象にしない）
-//   6. 原文・ファイルメタ・抽出テキスト・確認済みテキスト・添削結果を保存（新規 or 既存更新）
+//   2. 素材入力（手入力メモ / テキスト貼り付け / PDF・画像アップロード + 参考情報源）
+//      - アップロードは extract API で原文抽出し、その場で確認・修正できる。
+//   3. 「企業分析する」で素材を **決定論的に**結合して analysis 対象テキストを合成し、
+//      /api/career/company-research（唯一の企業分析 AI call）へ送る。
+//      ★ 合成は純粋な文字列結合。ここに AI call は無い（旧「確認欄へまとめる」と同一ロジック）。
+//   4. 原文・ファイルメタ・抽出テキスト・合成済みテキスト・分析結果を保存（新規 or 既存更新）
 //
 // DB / 課金 / usage には接続しない（localStorage canonical。Supabase は best-effort mirror）。
 
@@ -34,6 +35,7 @@ import {
   updateCompanyResearchLog,
   loadCompanyResearchLog,
 } from '../companyResearchStorage';
+import { combineSources, combineFileExtracts, hasAnyMaterial } from '../researchText';
 import {
   ACCEPTED_FILE_ACCEPT,
   MAX_FILE_SIZE,
@@ -99,29 +101,6 @@ type ReviewResult = {
   interviewContextSummary: string;
 };
 
-// 手入力メモ + 貼り付け + 各ファイル抽出テキストを 1 本にまとめる。
-function combineSources(
-  manualMemo: string,
-  pastedText: string,
-  files: CareerCompanyResearchFile[],
-): string {
-  const parts: string[] = [];
-  if (manualMemo.trim()) parts.push(manualMemo.trim());
-  if (pastedText.trim()) parts.push(pastedText.trim());
-  files.forEach((f) => {
-    if (f.extractedText.trim()) parts.push(`【${f.fileName}】\n${f.extractedText.trim()}`);
-  });
-  return parts.join('\n\n');
-}
-
-// ファイル群の抽出テキストだけを連結（input.extractedText = OCR/抽出の生テキスト）。
-function combineFileExtracts(files: CareerCompanyResearchFile[]): string {
-  return files
-    .filter((f) => f.extractedText.trim())
-    .map((f) => `【${f.fileName}】\n${f.extractedText.trim()}`)
-    .join('\n\n');
-}
-
 function CompanyResearchDoInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -141,19 +120,19 @@ function CompanyResearchDoInner() {
   const [pastedText, setPastedText] = useState('');
   const [sources, setSources] = useState('');
   const [files, setFiles] = useState<CareerCompanyResearchFile[]>([]);
-  const [verifiedResearchText, setVerifiedResearchText] = useState('');
 
   // いずれかのファイルが抽出中なら true（pending から派生）。
   const extracting = files.some((f) => f.extractionStatus === 'pending');
 
-  // 添削結果（保存前の画面 state）。verifiedResearchText 編集で stale 化したら破棄する。
-  const [result, setResult] = useState<ReviewResult | null>(null);
+  // 企業分析結果（保存前の画面 state）。分析時の対象テキストを一緒に持ち、素材を編集して
+  // 対象がずれたら「無効」として派生で落とす（effect 不要・stale 結果を保存させない）。
+  const [result, setResult] = useState<(ReviewResult & { sourceText: string }) | null>(null);
 
   // 既存ログ（編集対象）。新規は null。
   const [editingLog, setEditingLog] = useState<CareerCompanyResearchLog | null>(null);
   const loadedRef = useRef(false);
 
-  const [reviewing, setReviewing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileNote, setFileNote] = useState<string | null>(null);
@@ -199,11 +178,15 @@ function CompanyResearchDoInner() {
     setPastedText(log.input.pastedText);
     setSources(log.input.sources);
     setFiles(log.input.uploadedFiles);
-    setVerifiedResearchText(log.input.verifiedResearchText);
+    // 旧ログ後方互換: 確認欄に直接書かれただけで素材が空のログは、本文を手入力メモへ戻す
+    //   （確認欄を廃止したため。素材があるログは素材から再合成されるので触らない）。
+    if (!hasAnyMaterial(log.input.manualMemo, log.input.pastedText, log.input.uploadedFiles)) {
+      setManualMemo(log.input.verifiedResearchText);
+    }
   }, [isMounted, editingId, searchParams]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  // 横断コンテキスト（添削・すり合わせの材料）。
+  // 横断コンテキスト（企業分析・すり合わせの材料）。
   const basicInfo = useMemo<BasicInfo | null>(
     () => (isMounted ? loadBasicInfo() : null),
     [isMounted],
@@ -227,14 +210,17 @@ function CompanyResearchDoInner() {
     return logs.length > 0 ? logs[0].result : null;
   }, [isMounted]);
 
-  const canReview = companyName.trim() !== '' && verifiedResearchText.trim() !== '';
-  const canSave = !!result && canReview;
+  // 企業分析の対象テキスト。素材（手入力メモ / 貼り付け / ファイル抽出）から決定論で合成する。
+  //   ★ 純粋な文字列結合のみ。ここに AI call は無い（旧「確認欄へまとめる」と同じ combineSources）。
+  const researchText = useMemo(
+    () => combineSources(manualMemo, pastedText, files),
+    [manualMemo, pastedText, files],
+  );
 
-  // verifiedResearchText を編集したら、既存の添削結果は対象とずれるので破棄する。
-  function changeVerifiedText(next: string) {
-    setVerifiedResearchText(next);
-    if (result) setResult(null);
-  }
+  const canAnalyze = companyName.trim() !== '' && researchText !== '';
+  // 素材を触ると結果は対象とずれる。分析時のテキストと一致するときだけ有効扱い。
+  const activeResult = result && result.sourceText === researchText ? result : null;
+  const canSave = !!activeResult && canAnalyze;
 
   // ファイル追加。まず pending で一覧に出し（「抽出中」表示）、各ファイルを並行抽出して
   // 完了したものから state を更新する。抽出は API（PDF 埋め込み / Claude OCR）or ローカル（TXT）。
@@ -298,15 +284,9 @@ function CompanyResearchDoInner() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   }
 
-  // 手入力 + 貼り付け + 抽出テキストを確認欄へまとめる。
-  function consolidateToVerified() {
-    const combined = combineSources(manualMemo, pastedText, files);
-    changeVerifiedText(combined);
-  }
-
-  async function handleReview() {
-    if (!canReview || reviewing) return;
-    setReviewing(true);
+  async function handleAnalyze() {
+    if (!canAnalyze || analyzing) return;
+    setAnalyzing(true);
     setError(null);
     try {
       const res = await fetch('/api/career/company-research', {
@@ -325,7 +305,8 @@ function CompanyResearchDoInner() {
           companyId,
           industry: industry.trim(),
           interestLevel,
-          verifiedResearchText: verifiedResearchText.trim(),
+          // 旧「確認欄」の代わりに、素材から合成した本文を送る（API contract は不変）。
+          verifiedResearchText: researchText,
           sources: sources.trim(),
           profile: basicInfo,
           activity,
@@ -336,23 +317,24 @@ function CompanyResearchDoInner() {
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(data?.detail ?? '企業研究の添削に失敗しました。');
+        throw new Error(data?.detail ?? '企業分析に失敗しました。');
       }
       const data = (await res.json()) as ReviewResult;
       setResult({
         review: data.review,
         fitAnalysis: data.fitAnalysis,
         interviewContextSummary: data.interviewContextSummary,
+        sourceText: researchText,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '企業研究の添削に失敗しました。');
+      setError(e instanceof Error ? e.message : '企業分析に失敗しました。');
     } finally {
-      setReviewing(false);
+      setAnalyzing(false);
     }
   }
 
   function handleSave() {
-    if (!result || !canSave || saving) return;
+    if (!activeResult || !canSave || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -365,7 +347,8 @@ function CompanyResearchDoInner() {
         pastedText: pastedText.trim(),
         uploadedFiles: files,
         extractedText: combineFileExtracts(files),
-        verifiedResearchText: verifiedResearchText.trim(),
+        // 素材から合成した本文（persistence / 面接連携の抜粋元。contract は不変）。
+        verifiedResearchText: researchText,
         sources: sources.trim(),
       };
       // Company Identity（R3）/ Private Evidence の構造化（R5）: いずれも optional。
@@ -377,15 +360,15 @@ function CompanyResearchDoInner() {
       const revision: CareerCompanyResearchRevision = {
         revisionId: newId(),
         verifiedResearchText: input.verifiedResearchText,
-        review: result.review,
-        fitAnalysis: result.fitAnalysis,
-        interviewContextSummary: result.interviewContextSummary,
+        review: activeResult.review,
+        fitAnalysis: activeResult.fitAnalysis,
+        interviewContextSummary: activeResult.interviewContextSummary,
         createdAt: now,
       };
 
       let saved: CareerCompanyResearchLog;
       if (editingLog) {
-        // 既存ログを更新。添削履歴に新リビジョンを先頭追加（学習ループの記録）。
+        // 既存ログを更新。分析履歴に新リビジョンを先頭追加（学習ループの記録）。
         saved = {
           ...editingLog,
           companyName: input.companyName,
@@ -393,9 +376,9 @@ function CompanyResearchDoInner() {
           industry: input.industry,
           interestLevel,
           input,
-          review: result.review,
-          fitAnalysis: result.fitAnalysis,
-          interviewContextSummary: result.interviewContextSummary,
+          review: activeResult.review,
+          fitAnalysis: activeResult.fitAnalysis,
+          interviewContextSummary: activeResult.interviewContextSummary,
           revisionHistory: [revision, ...editingLog.revisionHistory],
           updatedAt: now,
         };
@@ -410,9 +393,9 @@ function CompanyResearchDoInner() {
           industry: input.industry,
           interestLevel,
           input,
-          review: result.review,
-          fitAnalysis: result.fitAnalysis,
-          interviewContextSummary: result.interviewContextSummary,
+          review: activeResult.review,
+          fitAnalysis: activeResult.fitAnalysis,
+          interviewContextSummary: activeResult.interviewContextSummary,
           revisionHistory: [revision],
         };
         appendCompanyResearchLog(saved);
@@ -447,21 +430,21 @@ function CompanyResearchDoInner() {
     }
   }
 
-  // busy: 入力欄を止める状態（添削中・保存中）。抽出中は入力欄を止めず、
-  // 抽出結果に依存するボタン（まとめる / AI添削）だけ extracting で別途ガードする。
-  const busy = reviewing || saving;
+  // busy: 入力欄を止める状態（分析中・保存中）。抽出中は入力欄を止めず、
+  // 抽出結果に依存する「企業分析する」だけ extracting で別途ガードする。
+  const busy = analyzing || saving;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader
-        title={editingLog ? '企業研究を修正して再添削' : '企業研究を添削する'}
-        description="自分で調べた内容を入力してください。AIが家庭教師として添削します（企業情報は代わりに生成しません）。"
+        title={editingLog ? '企業研究を修正して再分析' : '企業分析する'}
+        description="自分で調べた内容を入力してください。入力した素材をもとにAIが企業分析（評価・不足指摘・あなたの情報とのすり合わせ）を行います。"
       />
 
       {editingLog && (
         <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
           <p className="text-sm text-slate-700">
-            <strong>{editingLog.companyName}</strong> の企業研究を編集中です。再添削して保存すると、添削履歴に新しい版が追加されます。
+            <strong>{editingLog.companyName}</strong> の企業研究を編集中です。再分析して保存すると、分析履歴に新しい版が追加されます。
           </p>
         </Card>
       )}
@@ -556,6 +539,7 @@ function CompanyResearchDoInner() {
       <StepCard step={2} title="企業研究の素材を入れる">
         <p className="text-xs text-slate-500 leading-relaxed mb-4">
           手入力・テキスト貼り付け・PDF/画像アップロードのどれでも構いません。書ける範囲で入力してください。
+          ここに入れた素材はそのまま企業分析の対象になります（別途まとめ直す必要はありません）。
         </p>
 
         <label className="block text-sm font-bold text-slate-800 mb-2">手入力メモ（任意）</label>
@@ -618,31 +602,8 @@ function CompanyResearchDoInner() {
           </div>
         )}
 
-        <div className="mt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={consolidateToVerified}
-            disabled={busy || extracting}
-          >
-            ↓ 素材を下の確認欄にまとめる
-          </Button>
-        </div>
-      </StepCard>
-
-      {/* STEP 3: 確認・修正（添削対象） */}
-      <StepCard step={3} title="内容を確認・修正する（添削対象）">
-        <p className="text-xs text-slate-500 leading-relaxed mb-3">
-          ここに入れたテキストだけがAI添削の対象になります。アップロードや貼り付けの内容に誤りがないか、自分の言葉で確認・修正してください。
-        </p>
-        <Textarea
-          value={verifiedResearchText}
-          onChange={(e) => changeVerifiedText(e.target.value)}
-          placeholder="ここに、確認済みの企業研究テキストをまとめます（上の「まとめる」ボタンで素材を流し込めます）"
-          rows={10}
-          disabled={busy}
-        />
-        <div className="mt-4">
+        {/* 情報源（任意）。分析 prompt・保存データ・結果画面で使うため UI ごと素材入力側に置く。 */}
+        <div className="mt-5">
           <label className="block text-sm font-bold text-slate-800 mb-2">
             参考にした情報源（任意）
           </label>
@@ -661,22 +622,22 @@ function CompanyResearchDoInner() {
           {error}
         </p>
       )}
-      {!canReview && (
+      {!canAnalyze && (
         <p className="mb-4 text-xs text-amber-700 leading-relaxed">
-          企業名と、確認欄のテキストを入力するとAI添削できます。
+          企業名と、企業研究の素材（手入力メモ・貼り付け・ファイル抽出のいずれか）を入力すると企業分析できます。
         </p>
       )}
 
-      {/* STEP 4: AI添削 */}
+      {/* 企業分析の実行 */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
         <Button
           variant="primary"
           size="md"
-          onClick={handleReview}
-          disabled={!canReview || busy || extracting}
+          onClick={handleAnalyze}
+          disabled={!canAnalyze || busy || extracting}
           className="w-full sm:w-auto"
         >
-          {reviewing ? '添削中…' : result ? 'もう一度AI添削する' : 'AIに添削してもらう →'}
+          {analyzing ? '分析中…' : activeResult ? 'もう一度企業分析する' : '企業分析する →'}
         </Button>
         <Link
           href="/career/company-research"
@@ -686,17 +647,17 @@ function CompanyResearchDoInner() {
         </Link>
       </div>
 
-      {/* 添削プレビュー + 保存 */}
-      {result && (
+      {/* 企業分析プレビュー + 保存 */}
+      {activeResult && (
         <>
-          <ReviewPreview result={result} />
+          <ReviewPreview result={activeResult} />
           <Card variant="soft" padding="md" className="mb-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-bold text-slate-900">この内容で保存</p>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  研究メモ原文・抽出テキスト・確認済みテキスト・添削結果をまとめて保存します。
-                  {editingLog ? '既存ログを更新し、添削履歴に追加します。' : ''}
+                  研究メモ原文・抽出テキスト・分析対象テキスト・企業分析結果をまとめて保存します。
+                  {editingLog ? '既存ログを更新し、分析履歴に追加します。' : ''}
                 </p>
               </div>
               <Button
@@ -844,7 +805,7 @@ const RANK_STYLE: Record<CareerCompanyResearchReview['rank'], string> = {
   D: 'bg-rose-100 text-rose-800 ring-rose-300',
 };
 
-// 添削プレビュー（保存前の確認用・最小表示）。詳細表示は view 側に揃える。
+// 企業分析プレビュー（保存前の確認用・最小表示）。詳細表示は view 側に揃える。
 function ReviewPreview({ result }: { result: ReviewResult }) {
   const { review } = result;
   return (

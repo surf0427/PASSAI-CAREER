@@ -263,9 +263,9 @@ check(
   })(),
 );
 check(
-  'P8 企業研究は companyName + 研究テキストだけで添削へ進める',
+  'P8 企業研究は companyName + 研究素材だけで企業分析へ進める',
   read('app/career/company-research/do/page.tsx').includes(
-    "const canReview = companyName.trim() !== '' && verifiedResearchText.trim() !== ''",
+    "const canAnalyze = companyName.trim() !== '' && researchText !== ''",
   ),
 );
 check(
