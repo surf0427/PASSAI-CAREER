@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { LinkButton } from '@/components/ui/LinkButton';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard';
+import CareerBillingCard from '@/app/career/components/CareerBillingCard';
 import CareerEventTimelineSection from './CareerEventTimeline';
 // NEXT-7: 同意取得カード。gate（運用 flag + 法務承認 + readiness）が閉じている間は null を返し何も描画しない。
 import CareerConsentCard from './CareerConsentCard';
@@ -85,6 +86,11 @@ export default function CareerMypagePage() {
       {/* ログイン状態（履歴・クラウド同期の導線） */}
       <div className="mb-6">
         <CareerLoginStatusCard redirect="/career/mypage" />
+      </div>
+
+      {/* 契約状態（Stripe）。member 以外・課金未配線では自身で null を返し何も描画しない。 */}
+      <div className="mb-6">
+        <CareerBillingCard />
       </div>
 
       {summary.isEmpty ? (

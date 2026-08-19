@@ -370,3 +370,26 @@ export const CAREER_ES_RATE_LIMITS = {
     failClosed: true,
   },
 } as const satisfies Record<string, RateLimitRule>;
+
+// ── CAREER 課金導線の rate limit ルール（正本） ────────────────
+//
+// 対象は Stripe API を叩く 2 route（checkout / portal）。いずれも member 認証済みの
+// userId を key にする。目的は「連打で Stripe に大量の Session を作らせない」こと。
+//
+// ★ どちらも failClosed。store 障害中に Stripe への session 作成を無制限に許すと、
+//   外部課金 API へのコスト・レート影響がこちら側の都合で青天井になるため、
+//   安全側（一時的に 429）に倒す。課金は「今すぐ通らないと壊れる」機能ではない。
+export const CAREER_BILLING_RATE_LIMITS = {
+  // Checkout Session 作成: 5/分・20/時。
+  checkout: {
+    namespace: 'career_billing_checkout',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  // Billing Portal Session 作成: 5/分・20/時。
+  portal: {
+    namespace: 'career_billing_portal',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+} as const satisfies Record<string, RateLimitRule>;
