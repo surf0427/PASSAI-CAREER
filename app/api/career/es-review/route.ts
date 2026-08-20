@@ -40,6 +40,8 @@ import { buildCareerAiContext } from '@/lib/careerAi';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
 import { renderSelfAnalysis } from '@/lib/careerMemory/renderers/interviewCrossFeature';
 import { resolveEsReviewContextInputs } from './resolveContextInputs';
+// Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
+import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
 // P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
 import { guardEsRequest } from '../es/requestGuard';
 // Company Data Spine A 層（公式情報）。未取得 / flag OFF / 企業未解決なら null（添削は成立）。
@@ -229,13 +231,29 @@ export async function POST(req: Request) {
     values: ctx.values,
     userInput: '',
   });
-  // P3-F: base system prompt / 公式情報 block を Context Orchestrator（purpose=es_review）経由で取得。
-  //   ★ orchestrator は純関数。I/O（上の 2 read）は route の責務という既存分離を守る。
-  const orchestrated = buildCareerContextForPurpose('es_review', context, {
-    ...(companyOfficial ? { company: companyOfficial } : {}),
-  });
   // 直近の自己分析（canonical renderer を再利用。ES 専用 renderer は作らない）。
   const selfAnalysisBlock = renderSelfAnalysis(ctx.selfAnalysis);
+
+  // Data Spine Layer 2（Personal Memory）。es_review allowlist は self_analysis / es。
+  //   - self_analysis: 上の block を実際に描画するときは重複するので落とす（bridge wins）。
+  //   - es           : ES 添削 prompt は過去 ES の設問メタを描画しないので常に gap（＝Memory が埋める）。
+  //     `EsLongTerm.companies` は「志望動機の企業固有性チェック用」に設計された field で、
+  //     使い回し志望動機の検出という添削観点に直結する。
+  //   gate OFF / 未認証 / veto では空配列 ＝ 従来 prompt と byte 互換（never-throw）。
+  //   ★ 観測の context outcome は resolveEsReviewContextInputs が既に 1 件打っているため null。
+  const personalMemory = await resolvePersonalMemoryForPurpose({
+    purpose: 'es_review',
+    presence: { self_analysis: selfAnalysisBlock !== '' },
+    req,
+    contextOutcome: null,
+  });
+
+  // P3-F: base system prompt / 公式情報 block を Context Orchestrator（purpose=es_review）経由で取得。
+  //   ★ orchestrator は純関数。I/O（上の read）は route の責務という既存分離を守る。
+  const orchestrated = buildCareerContextForPurpose('es_review', context, {
+    ...(companyOfficial ? { company: companyOfficial } : {}),
+    ...(personalMemory.length > 0 ? { personalMemory } : {}),
+  });
 
   // system: 添削者ペルソナ（静的）→ 本人の土台（profile/activity/values）→ 公式情報 → 自己分析。
   //   ★ 公式事実（A 層）/ 本人の自己分析 / 本人の企業研究メモ（user メッセージ側）を
@@ -246,6 +264,9 @@ export async function POST(req: Request) {
     orchestrated.systemPrompt,
     orchestrated.companyOfficialContext,
     selfAnalysisBlock ? `# 直近の自己分析結果（本人の内省。ES 本文の裏付けとして使う）\n${selfAnalysisBlock}` : '',
+    // Data Spine Layer 2（Personal Memory）。★ 公式情報 / 自己分析 block とは **別ブロック**の
+    //   低優先な参考情報として 1 回だけ結合する。section が無ければ '' ＝ 従来 byte 互換。
+    orchestrated.personalMemoryContext,
   ]
     .filter((s) => s !== '')
     .join('\n\n');

@@ -8,6 +8,7 @@
 
 import { buildCareerAiContext } from '@/lib/careerAi';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
+import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -153,6 +154,10 @@ export type CareerPresentationContextInput = {
   //   prompt は従来と byte 互換。
   companyOfficial?: CompanyOfficialReadResult | null;
   userInput?: string;
+  // Data Spine Layer 2（Personal Memory）。route が read gate / stale veto / bridge dedupe 済みで渡す。
+  //   ★ `config.useCareerContext !== true`（＝本人が参考情報オフを選んだ）ときは route 側が
+  //     そもそも解決しないため空になる。未指定 / 空では personalMemoryContext が '' ＝ 従来 byte 互換。
+  personalMemory?: readonly CareerPersonalMemorySection[];
 };
 
 /**
@@ -200,6 +205,12 @@ export function buildPresentationSystemParts(
     //   ★ 面接・企業研究と **同じ type・同じ renderer・同じ extras key** を使う
     //     （プレゼン専用の並行 architecture を作らない）。
     ...(input.companyOfficial ? { company: input.companyOfficial } : {}),
+    // Data Spine Layer 2（Personal Memory）。allowlist は self_analysis / interview。
+    //   面接の長期傾向（繰り返し指摘された改善点 / 安定した強み）は crossFeature が描画しない
+    //   情報で、発表の改善提案に直結する。
+    ...(input.personalMemory && input.personalMemory.length > 0
+      ? { personalMemory: input.personalMemory }
+      : {}),
   });
 
   const ctx: CareerPresentationPromptContext = {
@@ -221,6 +232,9 @@ export function buildPresentationSystemParts(
     orchestrated.companyOfficialContext,
     // P15-A: refGuard + 各参考ブロックは orchestrated.crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
+    // Data Spine Layer 2（Personal Memory）。★ 公式情報 / crossFeature とは **別ブロック**の
+    //   低優先な参考情報として 1 回だけ結合する。section が無ければ '' ＝ 従来 byte 互換。
+    orchestrated.personalMemoryContext,
   ]
     .filter((s) => s !== '')
     .join('\n\n');

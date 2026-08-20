@@ -56,7 +56,16 @@ const interviewSection: CareerPersonalMemorySection = cast({
 });
 const emptyBase: CareerPersonalMemorySection = cast({ sectionKey: 'base', schemaVersion: 1, payload: { profile: {}, values: {}, activity: {} } });
 
-const TARGET: CareerContextPurpose[] = ['interview_practice', 'consultation', 'company_research_review'];
+// Personal Memory を注入する purpose（AI coverage slice で 5 purpose へ拡張）。
+//   非注入 purpose（gd_feedback / self_analysis(_deep_dive) / es_deep_dive / matching / interview_complete）は
+//   **設計判断としての NO**。詳細は lib/careerMemory/personalMemoryPromptContext.ts の PURPOSE_SECTIONS 参照。
+const TARGET: CareerContextPurpose[] = [
+  'interview_practice',
+  'consultation',
+  'company_research_review',
+  'es_review',
+  'presentation_feedback',
+];
 // ★ NON_TARGET は列挙せず **全 purpose から TARGET を引いた補集合**にする。
 //   purpose を追加/削除しても manifest が陳腐化せず、新 purpose へ Personal Memory が
 //   無断で流れ込めば即 FAIL する（PROTOCOL §6.1 の網羅性 check）。

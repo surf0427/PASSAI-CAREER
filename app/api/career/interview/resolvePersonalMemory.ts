@@ -27,14 +27,8 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 import type { CareerEsResult } from '@/types/careerEs';
 import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
-import { dedupePersonalMemorySections } from '@/lib/careerMemory/personalMemoryDedupe';
-import { readSourceSyncSignal } from '@/lib/careerSourceSync/request.server';
-import { EMPTY_SOURCE_SYNC_SIGNAL } from '@/lib/careerSourceSync/signal';
-import { recordCanaryObservation } from '@/lib/careerDataSpineCanary/counters.server';
-import {
-  normalizeMemoryOutcome,
-  normalizeSyncOutcome,
-} from '@/lib/careerDataSpineCanary/observation';
+// 4 手順（sync signal → loader → 観測 → dedupe）は全 route 共有の seam に集約済み。
+import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
 // bridge block の presence 判定は **prompt に実際に載る renderer** を正本にする
 //   （別実装で判定すると dedupe が prompt と乖離する）。
 import {
@@ -61,31 +55,20 @@ export async function resolveInterviewPersonalMemory(
   req?: Request,
   loadSections = loadPersonalMemorySectionsForPrompt,
 ): Promise<readonly CareerPersonalMemorySection[]> {
-  try {
-    // req が無い（QA / 直接呼び出し）なら claim なし ＝ 全 section veto（安全側の既定）。
-    const syncSignal = req ? readSourceSyncSignal(req) : EMPTY_SOURCE_SYNC_SIGNAL;
-    // `D-S13`: 第 4 引数の req により、同 request で context resolver が読んだ kind は再 read されない。
-    const outcome = await loadSections('interview_practice', syncSignal, undefined, req);
-
-    recordCanaryObservation({
-      purpose: 'interview_practice',
-      sync: normalizeSyncOutcome(outcome.meta, Object.keys(syncSignal.revisions).length > 0),
-      memory: normalizeMemoryOutcome(outcome.meta),
-      // context 観測は resolveInterviewContextInputs 側の 1 件へ集約済み（ここでは打たない）。
-      context: null,
-      memorySectionCount: outcome.meta.sectionCount,
-    });
-
-    // interview の allowlist section は base / self_analysis / es（personalMemoryPromptContext）。
-    //   base : base system prompt が profile/activity/values を必ず描画するため常に重複。
-    //   self_analysis / es : crossFeature renderer が実際に block を出すときだけ重複。
-    return dedupePersonalMemorySections(outcome.sections, {
+  // interview の allowlist section は base / self_analysis / es（personalMemoryPromptContext）。
+  //   base : base system prompt が profile/activity/values を必ず描画するため常に重複。
+  //   self_analysis / es : crossFeature renderer が実際に block を出すときだけ重複。
+  // `D-S13`: req を渡すことで、同 request で context resolver が読んだ kind は再 read されない。
+  return resolvePersonalMemoryForPurpose({
+    purpose: 'interview_practice',
+    presence: {
       base: true,
       self_analysis: renderSelfAnalysis(inputs.selfAnalysis) !== '',
       es: renderEs(inputs.es) !== '',
-    }).sections;
-  } catch {
-    // Memory の不調で面接を止めない（Memory 無し＝従来 prompt）。
-    return [];
-  }
+    },
+    req,
+    // context 観測は resolveInterviewContextInputs 側の 1 件へ集約済み（ここでは打たない）。
+    contextOutcome: null,
+    loadSections,
+  });
 }

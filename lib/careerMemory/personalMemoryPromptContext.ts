@@ -49,13 +49,45 @@ const SECTION_PRIORITY: readonly CareerPersonalMemorySectionKey[] = [
 ];
 
 // purpose × 許可 section（対象外 purpose は空＝Personal Memory 非注入）。
-//   interview: 志望軸・経験・自己分析・過去 ES / consultation: 司令塔なので広め / company_research: 観点調整のみ。
+//
+// ★ ここは「Layer 2 をどこで使うか」の **単一の宣言**。allowlist に載せるだけでは prompt へ届かず、
+//   route 側が loader を呼んで `extras.personalMemory` を渡して初めて到達する。
+//   allowlist と live callsite の対応は career-personal-memory-ai-coverage-qa が固定する
+//   （＝dead contract を作らない）。
+//
+// 採用/非採用の根拠:
+//   interview_practice        : 志望軸・経験・自己分析・過去 ES（既存・不変）。
+//   consultation              : 司令塔なので広め。bridge が履歴を描画したものは route が dedupe で落とす。
+//   company_research_review   : 企業事実は Company Data Spine が権威。Memory は観点調整のみ（既存・不変）。
+//   es_review                 : ES 添削 / 深掘り / 材料整理が共有する purpose。本人の内省（self_analysis）と
+//                               過去 ES の設問メタ（es）を使う。`EsLongTerm.companies` は
+//                               「志望動機の企業固有性チェック用」として設計された field で、まさにこの用途。
+//                               ★ base は入れない: base system prompt（buildCareerSystemPrompt）が
+//                                 profile/activity/values を必ず描画するため 100% 重複する。
+//                                 route dedupe に頼らず **allowlist の段階で構造的に排除**する。
+//   presentation_feedback     : 自己分析と、bridge が描画しない面接の長期傾向
+//                               （recurringImprovements / stableStrengths）が発表改善に直結する。
+//                               ★ base は上と同じ理由で入れない。
+//
+// 意図的に **入れない** purpose（偶然の未接続ではない）:
+//   gd_feedback               : 採点根拠は transcript のみという明示契約があり、context budget も
+//                               唯一 2000 char と最小。gdCrossFeature が既に Layer 1 から自己分析を描画済み。
+//   es_deep_dive              : live 用途が Company Official rendering のみで extras を渡す経路が無い。
+//                               allowlist だけ足すと dead contract になる。ES 深掘りの Layer 2 は
+//                               es_review purpose（resolveFallbackContext）経由で届く。
+//   self_analysis /           : route が過去自己分析ログ全件 + coverage を Layer 1 から既に付与している。
+//   self_analysis_deep_dive     Layer 2 は同じログの要約なので、注入すると過去結論が二重計上され
+//                               anchoring / 自己参照ループを起こす。Layer 1 のみが正しい。
+//   matching                  : 既存 PII 契約（氏名除外 pilot）と deferral を維持する。
+//   interview_complete        : registry のみの予約 purpose（live callsite 0）。
 const PURPOSE_SECTIONS: Partial<
   Record<CareerContextPurpose, readonly CareerPersonalMemorySectionKey[]>
 > = {
   interview_practice: ['base', 'self_analysis', 'es'],
   consultation: ['base', 'self_analysis', 'es', 'interview'],
   company_research_review: ['base', 'self_analysis'],
+  es_review: ['self_analysis', 'es'],
+  presentation_feedback: ['self_analysis', 'interview'],
 };
 
 /** purpose が Personal Memory を受け取れる場合の許可 section（対象外は []）。read すべき section の source of truth。 */

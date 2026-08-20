@@ -202,7 +202,19 @@ async function main() {
     // consultation route では Event Signal は独立 block のまま（base 解決とは別経路）。
     const route = readFileSync(join(ROOT, 'app/api/career/consultation/route.ts'), 'utf8');
     check(/resolveConsultationEventSignalsBlock\(/.test(route), 'Event Signal は従来どおり route が独立に resolve');
-    check(!/personalMemory[^D]/.test(route.replace(/\/\/.*$/gm, '')), 'consultation は Personal Memory を注入しない（重複回避）');
+    // ★ 方針変更（AI coverage slice）: consultation は Personal Memory を **注入する**が、
+    //   重複回避という不変条件は維持する。bridge が実際に描画する block を
+    //   `consultationBridgePresence` で判定し、重複する section を dedupe で落としてから渡す。
+    //   ここでは「素通しで注入していない」ことを固定する（presence 経由が必須）。
+    const consultationCode = route.replace(/\/\/.*$/gm, '');
+    check(
+      /consultationBridgePresence\(/.test(consultationCode),
+      'consultation は bridge presence 判定を通してから Personal Memory を渡す（重複回避を維持）',
+    );
+    check(
+      /resolvePersonalMemoryForPurpose\(/.test(consultationCode),
+      'consultation は共有 seam 経由で Personal Memory を解決する（gate / veto / 観測を迂回しない）',
+    );
   }
 
   console.log('[Q8] Event Signal → matching / ability 推論の辺が増えていない');

@@ -313,15 +313,26 @@ async function main() {
   // ── POC-5 ───────────────────────────────────────────────────────
   console.log('[POC-5] server / memory / bridge を跨いだ semantic duplicate が無い');
   {
-    // (a) Personal Memory を注入する purpose は company_research_review のみ。
+    // (a) Personal Memory を注入する purpose の集合（AI coverage slice で 5 purpose へ拡張）。
+    //   ★ 非注入は「未実装」ではなく設計判断:
+    //     gd_feedback              … 採点根拠は transcript のみ / budget 最小
+    //     self_analysis(_deep_dive)… 自己参照ループ回避（Layer 1 の過去ログのみ）
+    //     es_deep_dive             … extras を渡す live 経路が無い（ES の Layer 2 は es_review 経由）
+    //     matching                 … PII 契約 + deferral 維持
+    //   allowlist と live callsite の一致は career-personal-memory-ai-coverage-qa が固定する。
+    const EXPECTED_MEMORY_PURPOSES = [
+      'interview_practice',
+      'consultation',
+      'company_research_review',
+      'es_review',
+      'presentation_feedback',
+    ];
     const memoryPurposes = CAREER_CONTEXT_PURPOSES.filter(
       (p) => personalMemorySectionsForPurpose(p).length > 0,
     );
     check(
-      memoryPurposes.length === 3 &&
-        memoryPurposes.every((p) =>
-          ['interview_practice', 'consultation', 'company_research_review'].includes(p),
-        ),
+      memoryPurposes.length === EXPECTED_MEMORY_PURPOSES.length &&
+        memoryPurposes.every((p) => EXPECTED_MEMORY_PURPOSES.includes(p)),
       `Personal Memory 対象 purpose が想定どおり（${memoryPurposes.join(',')}）`,
     );
     // (b) Memory を実際に prompt へ載せる route は dedupe を通す。

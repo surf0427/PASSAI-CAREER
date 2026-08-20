@@ -46,6 +46,10 @@ import { buildConsultationSystemPrompt } from './consultationPrompt';
 // Batch 1: base context（profile/activity/values）を canary + Source-Sync verified のときだけ
 //   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
 import { resolveConsultationContextInputs } from './resolveContextInputs';
+// Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
+import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
+// dedupe presence は crossFeature renderer と **同一実装**で block の有無を判定する。
+import { consultationBridgePresence } from '@/lib/careerMemory/renderers/consultationCrossFeature';
 import { anthropic, extractJson } from '@/lib/ai';
 import {
   AI_BUDGET_PRESET_80S_WALL,
@@ -289,10 +293,12 @@ export async function POST(req: Request) {
     },
     req,
   );
-  // ★ consultation へ Personal Memory は注入しない（既存の明示的な不変条件）。
+  // Personal Memory（Layer 2）は **bridge と重複しない分だけ** 注入する。
   //   相談 AI の crossFeature は自己分析 / ES / 面接 / プレゼン / 企業研究 / GD / マッチングの
-  //   **履歴**を既に描画しており、Personal Memory の要約は全面的に重複する
-  //   （career-server-context-batch1-qa / career-personal-memory-read-pilot-qa が固定）。
+  //   **履歴**を描画するため、bridge が出せた section の Memory 要約は全面的に重複する。
+  //   そこで `consultationBridgePresence`（renderer と同一実装で block の有無を判定）を
+  //   dedupe presence に渡し、重複 section を落としてから prompt へ渡す。
+  //   ＝「bridge wins / memory fills gaps」。重複回避という既存不変条件は維持したまま通電する。
   const crossFeature = {
     selfAnalysis: b.selfAnalysis ?? null,
     es: b.es ?? null,
@@ -308,6 +314,15 @@ export async function POST(req: Request) {
     matching: ctx.matching as typeof matchingSnapshots,
   };
 
+  // Layer 2 解決（never-throw / fail-open）。gate OFF・未認証・veto では空配列 ＝ 従来 prompt と byte 互換。
+  //   ★ 観測の context outcome は上の resolveConsultationContextInputs が既に 1 件打っているため null。
+  const personalMemory = await resolvePersonalMemoryForPurpose({
+    purpose: 'consultation',
+    presence: consultationBridgePresence(crossFeature),
+    req,
+    contextOutcome: null,
+  });
+
   const systemPrompt = buildConsultationSystemPrompt({
     profile: ctx.profile,
     activity: compressCareerActivityForConsultation(
@@ -316,6 +331,7 @@ export async function POST(req: Request) {
     values: ctx.values,
     crossFeature,
     eventSignalsBlock,
+    personalMemory,
   });
 
   // P17-E: shadow read（本処理と独立・fire-and-forget）。systemPrompt / messages / response は不変。

@@ -32,6 +32,13 @@ import {
   buildEvaluateInstruction,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
+// Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
+import { resolvePersonalMemoryForPurpose } from '../../resolvePersonalMemoryContext';
+// dedupe presence は prompt に実際に載る renderer を正本にする。
+import {
+  renderSelfAnalysis as renderPresentationSelfAnalysis,
+  renderInterview as renderPresentationInterview,
+} from '@/lib/careerMemory/renderers/presentationCrossFeature';
 // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
 import { guardPresentationRequest } from '../requestGuard';
 // Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
@@ -179,6 +186,26 @@ export async function POST(req: Request) {
     //   非 JSON 500 になり、client には汎用エラーしか見えなくなる。
     // 出力 schema 指示側の guard を system の block と **同一判定**にする（乖離させない）。
     //   判定は builder が orchestrator 出力から 1 度だけ行う（route は renderer を import しない）。
+    // Data Spine Layer 2（Personal Memory）。
+    //   ★ `useCareerContext !== true`（本人が「他機能データを参考にしない」を選んだ）ときは
+    //     **解決自体を行わない**（I/O ゼロ）。参考情報オフというユーザーの意思を Layer 2 でも尊重する。
+    //   presence は crossFeature renderer と同一実装で判定し、bridge が出す block とは重複させない。
+    const usePersonalMemory = config?.useCareerContext === true;
+    const personalMemory = await resolvePersonalMemoryForPurpose({
+      purpose: 'presentation_feedback',
+      enabled: usePersonalMemory,
+      presence: {
+        self_analysis:
+          usePersonalMemory &&
+          renderPresentationSelfAnalysis(ctx.selfAnalysis as typeof b.selfAnalysis) !== '',
+        interview:
+          usePersonalMemory &&
+          renderPresentationInterview(ctx.interview as typeof b.interview) !== '',
+      },
+      req,
+      // 観測の context outcome は resolvePresentationContextInputs が既に 1 件打っているため null。
+      contextOutcome: null,
+    });
     const { system: baseSystem, hasCompanyOfficial } = buildPresentationSystemParts({
       profile: ctx.profile,
       activity: ctx.activity,
@@ -192,6 +219,7 @@ export async function POST(req: Request) {
       theme,
       presentationType: b.presentationType,
       companyOfficial,
+      personalMemory,
     });
     const system = [
       baseSystem,

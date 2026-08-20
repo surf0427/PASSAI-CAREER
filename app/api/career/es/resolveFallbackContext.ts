@@ -34,6 +34,9 @@ import type { CareerSelfAnalysisResult } from '@/types/careerSelfAnalysis';
 // 「最新 log の result」規則 / render は canonical 実装を再利用する（ES 専用実装を作らない）。
 import { latestEsSelfAnalysisResult } from '@/lib/careerEs/reviewContext';
 import { renderSelfAnalysis } from '@/lib/careerMemory/renderers/interviewCrossFeature';
+// Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
+import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
+import { loadPersonalMemorySectionsForPrompt } from '@/lib/careerMemory/persistence/personalMemoryReadServer.server';
 
 /**
  * 背景 context が必要とする Source kind。
@@ -96,6 +99,7 @@ export async function resolveEsFallbackContextBlock(
   bridge: EsFallbackBridgeInputs,
   req?: Request,
   loadContext = loadPurposeServerContext,
+  loadMemorySections = loadPersonalMemorySectionsForPrompt,
 ): Promise<string> {
   try {
     // server context canary が無効な環境では I/O ゼロで bridge をそのまま使う。
@@ -130,10 +134,32 @@ export async function resolveEsFallbackContextBlock(
       values,
       userInput: '',
     });
-    const base = buildCareerContextForPurpose('es_review', context).systemPrompt.trim();
     // 自己分析は canonical renderer を再利用（ES 専用 renderer を作らない）。
     const selfBlock = renderSelfAnalysis(selfAnalysis);
-    const body = [base, selfBlock ? `## 直近の自己分析結果\n${selfBlock}` : '']
+
+    // Data Spine Layer 2（Personal Memory）。深掘り / 材料整理は es_review purpose の policy を借りる。
+    //   - self_analysis: 上の block を描画するときは重複するので落とす（bridge wins）。
+    //   - es           : 過去 ES の設問メタは背景 block が描画しないので gap（Memory が埋める）。
+    //     既に別 ES で答えた設問を把握できると、同じ論点の再質問を避けられる。
+    //   gate OFF / 未認証 / veto では空配列 ＝ 従来 prompt と byte 互換（never-throw）。
+    const personalMemory = await resolvePersonalMemoryForPurpose({
+      purpose: 'es_review',
+      presence: { self_analysis: selfBlock !== '' },
+      req,
+      // ES 深掘り / 材料整理 route は context 観測を別途打たないため、ここで 1 件だけ記録する。
+      contextOutcome: null,
+      loadSections: loadMemorySections,
+    });
+    const orchestrated = buildCareerContextForPurpose('es_review', context, {
+      ...(personalMemory.length > 0 ? { personalMemory } : {}),
+    });
+    const base = orchestrated.systemPrompt.trim();
+    const body = [
+      base,
+      selfBlock ? `## 直近の自己分析結果\n${selfBlock}` : '',
+      // ★ base / 自己分析とは別ブロックの低優先な参考情報。section が無ければ '' ＝ 従来 byte 互換。
+      orchestrated.personalMemoryContext,
+    ]
       .filter((s) => s !== '')
       .join('\n\n');
     if (body === '') return '';

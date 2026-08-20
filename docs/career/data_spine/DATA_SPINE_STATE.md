@@ -790,6 +790,72 @@ service-role credential は不要。
 
 ---
 
+# 9-D. Slice log — Personal Memory を全主要 AI 機能へ正式配線（2026-08-20）
+
+```text
+Last verified date: 2026-08-20
+Branch: gate-b-preview
+HEAD (before): 6f6a693
+Working tree: clean（本 slice の変更のみ）
+Completed slice: Layer 2 の purpose policy 確定 + 未接続 AI call への正式配線 + coverage QA 常設化
+Files changed:
+  app/api/career/resolvePersonalMemoryContext.ts（新設・共有 seam）
+  lib/careerMemory/personalMemoryPromptContext.ts（PURPOSE_SECTIONS + 根拠）
+  lib/careerMemory/renderers/consultationCrossFeature.ts（presence helper。byte 出力不変）
+  app/api/career/consultation/{route.ts,consultationPrompt.ts}
+  app/api/career/es-review/route.ts
+  app/api/career/es/resolveFallbackContext.ts
+  app/api/career/presentation/{presentationPrompt.ts,evaluate/route.ts,qa/route.ts}
+  app/api/career/interview/resolvePersonalMemory.ts（共有 seam へ委譲。挙動不変）
+  scripts/career-personal-memory-ai-coverage-qa.ts（新設・常設 harness / PersonalMemoryAll へ組込）
+  scripts/{career-personal-memory-rollout-qa,career-personal-memory-prompt-context-qa,
+           career-data-spine-personal-optimization-closure-qa,career-server-context-batch1-qa}.ts
+           （policy 変更に追随。緩和ではなく置換）
+  package.json
+QA executed: tsc / eslint / next build / qa:careerPersonalMemoryAll（1506 assertions）/
+  qa:careerServerContextBatch1・Batch2 / qa:career*OrchestratorParity /
+  qa:careerMemory*（golden 群）/ qa:careerSourceSync / qa:careerMypageDataSpine /
+  qa:careerGd / qa:careerEs* / qa:careerAiRouteGuard 他 27 本
+QA result: ALL PASS
+Architecture discrepancy found:
+  ★ consultation の dead contract を解消。renderer allowlist にありながら loader callsite が
+    無い状態だったが、原因は「crossFeature が履歴を全部描画するので重複する」という
+    正当な理由だった。**dedupe（bridge wins）** を通すことで重複回避を保ったまま通電した。
+  ★ es_deep_dive purpose に allowlist を足さなかった。live 用途が Company Official rendering
+    のみで extras を渡す経路が無く、足すと新たな dead contract になるため
+    （ES の Layer 2 は es_review purpose 経由で deep / organize にも届く）。
+Open blockers: Production env 未変更（次 slice の rollout タスク）
+Next recommended slice: Production Phase 7（READ_ENABLED=true + READ_ROLLOUT=all + smoke）
+Human decision required before next slice: Phase 7 実行の可否（H-4）
+```
+
+## purpose policy（確定）
+
+| purpose | Layer 2 | sections | 判断 |
+|---|---:|---|---|
+| `consultation` | YES（新規） | base / self_analysis / es / interview | 司令塔。bridge が出せなかった分だけ埋める |
+| `es_review`（es-review / es deep / es organize が共有） | YES（新規） | self_analysis / es | 添削・深掘りは内省との整合が中核。過去 ES 企業は使い回し検出に使う |
+| `interview_practice` | YES（不変） | base / self_analysis / es | 既存 |
+| `company_research_review` | YES（不変） | base / self_analysis | 既存。企業事実は Company Data Spine が権威 |
+| `presentation_feedback` | YES（新規） | self_analysis / interview | 面接の長期傾向が発表改善に直結。`useCareerContext=false` では解決自体を行わない |
+| `gd_feedback` | **NO** | — | 採点根拠は transcript のみ / budget 最小 / gdCrossFeature が既に自己分析を描画 |
+| `self_analysis`・`self_analysis_deep_dive` | **NO** | — | 自己参照ループ回避。Layer 1 の過去ログ + coverage のみが正しい |
+| `es_deep_dive` | **NO** | — | extras を渡す live 経路が無い（dead contract を作らない） |
+| `matching` | **NO** | — | 既存 PII 契約 + deferral 維持 |
+
+★ 「使う / 使わない」は **どちらも設計判断として明示**され、
+`career-personal-memory-ai-coverage-qa`（C1〜C11）が allowlist ⇔ live callsite の一致まで固定する。
+
+## この slice で変わった辺（edges）
+
+- **追加**: `Layer 2 → consultation / es_review(3 route) / presentation_feedback(2 route)` の prompt 到達辺。
+- **追加**: 全 route 共有の解決 seam（sync signal → loader → 観測 → dedupe）。
+  route ごとの写経を廃し、新 route が同じ安全契約を自動的に満たす。
+- **不変**: gate / stale veto / rebuild / RLS / service-role 不使用 / boundary hardening /
+  matching 除外 / Company Data Spine / Layer 3・4・5 / Production env。
+
+---
+
 # 9-C. Slice log — Personal Memory production rollout hardening（2026-08-20）
 
 ```text

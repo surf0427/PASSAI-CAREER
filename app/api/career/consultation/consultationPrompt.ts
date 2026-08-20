@@ -17,6 +17,7 @@
 
 import { buildCareerAiContext } from '@/lib/careerAi';
 import { buildCareerContextForPurpose } from '@/lib/careerContext';
+import type { CareerPersonalMemorySection } from '@/lib/careerMemory/persistence/schema';
 import type {
   CareerProfileInput,
   CareerActivityInput,
@@ -162,6 +163,9 @@ export type ConsultationSystemPromptInput = {
   // route が現行どおり resolve（pilot guard 適用済み）した Event Signal block 文字列。
   //   pilot OFF / reject / empty / malformed 時は '' で渡り、下の filter で除去される（block なし＝不変）。
   eventSignalsBlock: string;
+  // Data Spine Layer 2（Personal Memory）。route が read gate / stale veto / bridge dedupe 済みで渡す。
+  //   未指定 / 空 / gate OFF では orchestrated.personalMemoryContext が '' になり、prompt は従来と byte 互換。
+  personalMemory?: readonly CareerPersonalMemorySection[];
 };
 
 // 相談AIの完成 system prompt を組み立てる純関数。
@@ -177,10 +181,17 @@ export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInp
   });
   // P3-C/P15-D: base system prompt を Context Orchestrator（purpose=consultation）経由で取得し、
   //   Personal Memory 由来の横断 context も orchestrated.crossFeatureContext として決定的に受け取る。
-  // ★ Personal Memory は渡さない: consultation の crossFeature は各機能の **履歴**を
-  //   既に描画しており、Memory の要約は全面的に重複する（重複回避の既存不変条件）。
+  // ★ Layer 2 Personal Memory の扱い（重複回避の不変条件は維持したまま通電）:
+  //   consultation の crossFeature は各機能の **履歴**を描画するため、bridge が出せた section の
+  //   Memory 要約は全面的に重複する。そこで route が `consultationBridgePresence` で
+  //   「実際に描画する block」を判定し、重複する section を dedupe で **落としてから** 渡す
+  //   （bridge wins / memory fills gaps）。bridge が履歴を出せなかったとき（別端末・
+  //   localStorage クリア・request body 縮小）だけ Memory が空白を埋める。
   const orchestrated = buildCareerContextForPurpose('consultation', context, {
     consultation: input.crossFeature,
+    ...(input.personalMemory && input.personalMemory.length > 0
+      ? { personalMemory: input.personalMemory }
+      : {}),
   });
 
   return [
@@ -189,6 +200,10 @@ export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInp
     orchestrated.systemPrompt,
     // P15-D: Personal Memory 由来の横断ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
+    // Data Spine Layer 2（Personal Memory）。★ base / crossFeature とは **別ブロック**の
+    //   低優先な参考情報として、bridge が埋められなかった分だけ 1 回だけ結合する。
+    //   section が無ければ '' ＝ 従来 byte 互換。
+    orchestrated.personalMemoryContext,
     // Event Signal は最も優先度の低い補助情報として主要 memory の後に置く（route resolve 済み・現行位置）。
     input.eventSignalsBlock,
     OUTPUT_FORMAT_INSTRUCTION,

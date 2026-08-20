@@ -155,36 +155,81 @@ export type ConsultationCrossFeatureInput = {
 //   history-vs-latest 分岐 + 見出し + 各ブロックを byte-identical に再現）。
 //   base career system prompt・司令塔 persona・Event Signal block・出力形式は含まない
 //   （route/builder が base とこの block の前後に、Event Signal を現行位置で結合する）。
-export function buildConsultationCrossFeatureContext(input: ConsultationCrossFeatureInput): string {
+// 各 block の算出（build と presence 判定の **単一実装**。ここを分けると dedupe が prompt と乖離する）。
+function computeConsultationBlocks(input: ConsultationCrossFeatureInput): {
+  selfAnalysisBlock: string;
+  esBlock: string;
+  interviewBlock: string;
+  presentationBlock: string;
+  companyResearchBlock: string;
+  gdBlock: string;
+  gdRoomBlock: string;
+  matchingBlock: string;
+} {
   // history があれば推移ブロック（見出し込み）、無ければ旧「最新1件」ブロック（見出しを付ける）。
   const withHeader = (header: string, body: string) => (body ? `${header}\n${body}` : '');
-  const selfAnalysisBlock = input.selfAnalysisHistory.length
-    ? formatSelfAnalysisHistoryForPrompt(input.selfAnalysisHistory)
-    : withHeader('# 直近の自己分析結果', renderSelfAnalysis(input.selfAnalysis));
-  const esBlock = input.esHistory.length
-    ? formatEsHistoryForPrompt(input.esHistory)
-    : withHeader('# 直近の ES ドラフト', renderEs(input.es));
-  const interviewBlock = input.interviewHistory.length
-    ? formatInterviewHistoryForPrompt(input.interviewHistory)
-    : withHeader('# 直近の面接練習の結果', renderInterview(input.interviewResult));
-  const presentationBlock = input.presentationHistory.length
-    ? formatPresentationHistoryForPrompt(input.presentationHistory)
-    : withHeader('# 直近のプレゼン練習の結果', renderPresentation(input.presentationResult));
-  const companyResearchBlock = renderCompanyResearch(input.companyResearch);
-  const gdBlock = formatGdConsultationForPrompt(input.gd);
-  const gdRoomBlock = formatGdRoomSignalsForConsultation(input.gdRoom);
-  const matchingBlock = formatMatchingConsultationForPrompt(input.matching);
+  return {
+    selfAnalysisBlock: input.selfAnalysisHistory.length
+      ? formatSelfAnalysisHistoryForPrompt(input.selfAnalysisHistory)
+      : withHeader('# 直近の自己分析結果', renderSelfAnalysis(input.selfAnalysis)),
+    esBlock: input.esHistory.length
+      ? formatEsHistoryForPrompt(input.esHistory)
+      : withHeader('# 直近の ES ドラフト', renderEs(input.es)),
+    interviewBlock: input.interviewHistory.length
+      ? formatInterviewHistoryForPrompt(input.interviewHistory)
+      : withHeader('# 直近の面接練習の結果', renderInterview(input.interviewResult)),
+    presentationBlock: input.presentationHistory.length
+      ? formatPresentationHistoryForPrompt(input.presentationHistory)
+      : withHeader('# 直近のプレゼン練習の結果', renderPresentation(input.presentationResult)),
+    companyResearchBlock: renderCompanyResearch(input.companyResearch),
+    gdBlock: formatGdConsultationForPrompt(input.gd),
+    gdRoomBlock: formatGdRoomSignalsForConsultation(input.gdRoom),
+    matchingBlock: formatMatchingConsultationForPrompt(input.matching),
+  };
+}
 
+export function buildConsultationCrossFeatureContext(input: ConsultationCrossFeatureInput): string {
+  const b = computeConsultationBlocks(input);
   return [
-    selfAnalysisBlock,
-    esBlock,
-    interviewBlock,
-    presentationBlock,
-    companyResearchBlock,
-    gdBlock,
-    gdRoomBlock,
-    matchingBlock,
+    b.selfAnalysisBlock,
+    b.esBlock,
+    b.interviewBlock,
+    b.presentationBlock,
+    b.companyResearchBlock,
+    b.gdBlock,
+    b.gdRoomBlock,
+    b.matchingBlock,
   ]
     .filter((s) => s !== '')
     .join('\n\n');
+}
+
+/**
+ * Personal Memory dedupe 用の bridge presence（純関数）。
+ *
+ * ★ 判定は「body に field があるか」ではなく **「その block を実際に描画するか」**
+ *   （＝上の build と同一実装の出力が空でないか）。bridge wins / memory fills gaps。
+ *
+ * - base          : 常に true。base system prompt（buildCareerSystemPrompt）が
+ *                   profile / activity / values を必ず描画するため、Memory の base は常に重複する。
+ * - self_analysis : 自己分析 block（推移 or 最新1件）を描画するとき true。
+ * - es            : ES block を描画するとき true。
+ * - interview     : 面接 block を描画するとき true。
+ *
+ * 戻り値は `BridgeContextPresence`（lib/careerMemory/personalMemoryDedupe）へ構造的に代入できる。
+ * ★ 型 import はしない（renderer から persistence 系への依存を増やさないための既存方針）。
+ */
+export function consultationBridgePresence(input: ConsultationCrossFeatureInput): {
+  base: true;
+  self_analysis: boolean;
+  es: boolean;
+  interview: boolean;
+} {
+  const b = computeConsultationBlocks(input);
+  return {
+    base: true,
+    self_analysis: b.selfAnalysisBlock !== '',
+    es: b.esBlock !== '',
+    interview: b.interviewBlock !== '',
+  };
 }

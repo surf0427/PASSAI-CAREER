@@ -530,11 +530,19 @@ async function main(): Promise<void> {
       renderPersonalMemoryForPurpose('matching', sections).block === '',
       'matching purpose には Personal Memory を注入しない（既存 PII 契約の非回帰）',
     );
-    for (const purpose of ['gd_feedback', 'presentation_feedback', 'es_review', 'es_deep_dive', 'self_analysis', 'self_analysis_deep_dive'] as const) {
+    // ★ policy_off purpose（設計判断としての非注入。AI coverage slice で確定）。
+    //   es_review / presentation_feedback は同 slice で **接続済み**なので、ここには含めない。
+    for (const purpose of ['gd_feedback', 'es_deep_dive', 'self_analysis', 'self_analysis_deep_dive', 'interview_complete'] as const) {
       check(
         renderPersonalMemoryForPurpose(purpose, sections).block === '',
-        `${purpose}: purpose filter により Layer 2 は注入されない`,
+        `${purpose}: purpose filter により Layer 2 は注入されない（policy_off）`,
       );
+    }
+    // 接続済み purpose では PII を除いたうえで実際に block が出る。
+    for (const purpose of ['es_review', 'presentation_feedback'] as const) {
+      const block = renderPersonalMemoryForPurpose(purpose, sections).block;
+      check(block !== '', `${purpose}: 接続済み purpose では block が生成される`);
+      check(!block.includes(PII_NAME), `${purpose}: block に氏名が出ない`);
     }
   }
 
@@ -609,16 +617,31 @@ async function main(): Promise<void> {
   // ── R8: wiring / 運用安全 ──────────────────────────────────────
   console.log('\n[R8] wiring');
   {
+    // 共有 seam（sync signal → loader → 観測 → dedupe を 1 箇所へ集約）。
+    const seam = read('app/api/career/resolvePersonalMemoryContext.ts');
+    check(/readSourceSyncSignal\(req\)/.test(seam), 'seam: sync signal を request から渡す');
+    check(/recordCanaryObservation\(/.test(seam), 'seam: PII フリー観測を記録する');
+    check(/dedupePersonalMemorySections\(/.test(seam), 'seam: bridge dedupe を通す');
+    check(!/serviceRole|service_role/.test(seam), 'seam: service role を使わない');
+    // Layer 2 を読む route は seam か loader を直接使い、どちらでも sync signal / 観測を通す。
     const callers = [
       'app/api/career/interview/resolvePersonalMemory.ts',
-      'app/api/career/company-research/route.ts',
+      'app/api/career/consultation/route.ts',
+      'app/api/career/es-review/route.ts',
+      'app/api/career/es/resolveFallbackContext.ts',
+      'app/api/career/presentation/evaluate/route.ts',
+      'app/api/career/presentation/qa/route.ts',
     ];
     for (const rel of callers) {
       const src = read(rel);
-      check(/readSourceSyncSignal\(req\)/.test(src), `${rel}: sync signal を request から渡す`);
+      check(/resolvePersonalMemoryForPurpose\(/.test(src), `${rel}: 共有 seam 経由で解決する`);
       check(!/serviceRole|service_role/.test(src), `${rel}: service role を使わない`);
-      check(/recordCanaryObservation\(/.test(src), `${rel}: PII フリー観測を記録する`);
     }
+    // company-research は source 観測を合流させるため loader を直接呼ぶ（既存・不変）。
+    const cr = read('app/api/career/company-research/route.ts');
+    check(/readSourceSyncSignal\(req\)/.test(cr), 'company-research: sync signal を request から渡す');
+    check(/recordCanaryObservation\(/.test(cr), 'company-research: PII フリー観測を記録する');
+    check(!/serviceRole|service_role/.test(cr), 'company-research: service role を使わない');
     const server = read('lib/careerMemory/persistence/personalMemoryReadServer.server.ts');
     check(!/serviceRole|service_role/.test(server), 'read server: service role 非使用');
     check(!/console\.(log|info|warn|error)\(/.test(server), 'read server: console 出力なし（本文非ログ）');
