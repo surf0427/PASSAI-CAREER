@@ -49,6 +49,7 @@ import {
 } from '@/lib/careerBilling/stripe';
 import { CAREER_METADATA_USER_ID_KEY } from '@/lib/careerBilling/subscription';
 import { resolveCareerAppOrigin } from '@/lib/careerBilling/origin';
+import { logCareerStripeFailure } from '@/lib/careerBilling/stripeLog';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -219,7 +220,7 @@ export async function POST(req: Request) {
     return Response.json({ url: session.url }, { status: 200 });
   } catch (err) {
     // Stripe の raw message はそのまま返さない（内部情報の露出を避ける）。
-    devWarn('[career/billing/checkout] stripe error', err instanceof Error ? err.message : err);
+    logCareerStripeFailure('checkout.sessions.create', err);
     return jsonError(
       'STRIPE_ERROR',
       'お支払い手続きを開始できませんでした。時間をおいて再度お試しください。',

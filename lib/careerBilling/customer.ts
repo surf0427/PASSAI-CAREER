@@ -26,6 +26,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { devWarn } from '@/lib/devLog';
+import { logCareerStripeFailure } from './stripeLog';
 import { getStripeClient } from '@/lib/stripe/server';
 
 const TABLE = 'career_billing_customers';
@@ -101,7 +102,9 @@ export async function getOrCreateCareerStripeCustomer(input: {
     customerId = customer.id;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'customer create failed';
-    devWarn('[careerBilling/customer] stripe create failed', message);
+    // Runtime Logs へは安全なフィールドのみ（message は PII 混入の恐れがあるため出さない）。
+    // 戻り値の message は server 内部でのみ使われ、client には汎用文言しか返らない。
+    logCareerStripeFailure('customers.create', err);
     return { kind: 'stripe-error', message };
   }
 

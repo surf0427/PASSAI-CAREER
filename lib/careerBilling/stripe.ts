@@ -20,6 +20,7 @@ import 'server-only';
 import type Stripe from 'stripe';
 
 import { devWarn } from '@/lib/devLog';
+import { logCareerStripeFailure } from './stripeLog';
 import { getStripeClient } from '@/lib/stripe/server';
 import {
   currentExpectedStripeLivemode,
@@ -159,7 +160,10 @@ export async function retrieveCareerPlanPrice(
     price = await getStripeClient().prices.retrieve(priceId, {
       expand: ['product'],
     });
-  } catch {
+  } catch (err) {
+    // ★ 空 catch だと「Price ID 不正」と「API key の権限不足 / 通信障害」が
+    //   区別できず 'not-found' に潰れる。戻り値は変えずに診断だけ残す。
+    logCareerStripeFailure('prices.retrieve', err);
     return { kind: 'not-found' };
   }
 

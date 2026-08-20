@@ -22,7 +22,6 @@
 
 import 'server-only';
 
-import { devWarn } from '@/lib/devLog';
 import { CAREER_BILLING_RATE_LIMITS, enforceRateLimit } from '@/lib/rateLimit';
 import {
   authenticateCareerMember,
@@ -31,6 +30,7 @@ import {
 import { loadCareerStripeCustomerId } from '@/lib/careerBilling/customer';
 import { getStripeClient } from '@/lib/careerBilling/stripe';
 import { resolveCareerAppOrigin } from '@/lib/careerBilling/origin';
+import { logCareerStripeFailure } from '@/lib/careerBilling/stripeLog';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     }
     return Response.json({ url: session.url }, { status: 200 });
   } catch (err) {
-    devWarn('[career/billing/portal] stripe error', err instanceof Error ? err.message : err);
+    logCareerStripeFailure('billingPortal.sessions.create', err);
     return jsonError(
       'STRIPE_ERROR',
       '請求情報ページを開けませんでした。時間をおいて再度お試しください。',
