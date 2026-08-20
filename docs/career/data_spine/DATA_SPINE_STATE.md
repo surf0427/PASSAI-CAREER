@@ -790,6 +790,56 @@ service-role credential は不要。
 
 ---
 
+# 9-C. Slice log — Personal Memory production rollout hardening（2026-08-20）
+
+```text
+Last verified date: 2026-08-20
+Branch: gate-b-preview
+HEAD (before): 88f4ca2
+Working tree: clean（本 slice の変更のみ）
+Completed slice: Layer 2 read gate に rollout scope / emergency deny を追加 + boundary escape 封じ
+Files changed:
+  lib/careerMemory/persistence/readGate.ts
+  lib/careerMemory/persistence/readGateConfig.server.ts
+  lib/careerMemory/personalMemoryPromptContext.ts
+  scripts/career-personal-memory-rollout-qa.ts（新設・常設 harness / PersonalMemoryAll へ組込）
+  package.json / .env.example
+  docs/career/personal_memory_read_pilot_operator_packet.md
+QA executed: tsc / eslint / next build / qa:careerPersonalMemoryAll（rollout 含む）/
+  qa:careerPersonalMemoryWiring / qa:careerMemoryPromptGolden / qa:careerPersonaSpotcheck /
+  qa:careerMemory{Matching,Interview,Consultation,Presentation} / qa:careerSourceSync /
+  qa:careerDataSpinePersonalOptimizationClosure / qa:careerMypageDataSpine 他 13 本
+QA result: ALL PASS
+Architecture discrepancy found:
+  ★ P0: **GA path が存在しなかった。** master flag を ON にしても allowlist が空なら
+    `evaluatePersonalMemoryReadGate` は全員 deny を返す（実測）。wildcard は parser が
+    設定全体 invalid にする設計のため、全開放手段が「全 UUID 列挙（cap 50・運用不能）」しか
+    無かった。＝ flag を開けても **no-op なのに通電したように見える**状態だった。
+    → `CAREER_PERSONAL_MEMORY_READ_ROLLOUT`（既定 'canary'）を追加して解消。
+  ★ P1: **boundary escape が成立していた。** `<personal_memory>` block に載る文字列には
+    本人の自由入力（ES の企業名 / 設問、profile の志望条件、活動の代表タイトル）が含まれ、
+    そこに `</personal_memory>` を混ぜると block が早期に閉じ、後続行が境界の **外** に出た（実測）。
+    → renderer で境界タグ相当の並びを可視置換して封じた（cap/trim より前に実施）。
+  ★ 観測（欠陥ではない）: `consultation` purpose は renderer allowlist にあるが
+    `loadPersonalMemorySectionsForPrompt` の callsite が無く、実際には常に空（dead contract）。
+    Layer 2 が prompt へ到達するのは interview 3 route + company-research の 4 route のみ。
+Open blockers:
+  Production env（Vercel）への書込手段がこの環境に無い（vercel / gh CLI 不在）。
+  コードは rollout 可能な状態だが、Phase 7 の env 設定は operator が実施する必要がある。
+Next recommended slice: Phase 7（Production env 設定 + smoke）→ 観測を見て consultation の通電判断
+Human decision required before next slice: Phase 7 実行の可否（H-4）
+```
+
+## この slice で変わった辺（edges）
+
+- **追加**: read gate に `scope`（canary / all）と `deniedUserIds`（緊急 deny）。
+  既定は `canary` で、2 引数の従来呼び出しは **完全に従来挙動**（後方互換）。
+- **強化**: `<personal_memory>` の境界。本文由来の閉じタグで block を脱出できない。
+- **不変**: source-sync veto / rebuild-on-stale / RLS / service-role 不使用 / purpose filter /
+  matching への Layer 2 非注入 / Company Data Spine / Layer 3・4・5。
+
+---
+
 # 9-B. Slice log — My Page rebuilt on the User Data Spine（2026-08-20）
 
 ```text

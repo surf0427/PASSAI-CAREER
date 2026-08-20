@@ -99,6 +99,72 @@ purpose ∈ read allowlist(company_research_review)
 - 停止条件: flag OFF でも Memory block が出る（= gate 前に read している疑い → 即調査）
 - 証拠: 全 flag OFF・Memory block が出ないこと
 
+---
+
+# Production rollout（2026-08-20 追加 / rollout scope 機構）
+
+## なぜ master flag だけでは足りないか（実測）
+
+`CAREER_PERSONAL_MEMORY_READ_ENABLED=true` にしても、
+`CAREER_PERSONAL_MEMORY_READ_CANARY_USER_IDS` が空なら **誰にも届かない**
+（`evaluatePersonalMemoryReadGate` は allowlist exact 一致を要求する）。
+wildcard（`*` / `all` / `%`）は parser が **設定全体 invalid** にするため、
+「全員を allowlist に列挙する」以外に全開放の手段が無かった（運用不能・cap 50）。
+
+そこで rollout の意思を表す独立 env を追加した:
+
+```text
+CAREER_PERSONAL_MEMORY_READ_ENABLED   … master / kill switch（未設定=OFF）
+CAREER_PERSONAL_MEMORY_READ_ROLLOUT   … 'all' で全 member 開放（未設定/未知値='canary'）
+CAREER_PERSONAL_MEMORY_READ_DENY_USER_IDS … 緊急 deny（scope を問わず最優先）
+```
+
+判定順（安全側から）:
+
+```text
+master OFF / config invalid            → deny
+userId 無し（guest / anonymous）        → deny
+deny list に一致                        → deny
+scope='all'                            → allow
+scope='canary' → allowlist exact 一致   → allow / それ以外 deny
+```
+
+## Phase 7 — Production 全面開放
+
+- 実行者: 運用
+- 前提: `npm run qa:careerPersonalMemoryAll`（rollout QA を含む）が green
+- 手順:
+  1. Production env に `CAREER_PERSONAL_MEMORY_READ_ENABLED=true`
+  2. Production env に `CAREER_PERSONAL_MEMORY_READ_ROLLOUT=all`
+  3. `CAREER_PERSONAL_MEMORY_READ_CANARY_USER_IDS` は **そのままでよい**
+     （scope='all' では参照されない。縮退先として残す）
+  4. redeploy（server-only env のため runtime 反映には再デプロイが必要）
+- 期待結果: 面接（start/turn/complete）と企業分析の prompt に `<personal_memory>` が載る。
+  他 route は Layer 1 のみで従来どおり（purpose filter）。
+- 停止条件: 5xx 増加 / 応答品質低下 / Memory 本文の逐語露出 / latency 悪化
+- rollback: 下の kill switch
+
+## Kill switch（コード deploy 不要）
+
+| やりたいこと | 操作 |
+|---|---|
+| 全ユーザーで即時停止 | `CAREER_PERSONAL_MEMORY_READ_ENABLED` を未設定/false → redeploy |
+| canary へ縮退 | `CAREER_PERSONAL_MEMORY_READ_ROLLOUT` を未設定（='canary'）→ redeploy |
+| 特定ユーザーだけ停止 | `CAREER_PERSONAL_MEMORY_READ_DENY_USER_IDS` に UUID 追加 → redeploy |
+| rebuild だけ止める | `CAREER_PERSONAL_MEMORY_SERVER_REBUILD_DISABLED=true` → redeploy |
+
+★ いずれも「context を減らす」方向のみ。`D-R1`（検証なしで永続 Memory を使う）へ戻す経路は
+`D-S2` により **コードにも env にも存在しない**。
+
+## 観測（H-4 evidence）
+
+`recordCanaryObservation` が enum のみの counter を積む:
+`memory ∈ {persisted, rebuilt, stale, invalid, omitted}` /
+`sync ∈ {verified, unclaimed, mismatch, unreadable, invalid}` / `memorySectionCount`。
+`vetoed.mismatch` の増加は mirror 同期の遅れ、`unclaimed` は signal 未送信 route の残存を示す。
+
+---
+
 ## Phase 6 — rollout 判定（本 series 範囲外）
 - 実行者: PM
 - 前提: D-R1 の stale injection 観測、実 row prompt parity の実測
