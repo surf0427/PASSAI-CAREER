@@ -790,6 +790,54 @@ service-role credential は不要。
 
 ---
 
+# 9-B. Slice log — My Page rebuilt on the User Data Spine（2026-08-20）
+
+```text
+Last verified date: 2026-08-20
+Branch: gate-b-preview
+HEAD (before): 8a13052
+Working tree: clean（本 slice の変更のみ）
+Completed slice: My Page = User Data Spine の presentation / editing layer 化
+Files changed:
+  types/careerProfile.ts
+  app/career/profile/ProfileClient.tsx
+  app/career/mypage/{page.tsx,mypageSummary.ts,mypageDataSpineView.ts,
+                     saveCareerAspiration.ts,AspirationCard.tsx,SpineSections.tsx,
+                     canonicalSnapshotStore.ts}
+  scripts/career-mypage-data-spine-qa.ts（新設・常設 harness）
+  scripts/career-personal-memory-wiring-qa.ts（callsite manifest 追加＝強化）
+  package.json（qa:careerMypageDataSpine）
+QA executed: tsc / eslint / next build / qa:careerMypageDataSpine /
+  qa:careerPersonalMemoryAll / qa:careerPersonalMemoryWiring / qa:careerSourceSync /
+  qa:careerDataSpinePersonalOptimizationClosure / qa:careerMemory*（golden 群）/
+  qa:careerMatchingDeferral / qa:careerEventsTimeline / qa:careerConsentCapture /
+  qa:career*OrchestratorParity / qa:careerRestoreTrigger 他
+QA result: ALL PASS（baseline も全て緑。regression なし）
+Architecture discrepancy found:
+  ★ profile の 志望条件 5 field（targetIndustries / targetJobs / targetCompanies /
+    jobHuntingStatus / preferredLocations）が **dead prompt input** だった。
+    lib/careerAi/prompts.ts:renderProfile と Layer 2 rebuild.ts:projectProfile が
+    以前から読んでいたのに、書き込む UI が 1 つも存在せず常に空だった。
+    本 slice で My Page を canonical な編集面として通電し、gap を解消した。
+Open blockers: なし（本 slice に関して）
+Next recommended slice: 変更なし（NEXT-8 canary rollout / H-3 / H-6 待ちのまま）
+Human decision required before next slice: なし（本 slice は既存 gate を一切開けていない）
+```
+
+## この slice で変わった辺（edges）
+
+- **追加**: `My Page → Layer 1 canonical write`（profile 志望条件）
+  → 既存の 3 段（localStorage canonical → `career_profiles` mirror → Layer 2 base 再構築）
+  をそのまま再利用。新しい writer / store / table / DDL は **ゼロ**。
+- **追加**: `Layer 1 → 同一 projection（projectSectionFromSource）→ My Page 表示`
+  → 「PASSAI が理解しているあなた」は server が prompt へ載せる Layer 2 payload と
+  **同じ builder** の出力を翻訳したもの。別 formatter を作っていない。
+- **不変**: `mypage_summary` purpose は **DORMANT のまま**（live callsite 0）。
+  My Page は AI を呼ばない。closure QA の分類は変更していない。
+- **不変**: Layer 3 / Layer 4 / Layer 5 / Company Data Spine / consent gate は無接続のまま。
+
+---
+
 # 10. Current stop rule
 
 1. read all Data Spine blueprint files

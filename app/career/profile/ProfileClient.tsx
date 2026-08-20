@@ -91,8 +91,14 @@ function toForm(profile: CareerProfile | null): ProfileForm {
 }
 
 // フォーム状態 → 保存用 CareerProfile。受験版固有項目は就活版では扱わないため既定値で埋める。
-function toProfile(form: ProfileForm): CareerProfile {
+//
+// ★ base（現在の canonical profile）を必ず先に spread する。
+//   このフォームが扱わない canonical field —— とくにマイページで編集する志望条件
+//   （targetIndustries / targetJobs / targetCompanies / jobHuntingStatus / preferredLocations）——
+//   をプロフィール保存で **消さない**ため（User Data Spine Layer 1 の非破壊更新）。
+function toProfile(form: ProfileForm, base: CareerProfile | null): CareerProfile {
   const profile: CareerProfile = {
+    ...(base ?? {}),
     name: form.nickname.trim(),
     grade: form.grade,
     track: '', // 就活版では文理を扱わない
@@ -107,9 +113,10 @@ function toProfile(form: ProfileForm): CareerProfile {
       },
     ],
   };
-  // 性別は任意。未選択ならキー自体を持たせない。
+  // 性別は任意。未選択ならキー自体を持たせない（base から spread した旧値も明示的に落とす）。
   const gender = form.gender.trim();
   if (gender) profile.gender = gender;
+  else delete profile.gender;
   return profile;
 }
 
@@ -191,7 +198,8 @@ export default function ProfileClient() {
       setErrors(newErrors);
       return;
     }
-    const profile = toProfile(form);
+    // 保存直前に canonical を読み直してマージする（別タブ / マイページでの志望条件更新を温存）。
+    const profile = toProfile(form, loadBasicInfo());
     saveBasicInfo(profile);
     // Supabase durable mirror（best-effort / member のみ）。失敗しても遷移は止めない。
     if (userId) void saveCareerProfileToSupabase(userId, profile);

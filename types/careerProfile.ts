@@ -19,4 +19,31 @@ export type CareerProfile = BasicInfo & {
   graduationYear?: string;
   // 性別（任意）。AI には渡さない属性情報。未入力時はキーを持たない。
   gender?: string;
+
+  // ── 志望条件（User Data Spine Layer 1 canonical / マイページで編集する） ──────────
+  //
+  // ★ これらは **新規に発明したフィールドではない**。lib/careerAi/types.ts の
+  //   CareerProfileInput が最初から optional として宣言していた「就活版で今後追加される
+  //   フィールド」であり、normalizeCareerProfileContext がすでに読み、
+  //   lib/careerAi/prompts.ts の renderProfile がすでに全 Career AI prompt へ描画し、
+  //   Layer 2 の ProfileMemorySummary（rebuild.ts:projectProfile）がすでに projection している。
+  //   これまで **書き込む UI が 1 つも存在しなかった**ため常に空だった。
+  //   マイページ（/career/mypage）が canonical な編集面としてここを埋める。
+  //
+  // 保存規約（重要）:
+  //   - 値が空のときは **キー自体を持たせない**（subjectGrades と同じ方針）。
+  //     空配列 / 空文字を差し込むと既存ユーザーの AI input hash・source sync revision が
+  //     一斉に変わり cache が無効化されるため。
+  //   - career_profiles.data（jsonb）は profile object 全体を往復するので DDL 変更は不要。
+  //
+  // 志望業界（例: ['コンサル', 'IT・通信']）。
+  targetIndustries?: string[];
+  // 志望職種（例: ['営業', 'エンジニア']）。
+  targetJobs?: string[];
+  // 志望企業（社名の自由入力）。
+  targetCompanies?: string[];
+  // 就活状況（例: '本選考エントリー中'）。
+  jobHuntingStatus?: string;
+  // 希望勤務地（例: ['東京', 'リモート可']）。
+  preferredLocations?: string[];
 };

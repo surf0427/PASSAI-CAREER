@@ -10,8 +10,27 @@ import CareerBillingCard from '@/app/career/components/CareerBillingCard';
 import CareerEventTimelineSection from './CareerEventTimeline';
 // NEXT-7: 同意取得カード。gate（運用 flag + 法務承認 + readiness）が閉じている間は null を返し何も描画しない。
 import CareerConsentCard from './CareerConsentCard';
+// User Data Spine Layer 1 の canonical bundle loader（server reader と同じ CareerSourceBundle 型）。
+import { loadCanonicalSourceBundle } from '@/app/career/sourceSyncClient';
+import {
+  subscribeCanonicalSnapshot,
+  getCanonicalSnapshotVersion,
+  getCanonicalSnapshotServerVersion,
+  notifyCanonicalSnapshotChanged,
+} from './canonicalSnapshotStore';
+import { CROSS_FEATURE_SYNC_KINDS } from '@/lib/careerSourceSync/kinds';
+import type { CareerSourceBundle } from '@/lib/careerSourceData/types';
+import { buildMypageSpineView, type MypageSpineView } from './mypageDataSpineView';
+import AspirationCard from './AspirationCard';
+import {
+  UnderstandingSection,
+  ExperienceSection,
+  SelfAnalysisSection,
+  CompletenessSection,
+} from './SpineSections';
 import {
   buildMypageSummary,
+  hasBasicProfileContent,
   type MypageSummary,
   type ProgressItem,
   type ProgressState,
@@ -20,17 +39,26 @@ import {
   type ScoreStat,
 } from './mypageSummary';
 
-// 就活版マイページ（就活ダッシュボード）。
-//   - /career/home は「機能入口ランチャー」、本ページは「進捗・履歴・次アクションの振り返り」。
-//   - localStorage canonical。各 career 機能の load* を読み取り集約表示するだけ（保存はしない）。
-//   - 受験版 /mypage のコンポーネント（BillingCard / UsageStatusCard / LoginNudge 等・課金/受験系）は
-//     一切流用しない。就活版として新規実装する。
+// 就活版マイページ = **User Data Hub**（User Data Spine の presentation / editing layer）。
+//
+//   Layer 1 canonical（localStorage + career_* mirror）
+//        ↓ loadCanonicalSourceBundle（1 request 1 snapshot）
+//   CareerSourceBundle
+//        ├→ buildMypageSpineView   … Data Spine と同一の projection で Layer 2 を組み、表示へ翻訳
+//        └→ buildMypageSummary     … 進捗・実績・履歴の集約
+//        ↓
+//   マイページ UI（志望条件のみ編集可能 → canonical write path → 各 Career AI へ伝播）
+//
+// 厳守:
+//   - マイページ専用のデータ体系（MyPageProfile / mypage localStorage / 専用 table）を作らない。
+//   - 表示は実 canonical data 由来のみ。ダミー profile / ダミー insight を作らない。
+//   - AI 呼び出しをここで新設しない（mypage_summary purpose は DORMANT のまま）。
+//   - /career/home は「機能入口ランチャー」、本ページは「自分のデータの確認・管理」。
+//   - 受験版 /mypage のコンポーネント（BillingCard / UsageStatusCard / LoginNudge 等）は流用しない。
 
-// SSR-stable mount flag（/career/home と同形）。hydration 後に true へ切替え、
-// storage 読み出しを post-hydration に揃える（SSR では常に false）。
-const subscribeMount = () => () => {};
-const getMountedSnapshot = () => true;
-const getMountedServerSnapshot = () => false;
+// 進捗行のうち、canonical ドキュメント系（基本情報 / 活動整理 / 就活軸）は
+// 「データの充実度」セクションが担当するため、進捗セクションからは除外して重複表示を避ける。
+const PROGRESS_KEYS_OWNED_BY_COMPLETENESS = ['basic', 'activity', 'values'];
 
 function formatYmd(iso: string | null): string {
   if (!iso) return '';
@@ -43,19 +71,38 @@ function formatYmd(iso: string | null): string {
 }
 
 export default function CareerMypagePage() {
-  const isMounted = useSyncExternalStore(
-    subscribeMount,
-    getMountedSnapshot,
-    getMountedServerSnapshot,
+  // Layer 1 canonical は external store（localStorage）。SSR / hydration 中は server snapshot(-1)
+  // が返るため何も描画しない。保存後は notifyCanonicalSnapshotChanged() で version が進み、
+  // 下の useMemo が canonical を読み直す（UI state を真実にしない）。
+  const canonicalVersion = useSyncExternalStore(
+    subscribeCanonicalSnapshot,
+    getCanonicalSnapshotVersion,
+    getCanonicalSnapshotServerVersion,
   );
 
+  const bundle = useMemo<CareerSourceBundle | null>(
+    () =>
+      canonicalVersion < 0 ? null : loadCanonicalSourceBundle(CROSS_FEATURE_SYNC_KINDS),
+    [canonicalVersion],
+  );
+
+  // 同じ 1 つの snapshot から両方の view を導く（表示間で不整合が起きない）。
   const summary = useMemo<MypageSummary | null>(
-    () => (isMounted ? buildMypageSummary() : null),
-    [isMounted],
+    () => (bundle ? buildMypageSummary(bundle) : null),
+    [bundle],
+  );
+  const spine = useMemo<MypageSpineView | null>(
+    () => (bundle ? buildMypageSpineView(bundle) : null),
+    [bundle],
   );
 
-  // hydration セーフ: mount 前は何も描画しない（/career/home と同方針）。
-  if (!isMounted || !summary) return null;
+  if (!summary || !spine) return null;
+
+  const handleSaved = () => notifyCanonicalSnapshotChanged();
+
+  const practiceProgress = summary.progress.filter(
+    (p) => !PROGRESS_KEYS_OWNED_BY_COMPLETENESS.includes(p.key),
+  );
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
@@ -79,7 +126,8 @@ export default function CareerMypagePage() {
           </div>
         </div>
         <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-          就活の進捗・練習履歴・次にやることをまとめて確認できます。
+          PASSAI CAREER があなたについて把握している内容を確認・管理できます。
+          ここに登録した情報が、ES・面接・プレゼン・GD・企業分析などすべてのAI機能の前提になります。
         </p>
       </div>
 
@@ -94,25 +142,45 @@ export default function CareerMypagePage() {
       </div>
 
       {summary.isEmpty ? (
-        <EmptyState />
+        <div className="space-y-8">
+          <EmptyState />
+
+          {/* 空状態でも志望条件は入力できる（ここが canonical な入口）。 */}
+          <AspirationCard aspiration={spine.aspiration} onSaved={handleSaved} />
+        </div>
       ) : (
         <div className="space-y-8">
-          {/* 2. プロフィール概要 */}
+          {/* Section A: 本人が明示的に設定する基本プロフィール */}
           <ProfileSection summary={summary} />
 
-          {/* 3. 次にやるべきこと */}
+          {/* Section A': canonical な志望条件（マイページから編集 → Data Spine → 各 AI） */}
+          <AspirationCard aspiration={spine.aspiration} onSaved={handleSaved} />
+
+          {/* Section B: Data Spine から集約した「PASSAI が理解しているあなた」 */}
+          <UnderstandingSection facts={spine.understanding} />
+
+          {/* Section C: 経験・活動（活動整理の canonical projection） */}
+          <ExperienceSection experience={spine.experience} />
+
+          {/* Section D: 自己分析（最新 canonical 結果のみ。履歴は既存画面へ導線） */}
+          <SelfAnalysisSection view={spine.selfAnalysis} />
+
+          {/* データの充実度（決定論・実 canonical data 由来） */}
+          <CompletenessSection items={spine.completeness} done={spine.completenessDone} />
+
+          {/* 次にやるべきこと */}
           <NextActionsSection actions={summary.nextActions} />
 
-          {/* 4. 就活進捗サマリー */}
-          <ProgressSection items={summary.progress} />
+          {/* 練習・作成の進捗（履歴系のみ。ドキュメント系は充実度セクションが担当） */}
+          <ProgressSection items={practiceProgress} />
 
-          {/* 5. 実績サマリー */}
+          {/* 実績サマリー */}
           <AchievementSection summary={summary} />
 
-          {/* 6. 最近のアウトプット */}
+          {/* 最近のアウトプット */}
           <RecentSection recent={summary.recent} />
 
-          {/* 7. 相談CTA */}
+          {/* 相談CTA */}
           <ConsultationCta />
         </div>
       )}
@@ -136,7 +204,9 @@ export default function CareerMypagePage() {
 // ── セクション: プロフィール概要 ─────────────────────────────────────
 
 function ProfileSection({ summary }: { summary: MypageSummary }) {
-  if (!summary.profile) {
+  // 存在ではなく **内容** で判定する（志望条件だけ先に保存した skeleton profile を
+  // 「登録済み」に見せない）。
+  if (!hasBasicProfileContent(summary.profile)) {
     return (
       <SectionCard title="プロフィール">
         <p className="text-sm text-gray-600 mb-3">
@@ -192,7 +262,7 @@ function ProgressSection({ items }: { items: ProgressItem[] }) {
   const doneCount = items.filter((i) => i.state !== 'empty').length;
   return (
     <section>
-      <SectionTitle right={`${doneCount} / ${items.length} 着手`}>就活進捗</SectionTitle>
+      <SectionTitle right={`${doneCount} / ${items.length} 着手`}>練習・作成の進捗</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {items.map((item) => (
           <Link key={item.key} href={item.href} className="block">

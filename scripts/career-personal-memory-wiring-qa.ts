@@ -138,6 +138,9 @@ async function main() {
       { file: 'app/career/profile/ProfileClient.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerProfileToSupabase/, count: 1, label: 'プロフィール保存' },
       { file: 'app/career/activity/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerActivityToSupabase/, count: 1, label: '活動保存' },
       { file: 'app/career/values/page.tsx', fn: 'shadowWriteBaseMemory', after: /saveCareerValuesToSupabase/, count: 1, label: '価値観保存' },
+      // マイページ（User Data Hub）から編集する canonical 志望条件。profile と同じ 3 段
+      //（localStorage canonical → career_profiles mirror → Layer 2 base 再構築）を通る。
+      { file: 'app/career/mypage/saveCareerAspiration.ts', fn: 'shadowWriteBaseMemory', after: /saveCareerProfileToSupabase/, count: 1, label: 'マイページ志望条件保存' },
     ];
     for (const w of wire) {
       const src = readFileSync(join(ROOT, w.file), 'utf8');
@@ -157,7 +160,7 @@ async function main() {
       check(/改善版[\s\S]{0,240}?void shadowWriteEsMemory\(\)/.test(editor), 'ES: 改善版保存の確定後に再構築');
       check(/deleteEsDraft[\s\S]{0,240}?void shadowWriteEsMemory\(\)/.test(draft), 'ES: 新規確定（draft 削除）の後に再構築');
     }
-    // 他の career route/page に shadow write が混入していない（対象 6 callsite + 定義ファイルのみ）。
+    // 他の career route/page に shadow write が混入していない（manifest の callsite + 定義ファイルのみ）。
     const callers = execGrep('shadowWrite\\(Base\\|SelfAnalysis\\|Es\\|Interview\\)Memory(');
     const files = new Set(callers.map((l) => l.split(':')[0]));
     const expected = new Set([
@@ -166,6 +169,7 @@ async function main() {
       'app/career/es/[id]/page.tsx', 'app/career/es/draft/[draftId]/page.tsx',
       'app/career/interview/session/page.tsx', 'app/career/profile/ProfileClient.tsx',
       'app/career/activity/page.tsx', 'app/career/values/page.tsx',
+      'app/career/mypage/saveCareerAspiration.ts',
     ]);
     check([...files].every((f) => expected.has(f)), `shadow write は対象 file のみ（${[...files].filter((f) => !expected.has(f)).join(',') || 'ok'}）`);
   }

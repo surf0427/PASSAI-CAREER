@@ -1,50 +1,40 @@
-// PASSAI 就活版 — マイページ（就活ダッシュボード）の集約ロジック。
+// PASSAI 就活版 — マイページ（就活ダッシュボード）の進捗・履歴集約ロジック。
 //
 // 役割:
-//   各 career 機能の localStorage helper（app/career/*/xxxStorage.ts）を読み取り、
+//   User Data Spine Layer 1 の canonical bundle（CareerSourceBundle）から、
 //   進捗サマリー・実績集計・最近のアウトプット・次アクションを 1 つの純粋関数で組み立てる。
 //   保存は一切行わない（読み取り専用の派生）。専用の保存キーは作らない
-//   （source of truth は各機能の既存ログのまま。二重管理を避ける）。
+//   （source of truth は Layer 1 のまま。二重管理を避ける）。
 //
 // 方針:
-//   - localStorage canonical。ここでは書き込み / Supabase には一切触れない。
+//   - **Layer 1 read は呼び出し側が 1 回だけ行い、bundle を注入する**
+//     （app/career/sourceSyncClient.ts:loadCanonicalSourceBundle。server reader と同じ型）。
+//     マイページ内で loader を個別に叩き直さない＝Spine view と同一 snapshot を見る。
+//   - GD（ソロ / 複数人）と進行中セッションは bundle に無いため localStorage から直接読む。
+//     ソロ GD は Supabase mirror 自体が存在せず（`D-S11` structural bridge）、
+//     gd_room は server-authoritative（`D-S10`）で client bundle の対象外のため。
 //   - SSR/hydration 安全化は呼び出し側（page.tsx の mount ガード）が担保する。
-//     各 loader は safeStorage 経由で SSR ガード済みだが、本関数は mount 後にだけ呼ぶ。
 //   - 受験版のデータ・型・文言は一切参照しない（career プレフィックスの helper のみ）。
 
 import type { CareerProfile } from '@/types/careerProfile';
 
-import { loadBasicInfo } from '@/app/career/profile/profileStorage';
-import { loadActivityData, hasAnyActivity } from '@/app/career/activity/activityStorage';
-import {
-  loadCareerValues,
-  isCareerValuesEmpty,
-} from '@/app/career/values/careerValuesStorage';
-import { loadSelfAnalysisLogs } from '@/app/career/self-analysis/selfAnalysisStorage';
-import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
-import { loadEsLogs } from '@/app/career/es/esStorage';
-import {
-  loadInterviewResults,
-  getInProgressInterviewSession,
-} from '@/app/career/interview/interviewStorage';
-import { loadCompanyResearchLogs } from '@/app/career/company-research/companyResearchStorage';
-import {
-  loadPresentationResults,
-  getInProgressPresentationSession,
-} from '@/app/career/presentation/presentationStorage';
+import type { CareerSourceBundle } from '@/lib/careerSourceData/types';
+import { hasAnyActivity } from '@/app/career/activity/activityStorage';
+import { isCareerValuesEmpty } from '@/app/career/values/careerValuesStorage';
+import { getInProgressInterviewSession } from '@/app/career/interview/interviewStorage';
+import { getInProgressPresentationSession } from '@/app/career/presentation/presentationStorage';
 import {
   loadGdResults,
   getInProgressGdSession,
 } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
-import { loadConsultationThreads } from '@/app/career/consultation/consultationStorage';
 import { isCareerCompanyMatchingUiEnabled } from '@/lib/careerMatchingGate/flag';
 
 // ── 企業マッチング公開ゲート ──────────────────────────────────────────
 // 初回リリースでは企業マッチングを出さない（flag OFF が既定）。
 //
-// ★ データは消さない。`loadMatchingLogs()` はこれまでどおり読み、過去に企業マッチングを
-//   実行済みのユーザーの localStorage / Supabase 上の結果は一切書き換えない。
+// ★ データは消さない。matching ログは Layer 1 bundle（bundle.matchingLogs）としてこれまでどおり
+//   読み込み、過去に企業マッチングを実行済みのユーザーの canonical 結果は一切書き換えない。
 //   OFF の間ゲートするのは「/career/matching へ遷移させる導線」だけ:
 //     1. 進捗サマリー行（件数 + link）
 //     2. 最近のアウトプット（href が matching route）
@@ -173,20 +163,50 @@ const PRESENTATION_TYPE_LABEL: Record<string, string> = {
 
 // ── メイン ───────────────────────────────────────────────────────────
 
-export function buildMypageSummary(): MypageSummary {
-  const profile = loadBasicInfo();
-  const activity = loadActivityData();
-  const values = loadCareerValues();
-  const selfAnalysisLogs = loadSelfAnalysisLogs();
-  const matchingLogs = loadMatchingLogs();
-  const esLogs = loadEsLogs();
-  const interviewResults = loadInterviewResults();
-  const companyResearchLogs = loadCompanyResearchLogs();
-  const presentationResults = loadPresentationResults();
+/**
+ * 基本情報が「実質的に入力されている」か（内容ベース判定・決定的）。
+ *
+ * ★ 単なる `profile !== null` を使わない理由:
+ *   マイページの志望条件だけを先に保存したユーザーには、氏名も大学も空の
+ *   skeleton profile が canonical に存在しうる（saveCareerAspiration）。
+ *   存在だけで「入力済み」と表示すると事実と食い違うため、内容で判定する。
+ *   /career/profile の保存はニックネーム・大学・学部・学年・卒業予定年を必須にしているので、
+ *   既存ユーザーの表示は従来どおり「入力済み」のまま変わらない。
+ */
+export function hasBasicProfileContent(profile: CareerProfile | null): boolean {
+  if (!profile) return false;
+  const pref = profile.preferences?.[0];
+  const parts = [
+    profile.name,
+    profile.grade,
+    profile.graduationYear,
+    pref?.university,
+    pref?.faculty,
+  ];
+  return parts.some((v) => typeof v === 'string' && v.trim() !== '');
+}
+
+/**
+ * Layer 1 canonical bundle からマイページの進捗・履歴サマリーを組む（純関数）。
+ *
+ * @param bundle 呼び出し側が 1 回だけ読んだ Layer 1 snapshot（Spine view と共有する）。
+ */
+export function buildMypageSummary(bundle: CareerSourceBundle): MypageSummary {
+  const profile = bundle.profile;
+  const activity = bundle.activity;
+  const values = bundle.values;
+  const selfAnalysisLogs = bundle.selfAnalysisLogs;
+  const matchingLogs = bundle.matchingLogs;
+  const esLogs = bundle.esLogs;
+  const interviewResults = bundle.interviewResults;
+  const companyResearchLogs = bundle.companyResearchLogs;
+  const presentationResults = bundle.presentationResults;
+  const consultationThreads = bundle.consultationThreads;
+  // bundle 対象外（上記 header のコメント参照）。
   const gdResults = loadGdResults();
   const gdRoomLogs = loadGdRoomLogs();
-  const consultationThreads = loadConsultationThreads();
 
+  const basicFilled = hasBasicProfileContent(profile);
   const activityFilled = hasAnyActivity(activity);
   const valuesFilled = values !== null && !isCareerValuesEmpty(values);
 
@@ -196,7 +216,7 @@ export function buildMypageSummary(): MypageSummary {
 
   // ── 進捗サマリー ──────────────────────────────────────────────────
   const progress: ProgressItem[] = [
-    docItem('basic', '基本情報', '/career/profile', profile !== null, null, {
+    docItem('basic', '基本情報', '/career/profile', basicFilled, null, {
       done: '入力済み',
       empty: '未入力',
     }),
@@ -450,7 +470,7 @@ export function buildMypageSummary(): MypageSummary {
 
   // ── 次にやるべきこと（deterministic・最大3件） ─────────────────────
   const nextActions = buildNextActions({
-    hasProfile: profile !== null,
+    hasProfile: basicFilled,
     activityFilled,
     valuesFilled,
     selfAnalysis: selfAnalysisLogs.length,
@@ -463,7 +483,7 @@ export function buildMypageSummary(): MypageSummary {
   });
 
   const isEmpty =
-    profile === null &&
+    !basicFilled &&
     !activityFilled &&
     !valuesFilled &&
     selfAnalysisLogs.length === 0 &&
