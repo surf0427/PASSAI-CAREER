@@ -26,6 +26,10 @@ import {
 import { resolveSelfAnalysisContextInputs } from '../resolveContextInputs';
 import { normalizeSelfAnalysisPastSummaries } from '@/lib/careerSelfAnalysis/pastLogSummary';
 
+// P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
+import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
+import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+
 export const maxDuration = 80;
 
 const MAX_ANSWER_CHARS = 8000;
@@ -86,12 +90,18 @@ function extractText(content: Array<{ type: string; text?: string }>): string {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。');
-  }
+  // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
+  //   ★ AI・prompt 構築より前に通す。429 ならここで返るので Anthropic コールは 0 回。
+  const guard = await guardCareerAiRequest(req, {
+    rules: {
+      member: CAREER_AI_RATE_LIMITS.selfAnalysisQuestionMember,
+      guest: CAREER_AI_RATE_LIMITS.selfAnalysisQuestionGuest,
+    },
+    label: 'self-analysis-question',
+    badRequest: () => jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。'),
+  });
+  if (!guard.ok) return guard.response;
+  const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     profile?: CareerProfileInput | null;

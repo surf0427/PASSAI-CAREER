@@ -55,6 +55,10 @@ import { loadCompanyOfficialContext } from '@/lib/careerCompanyOfficial/readRepo
 // T1 trigger: 企業名が server まで届くこの地点で prefetch を起動する（client 変更ゼロ・fire & forget）。
 import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
 
+// P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
+import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
+import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
@@ -249,12 +253,18 @@ const OUTPUT_FORMAT_INSTRUCTION = [
 ].join('\n');
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
+  //   ★ AI・prompt 構築より前に通す。429 ならここで返るので Anthropic コールは 0 回。
+  const guard = await guardCareerAiRequest(req, {
+    rules: {
+      member: CAREER_AI_RATE_LIMITS.companyResearchMember,
+      guest: CAREER_AI_RATE_LIMITS.companyResearchGuest,
+    },
+    label: 'company-research',
+    badRequest: () => Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 }),
+  });
+  if (!guard.ok) return guard.response;
+  const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     companyName?: string;

@@ -28,6 +28,7 @@
 
 import 'server-only';
 
+import { checkRateLimits, rateLimitedResponse, type RateLimitRule } from '@/lib/rateLimit';
 import { getCareerServerSupabaseClient } from '@/lib/careerSupabase/serverClient';
 
 // ── identity ────────────────────────────────────────────────────────
@@ -185,4 +186,130 @@ export async function readRawBodyWithinCap(
     return { ok: false, response: payloadTooLargeResponse() };
   }
   return { ok: true, raw };
+}
+
+// ── 統合 guard（ES / 面接 / プレゼン 以外の CAREER AI route 共通）──────
+//
+// STEP-CAREER-AI-HARDENING-P0。
+//
+// ★ なぜ機能ごとの adapter module を増やさないか:
+//   ES（app/api/career/es/requestGuard.ts）・面接・プレゼンが専用 adapter を持つのは、
+//   それらが **固有の入力上限を新規に定義する必要があった**ため（ES の answer は完全に
+//   無制限だった等）。一方で本 guard の対象 9 route は、意味論的な入力上限を
+//   **すでに route 内に持っている**（consultation の MAX_MESSAGE_LENGTH / gd の
+//   MAX_UTTERANCE_CHARS・MAX_TRANSCRIPT / self-analysis/question の MAX_ANSWER_CHARS 等）。
+//   欠けていたのは identity・rate limit・body サイズ上限の 3 つだけなので、
+//   同型の adapter を 5 つ複製せず、汎用 guard を 1 つ置いて rule を渡す形にする。
+//   （既存 3 機能の adapter は変更しない。判定の順序と思想は完全に同一。）
+//
+// ★ guest を 401 で閉じない — CAREER 全体の既定方針（ES / 面接 / プレゼンと同一）。
+//   identity は「拒否するため」ではなく **rate limit のキーを決めるため**に使う。
+//   したがって本 guard の導入で、正規ユーザーの挙動は 1 つも変わらない。
+
+
+/** member / guest の 2 系統ルール。呼び出し側が CAREER_AI_RATE_LIMITS から渡す。 */
+export type CareerAiRateLimitRules = {
+  member: RateLimitRule;
+  guest: RateLimitRule;
+};
+
+/** identity と rule 対から rate limit のキー・ルールを決める（純関数・テスト可能）。 */
+export function selectCareerAiRateLimitTarget(
+  identity: CareerRequestIdentity,
+  rules: CareerAiRateLimitRules,
+  clientIp: string,
+): { key: string; rule: RateLimitRule } {
+  if (identity.kind === 'member') {
+    return { key: `u:${identity.userId}`, rule: rules.member };
+  }
+  return { key: `i:${clientIp}`, rule: rules.guest };
+}
+
+/**
+ * identity 確定 → rate limit。**AI 到達前**に必ず通す共通部分。
+ * 429 なら Response を返す（＝ Anthropic コールは 0 回）。許可なら identity を返す。
+ */
+async function passIdentityAndRateLimit(
+  req: Request,
+  rules: CareerAiRateLimitRules,
+  label: string,
+): Promise<{ ok: true; identity: CareerRequestIdentity } | { ok: false; response: Response }> {
+  const identity = await resolveCareerRequestIdentity();
+  const { key, rule } = selectCareerAiRateLimitTarget(identity, rules, resolveClientIp(req));
+  const { allowed, result } = await checkRateLimits({ key, rule });
+  if (!allowed) {
+    // key の実値（user_id / IP）は出さない。namespace / limit / retryAfter のみ。
+    console.warn(
+      `career ${label} rate limited: namespace=${rule.namespace} limit=${result.limit} retryAfterSec=${result.retryAfterSeconds}`,
+    );
+    return { ok: false, response: rateLimitedResponse(result) };
+  }
+  return { ok: true, identity };
+}
+
+export type CareerAiGuardResult =
+  | { ok: true; body: unknown; identity: CareerRequestIdentity }
+  | { ok: false; response: Response };
+
+/**
+ * JSON body を取る CAREER AI route の入口ガード。
+ *
+ * 順序（ES / 面接 / プレゼンの guard と意図的に同一）:
+ *   1. Content-Length / 実バイト数の上限   … 最も安い判定を最初に（読むだけで弾く）
+ *   2. Career identity 確定（Project B）    … client 申告値は使わない
+ *   3. rate limit（member=user / guest=IP） … ここで止まれば Anthropic コールは 0 回
+ *   4. JSON parse + 汎用構造サイズ検査      … 無制限 payload を prompt へ通さない
+ *
+ * @param badRequest route ごとに異なる既存の 400 レスポンス（client 契約を変えない）。
+ */
+export async function guardCareerAiRequest(
+  req: Request,
+  options: {
+    rules: CareerAiRateLimitRules;
+    label: string;
+    badRequest: () => Response;
+    maxBodyBytes?: number;
+  },
+): Promise<CareerAiGuardResult> {
+  // 1) サイズ上限（宣言値 → 実測値の二段）。
+  const rawResult = await readRawBodyWithinCap(req, options.maxBodyBytes);
+  if (!rawResult.ok) return { ok: false, response: rawResult.response };
+
+  // 2) + 3) identity → rate limit。
+  const passed = await passIdentityAndRateLimit(req, options.rules, options.label);
+  if (!passed.ok) return { ok: false, response: passed.response };
+
+  // 4) parse + 汎用構造サイズ。
+  let body: unknown;
+  try {
+    body = JSON.parse(rawResult.raw);
+  } catch {
+    return { ok: false, response: options.badRequest() };
+  }
+  if (findPayloadViolation(body)) {
+    return { ok: false, response: payloadTooLargeResponse() };
+  }
+
+  return { ok: true, body, identity: passed.identity };
+}
+
+export type CareerAiUploadGuardResult =
+  | { ok: true; identity: CareerRequestIdentity }
+  | { ok: false; response: Response };
+
+/**
+ * multipart/form-data を取る route（企業研究の資料 OCR）の入口ガード。
+ *
+ * ★ body は読まない。ファイルの MIME / サイズ検証は route 側の既存実装
+ *   （ALLOWED_MIME / MAX_BYTES）が正本であり、ここで二重に持たない。
+ *   本 guard の責務は「identity 確定 → rate limit を **formData() より前**に通す」ことだけ。
+ *   10MB の multipart を parse する前に 429 を返せるので、濫用時のコストが最小になる。
+ */
+export async function guardCareerAiUpload(
+  req: Request,
+  options: { rules: CareerAiRateLimitRules; label: string },
+): Promise<CareerAiUploadGuardResult> {
+  const passed = await passIdentityAndRateLimit(req, options.rules, options.label);
+  if (!passed.ok) return { ok: false, response: passed.response };
+  return { ok: true, identity: passed.identity };
 }

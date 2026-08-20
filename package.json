@@ -59,6 +59,7 @@
     "qa:careerCompanyPrefetchAll": "npm run qa:careerCompanyNormalize && npm run qa:careerCompanyOfficialSql && npm run qa:careerCompanyFetchGuard && npm run qa:careerCompanyPrefetch && npm run qa:careerCompanyOfficialContext && npm run qa:careerCompanyPrefetchE2E && npm run qa:careerCompanyPrefetchTtl && npm run qa:careerCompanySpineExpansion && npm run qa:careerCompanySpineCoverage && npm run qa:careerCompanySpine && npm run qa:careerCompanyPickerRelease && npm run qa:careerCompanyResearchStep3Removal",
     "qa:careerEsDraftStorage": "npx tsx scripts/career-es-draft-storage-qa.ts",
     "qa:careerEsSettingsReviewContext": "npx tsx scripts/career-es-settings-review-context-qa.ts",
+    "qa:careerAiRouteGuard": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-ai-route-guard-qa.ts",
     "qa:careerEsApiSecurity": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-es-api-security-qa.ts",
     "qa:careerPresentationEsRender": "npx tsx scripts/career-presentation-es-render-golden-qa.ts",
     "qa:careerPresentationEsBody": "npx tsx scripts/career-presentation-es-body-qa.ts",

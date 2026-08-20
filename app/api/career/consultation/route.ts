@@ -63,6 +63,10 @@ import { dispatchAggregatedInsightConsultationShadow } from '@/lib/careerAggrega
 // P4-B: str を共通 util へ集約（strArray は route 固有のため local 維持・内部で共通 str を使用）。
 import { str } from '@/lib/careerMemory/summaryUtils';
 
+// P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
+import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
+import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+
 const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
 
@@ -173,12 +177,18 @@ function normalizeResult(raw: unknown): CareerConsultationResult {
 }
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
+  //   ★ AI・prompt 構築より前に通す。429 ならここで返るので Anthropic コールは 0 回。
+  const guard = await guardCareerAiRequest(req, {
+    rules: {
+      member: CAREER_AI_RATE_LIMITS.consultationMember,
+      guest: CAREER_AI_RATE_LIMITS.consultationGuest,
+    },
+    label: 'consultation',
+    badRequest: () => Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 }),
+  });
+  if (!guard.ok) return guard.response;
+  const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     message?: unknown;

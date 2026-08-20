@@ -20,6 +20,10 @@ import { anthropic } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import type { CareerCompanyResearchExtractionStatus } from '@/types/careerCompanyResearch';
 
+// P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
+import { guardCareerAiUpload } from '@/lib/careerApi/requestGuard';
+import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+
 // pdfjs / 画像 OCR は Node ランタイムが必要（Edge では動かさない）。
 export const runtime = 'nodejs';
 export const maxDuration = 80;
@@ -127,6 +131,19 @@ function json(body: ExtractResponse, status = 200): Response {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // P0（HARDENING）: 認証 identity / rate limit の共通ガード。
+  //   ★ formData() より前に通す。10MB の multipart を parse する前に 429 を返せるので、
+  //     濫用時のコストが最小になる（Vision OCR は 1 call あたり最も高価）。
+  //   ★ ファイルの MIME / サイズ検証は下の既存実装（ALLOWED_MIME / MAX_BYTES）が正本。
+  const guard = await guardCareerAiUpload(req, {
+    rules: {
+      member: CAREER_AI_RATE_LIMITS.companyExtractMember,
+      guest: CAREER_AI_RATE_LIMITS.companyExtractGuest,
+    },
+    label: 'company-research-extract',
+  });
+  if (!guard.ok) return guard.response;
+
   let form: FormData;
   try {
     form = await req.formData();

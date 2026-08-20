@@ -393,3 +393,112 @@ export const CAREER_BILLING_RATE_LIMITS = {
     failClosed: true,
   },
 } as const satisfies Record<string, RateLimitRule>;
+
+// ── Career 残りの AI route の rate limit ルール（正本）──────────────
+//
+// STEP-CAREER-AI-HARDENING-P0: ES / 面接 / プレゼンは requestGuard で塞いだが、
+// 以下 9 route は **identity も rate limit も持たないまま Anthropic を呼んでいた**
+// （Production Readiness Audit P0）。同じ 2 系統（member = user_id / guest = IP）で塞ぐ。
+//
+// ★ プレゼン / 面接 / ES と同じ思想に揃える:
+//     member … fail-open。Upstash 障害でログイン済みユーザーの機能を止めない。
+//     guest  … **fail-closed**。濫用面はまさに未認証経路であり、store 障害中に
+//              匿名から無制限の AI 課金を許すわけにいかない。
+//
+// 値の根拠（正常利用を 1 度も止めず automated abuse だけを止める水準）:
+//   companyResearch  … 企業研究メモの添削。1 社あたり数回の書き直しが正常系。max_tokens 3000。
+//   companyExtract   … 画像/PDF の Vision OCR。**1 call あたり最も高価**（最大 30 ページ・
+//                      VISION_MAX_TOKENS 4096）。資料を数枚まとめて上げる導線があるので
+//                      分あたりは確保しつつ、時間あたりを強く絞る。
+//   consultation     … 就活相談 AI のチャット。会話なので最も頻度が高い。
+//   matching         … 企業マッチング。現在 flag OFF（404）だが、ON になった瞬間に
+//                      無防備にならないよう先に上限を置く。1 call で AI 2 回。
+//   selfAnalysis     … 自己分析の本生成。maxDuration 300 の最重量。1 回/セッションが正常系。
+//   selfAnalysisQ    … 深掘り質問の 1 問ずつ生成。対話なので頻度が高い。
+//   gdTheme          … ソロ GD のお題生成。納得いくまで引き直す想定で少し緩め。
+//   gdTurn           … ソロ GD の AI 発言。**発言ごと**に呼ばれるため最も本数が出る。
+//                      マルチ GD 側の career_gd_ai_turn（20/分・200/時）と同水準に揃える。
+//   gdFeedback       … ソロ GD の評価生成。1 セッション 1 回が正常系。AI 2 回・高価。
+export const CAREER_AI_RATE_LIMITS = {
+  companyResearchMember: {
+    namespace: 'career_company_research_member',
+    windows: [{ limit: 8, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  companyResearchGuest: {
+    namespace: 'career_company_research_guest',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  companyExtractMember: {
+    namespace: 'career_company_extract_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  companyExtractGuest: {
+    namespace: 'career_company_extract_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 12, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  consultationMember: {
+    namespace: 'career_consultation_member',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 120, windowSeconds: 3600 }],
+  },
+  consultationGuest: {
+    namespace: 'career_consultation_guest',
+    windows: [{ limit: 12, windowSeconds: 60 }, { limit: 60, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  matchingMember: {
+    namespace: 'career_matching_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  matchingGuest: {
+    namespace: 'career_matching_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 15, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  selfAnalysisMember: {
+    namespace: 'career_self_analysis_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  selfAnalysisGuest: {
+    namespace: 'career_self_analysis_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 15, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  selfAnalysisQuestionMember: {
+    namespace: 'career_self_analysis_question_member',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 120, windowSeconds: 3600 }],
+  },
+  selfAnalysisQuestionGuest: {
+    namespace: 'career_self_analysis_question_guest',
+    windows: [{ limit: 12, windowSeconds: 60 }, { limit: 60, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  gdThemeMember: {
+    namespace: 'career_gd_theme_member',
+    windows: [{ limit: 8, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  gdThemeGuest: {
+    namespace: 'career_gd_theme_guest',
+    windows: [{ limit: 5, windowSeconds: 60 }, { limit: 20, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  gdTurnMember: {
+    namespace: 'career_gd_turn_member',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 200, windowSeconds: 3600 }],
+  },
+  gdTurnGuest: {
+    namespace: 'career_gd_turn_guest',
+    windows: [{ limit: 12, windowSeconds: 60 }, { limit: 120, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+  gdFeedbackMember: {
+    namespace: 'career_gd_feedback_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 40, windowSeconds: 3600 }],
+  },
+  gdFeedbackGuest: {
+    namespace: 'career_gd_feedback_guest',
+    windows: [{ limit: 4, windowSeconds: 60 }, { limit: 15, windowSeconds: 3600 }],
+    failClosed: true,
+  },
+} as const satisfies Record<string, RateLimitRule>;

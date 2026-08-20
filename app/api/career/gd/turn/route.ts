@@ -16,6 +16,10 @@ import { createTimeoutSignal } from '@/lib/aiTimeout';
 import { CAREER_GD_MODEL, buildTurnSystem, buildTurnUser } from '../gdPrompt';
 import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 
+// P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
+import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
+import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+
 export const maxDuration = 80;
 
 const MAX_TRANSCRIPT = 60; // 直近 N 発言までを文脈に使う（トークン節約）
@@ -73,12 +77,19 @@ export async function POST(req: Request) {
   const gdGate = requireCareerGdEnabled();
   if (gdGate) return gdGate;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 });
-  }
+  // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
+  //   ★ kill switch の**後ろ**に置く（OFF 中は identity 解決すらせず 404 のまま）。
+  //   ★ AI・prompt 構築より前に通す。429 ならここで返るので Anthropic コールは 0 回。
+  const guard = await guardCareerAiRequest(req, {
+    rules: {
+      member: CAREER_AI_RATE_LIMITS.gdTurnMember,
+      guest: CAREER_AI_RATE_LIMITS.gdTurnGuest,
+    },
+    label: 'gd-turn',
+    badRequest: () => Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 }),
+  });
+  if (!guard.ok) return guard.response;
+  const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     theme?: { title?: unknown; description?: unknown; constraints?: unknown };
