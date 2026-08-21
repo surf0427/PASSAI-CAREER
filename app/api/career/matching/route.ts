@@ -299,13 +299,14 @@ export async function POST(req: Request) {
 
   // 日次利用回数（PASSAI Career BASIC / マッチング = 1 実行 1 回）。
   //   ★ flag OFF の 404 と guard（400 / 413 / 429）の**後ろ**に置く＝ 消費しない経路を作らない。
-  //   ★ 同一 request の retry は operation dedupe で +0。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  //   ★ 実行中の同一 request への再送（retry / 二重送信）は +0。ユーザーが明示的に
+  //     再マッチングした場合は、条件が同じでも新しい 1 回として +1。
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'matching',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
   //   solo gd（gdSnapshot）は server-readable representation が無いため bridge のまま。
@@ -502,6 +503,9 @@ export async function POST(req: Request) {
       readinessDisclaimer: READINESS_DISCLAIMER,
     };
 
+    // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+    //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+    await quota.settle();
     return Response.json({ result });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

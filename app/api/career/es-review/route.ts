@@ -199,14 +199,15 @@ export async function POST(req: Request) {
   //     内部 call なので消費しない（ES 1 本 ＝ 最大 10 AI call でも利用回数は 1）。
   //   ★ ユーザーが明示的に行う「再添削 / 改善版の添削」は本文が変わるため別 operation ＝
   //     ES bucket の +1（商品仕様どおり新規作成と再添削を合わせて 10 回/日）。
-  //   ★ 同一本文の再送（retry / 二重送信）は operation dedupe で +0。
+  //   ★ 実行中の同一本文への再送（retry / 二重送信）は +0。添削が返った後に
+  //     同じ本文でもう一度添削したら、それは明示的な再実行なので +1。
   //   ★ 必須入力の検証**後** / AI 到達**前**に置く。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'es',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   // 保存済み企業研究を使う場合の評価指示（断定を避けた添削者の文体を維持）。
   const researchInstruction = researchBlock
@@ -366,6 +367,9 @@ export async function POST(req: Request) {
       );
     }
 
+    // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+    //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+    await quota.settle();
     return Response.json({ review });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

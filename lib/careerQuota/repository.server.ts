@@ -18,6 +18,7 @@ import type { CareerDailyQuotaFeature } from './limits';
 export const CAREER_DAILY_USAGE_TABLE = 'career_daily_usage';
 export const CAREER_DAILY_USAGE_OPERATIONS_TABLE = 'career_daily_usage_operations';
 export const CAREER_DAILY_QUOTA_CONSUME_FN = 'career_daily_quota_consume';
+export const CAREER_DAILY_QUOTA_SETTLE_FN = 'career_daily_quota_settle';
 
 export type CareerQuotaConsumeOutcome = 'CONSUMED' | 'DEDUPED' | 'LIMIT_REACHED';
 
@@ -61,22 +62,28 @@ function toOutcome(value: unknown): CareerQuotaConsumeOutcome | null {
 /**
  * 利用回数の原子的な check + consume。
  *
- * @param operationIds 同一操作とみなす id の候補列（[0] が canonical）。
+ * dedupe されるのは「実行中（in_flight）の同一 operation への再送」だけ。
+ * settle 済みの同一 operation が再び来た場合は、ユーザーによる明示的な再実行として
+ * 新しく 1 回消費する（判定は RPC 側。TS は状態を持たない）。
  */
 export async function consumeCareerDailyQuota(
   admin: SupabaseClient,
   input: {
     userId: string;
     feature: CareerDailyQuotaFeature;
-    operationIds: readonly string[];
+    operationId: string;
     limit: number;
+    leaseSeconds: number;
+    maxDedupeHits: number;
   },
 ): Promise<CareerQuotaConsumeResult> {
   const { data, error } = await admin.rpc(CAREER_DAILY_QUOTA_CONSUME_FN, {
     p_user_id: input.userId,
     p_feature: input.feature,
-    p_operation_ids: [...input.operationIds],
+    p_operation_id: input.operationId,
     p_limit: input.limit,
+    p_lease_seconds: input.leaseSeconds,
+    p_max_dedupe_hits: input.maxDedupeHits,
   });
 
   if (error) {
@@ -101,4 +108,29 @@ export async function consumeCareerDailyQuota(
     limit: Number.isFinite(limit) ? limit : input.limit,
     resetAtMs: Number.isFinite(resetAtMs) ? resetAtMs : Date.now(),
   };
+}
+
+/**
+ * 実行が **成功して返し終わった**ことを記録する（冪等 / never throw）。
+ *
+ * これ以降、同じ operation id で来た request は「ユーザーが明示的に実行し直した」と
+ * みなされ、新しく 1 回消費される。
+ *
+ * ★ 失敗した実行では呼ばない。in_flight のまま残すことで、ユーザーの再試行が
+ *   二重課金にならない（放置された in_flight は RPC 側の lease で回収される）。
+ */
+export async function settleCareerDailyQuota(
+  admin: SupabaseClient,
+  input: { userId: string; feature: CareerDailyQuotaFeature; operationId: string },
+): Promise<{ kind: 'ok' } | { kind: 'not-provisioned' } | { kind: 'db-error'; message: string }> {
+  const { error } = await admin.rpc(CAREER_DAILY_QUOTA_SETTLE_FN, {
+    p_user_id: input.userId,
+    p_feature: input.feature,
+    p_operation_id: input.operationId,
+  });
+  if (error) {
+    if (isNotProvisioned(error)) return { kind: 'not-provisioned' };
+    return { kind: 'db-error', message: error.message ?? 'quota settle failed' };
+  }
+  return { kind: 'ok' };
 }

@@ -174,12 +174,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
   //   ★ 上の冪等 return（評価済み room の再取得）より**後ろ**に置く＝ AI を呼ばない経路は
   //     消費しない。評価が途中で失敗して再実行しても room が同じなら +0。
   //   ★ roomId は参加者検証済みの server 側の値（client が名乗った id ではない）。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: { kind: 'member', userId: auth.userId },
     feature: 'gd',
     operationSource: { roomId },
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   // messages。
   let messageRows: Row[];
@@ -361,5 +361,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
     overallEvaluation, // STEP-GD-27: 議論全体の評価（空議論・冪等再取得では null）
     createdAt: nowIso,
   };
+  // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+  //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+  await quota.settle();
   return Response.json({ result });
 }

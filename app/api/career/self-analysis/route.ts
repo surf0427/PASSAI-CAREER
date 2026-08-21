@@ -305,17 +305,18 @@ export async function POST(req: Request) {
   // 日次利用回数（PASSAI Career BASIC / 自己分析 = 1 セッション 1 回）。
   //   ★ anchor は「まとめ生成」だけ。深掘り（/self-analysis/question の seed / followup）は
   //     同一セッションの内部 call なので消費しない。
-  //   ★ 同一入力の再送（retry / 二重送信 / reload 後の再開）は operation dedupe で +0。
-  //     job pilot が cached result を返す再送も、body が同一なら消費しない。
+  //   ★ 実行中の同一入力への再送（retry / 二重送信 / POST 応答不明時の再送）は +0。
+  //     成功して返し終えた後の同一入力は「明示的な生成し直し」として +1。
+  //     reload からの復帰は job status の GET（/self-analysis/job）なので quota を通らない。
   //   ★ AI 到達前・入力の正規化後に置く（validation で落ちる request は消費しない）。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'self_analysis',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
-  return handleSelfAnalysisJobPost(
+  const jobResponse = await handleSelfAnalysisJobPost(
     {
       isPilotEnabledGlobally: isSelfAnalysisJobPilotEnabled,
       isPilotEnabledForUser: isSelfAnalysisJobPilotEnabledForUser,
@@ -366,4 +367,10 @@ export async function POST(req: Request) {
     },
     input,
   );
+
+  // 実行が成功した（job を claim して生成へ進んだ / 結果を返した）。以降、同じ入力で
+  //   来た request は「ユーザーが明示的に生成し直した」＝ 新しい 1 回として消費される。
+  //   ★ 失敗レスポンス（5xx / 503）では settle しない ＝ 再試行が二重課金にならない。
+  if (jobResponse.ok) await quota.settle();
+  return jobResponse;
 }

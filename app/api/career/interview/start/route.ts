@@ -102,17 +102,15 @@ export async function POST(req: Request) {
 
   // 日次利用回数（PASSAI Career BASIC / 面接 = 1 セッション 1 回）。
   //   ★ anchor は start だけ。同一セッションの turn×N / complete は消費しない。
-  //   ★ start の body には「そのセッション固有の値」が無い（設定と context のみ）ため、
-  //     operation identity には 30 分の時間 bucket を混ぜている
-  //     （lib/careerQuota/limits.ts の CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS）。
-  //     連打 / 再読込による再開始は +0、時間をおいた新しい面接は +1 になる。
+  //   ★ 開始ボタンの連打（実行中の再送）は +0。1 本目の面接が始まった後に、同じ設定で
+  //     もう一度開始したら別の面接セッションなので +1（時間差は判定に使わない）。
   //   ★ 必須入力（企業名 / 業界 / 職種 / 選考種別）の検証**後**に置く＝ 400 は消費しない。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'interview',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
   // Company Data Spine A 層（公式情報）。既存 read 経路を読むだけで、fetch / crawl は起動しない。
   //   自己分析モードでは要求しない（企業情報を主 context にしないため）。
   // ★ 面接 runtime からは prefetch / fetch / crawl を **起動しない**（read のみ）。
@@ -166,6 +164,9 @@ export async function POST(req: Request) {
       );
     }
 
+    // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+    //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+    await quota.settle();
     return Response.json({ question });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

@@ -4,6 +4,10 @@
  * ★ 本ファイルが上限値の唯一の正本。route 側で数値を再宣言してはいけない
  *   （`getCareerDailyLimit()` 経由でのみ参照する）。
  *
+ * ★ dedupe は「実行中の operation への再送」だけに効く（lib/careerQuota/enforce.ts）。
+ *   同じ入力でもユーザーが明示的に実行し直したら 1 回消費する。詳細は
+ *   supabase/career_daily_quota_apply.sql §6.1 の意味論コメントを参照。
+ *
  * ★ 「1 回」の定義は **AI call 数ではなく、ユーザーから見た top-level operation 数**。
  *   ES 1 本の作成は内部で materials / deep×N / organize / review と最大 10 call 走るが、
  *   利用回数としては 1 と数える。どの route を「1 回」の計上点にするかは
@@ -57,31 +61,30 @@ export const CAREER_DAILY_QUOTA_LABELS: Readonly<Record<CareerDailyQuotaFeature,
 };
 
 /**
- * operation dedupe の窓（秒）。`null` = **その日いっぱい**（同一入力は 1 日 1 回だけ消費）。
+ * in_flight な operation の lease（秒）。
  *
- * 設計:
- *   - operation identity は「server が request 内容から計算した digest」であり、
- *     client が自由に指定できる id ではない（同一 digest = 同一入力 = 同一成果物）。
- *   - したがって大半の機能は `null`（日単位）で良い。retry / 二重送信 / reload 後の
- *     再送はすべて同一 body ＝ 同一 digest になり、追加消費しない。
- *   - 例外は **面接 start** だけ。start の body には「その面接セッション固有の値」が
- *     一切含まれない（設定と context のみ）ため、日単位 dedupe にすると
- *     「同じ設定の面接を何度でも無料で開始できる」になってしまう。
- *     そこで面接だけ 30 分窓にする（連打 / 再読込は畳み、時間をおいた新セッションは
- *     新しい 1 回として数える）。窓の境界での取りこぼしは、直前窓の id も
- *     dedupe 対象として同時に渡すことで防ぐ。
+ * 実行が成功すると server が settle するので、通常はこの lease に到達しない。
+ * lease は「settle できずに落ちた（crash / 強制中断）実行」を回収するための保険で、
+ * これが無いと壊れた in_flight 行が残り、同一入力が永久に無料になってしまう。
+ * 最長の AI route（自己分析 maxDuration 300s）に十分な余裕を足した値。
  */
-export const CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS: Readonly<
-  Record<CareerDailyQuotaFeature, number | null>
-> = {
-  self_analysis: null,
-  company_research: null,
-  es: null,
-  interview: 1_800,
-  presentation: null,
-  gd: null,
-  matching: null,
-};
+export const CAREER_QUOTA_LEASE_SECONDS = 900;
+
+/**
+ * 1 つの in_flight operation が畳んでよい再送の回数（コスト増幅の上限）。
+ *
+ * ★ 値の決め方:
+ *   正常な retry / 二重送信 / 多タブは十分に下回る値では**足りない**。
+ *   「同一 operation への 20 並列は 1 消費」という受け入れ基準があるため、
+ *   実利用でありうる同時再送を確実に飲み込める余裕を取る。
+ *   一方で無制限にはしない — 実行中の 1 operation に無限に request を浴びせて
+ *   「1 消費で AI 実行し放題」にする経路を、明示的な上限で塞いでおく。
+ *
+ * ★ 実効的な濫用防御は本値ではなく既存の burst rate limit（lib/rateLimit）である
+ *   （例: ES 添削 member 6/分・40/時）。本値はその内側に置く保険。
+ *   上限を超えた再送は畳まずに消費するので、静かに無料実行が続くことはない。
+ */
+export const CAREER_QUOTA_MAX_DEDUPE_HITS = 64;
 
 /** feature の 1 日上限（BASIC 仕様値）。 */
 export function getCareerDailyLimit(feature: CareerDailyQuotaFeature): number {

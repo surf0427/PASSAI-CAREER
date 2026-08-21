@@ -308,13 +308,14 @@ export async function POST(req: Request) {
   //   ★ 必須入力（企業名 / 確認済みテキスト）の検証**後**に置く＝ 400 は消費しない。
   //   ★ Company Data Spine（prefetch / identity / official facts）はユーザーが直接
   //     「使った」機能ではないので消費しない。本 anchor より前で prefetch も起動しない。
-  //   ★ 同一 request の retry は operation dedupe で +0。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  //   ★ 実行中の同一 request への再送（retry / 二重送信）は +0。ユーザーが明示的に
+  //     再分析した場合は、内容が同じでも新しい 1 回として +1（settle 後は再 arm される）。
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'company_research',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   const industry = str(b.industry);
   const interest = interestLabel(b.interestLevel);
@@ -470,6 +471,9 @@ export async function POST(req: Request) {
         const review = normalizeReview(parsed.review);
         const fitAnalysis = normalizeFitAnalysis(parsed.fitAnalysis);
         const interviewContextSummary = str(parsed.interviewContextSummary);
+        // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+        //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+        await quota.settle();
         return Response.json({ review, fitAnalysis, interviewContextSummary });
       } catch {
         if (attempt === 1) continue;

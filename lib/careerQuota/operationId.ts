@@ -1,21 +1,23 @@
 /**
  * PASSAI CAREER — daily quota の **operation identity**（純関数）。
  *
- * 目的（Phase 4 / retry・二重送信・reload 対策）:
- *   「同じ操作」を何度 request しても利用回数を 1 しか消費しないための識別子を作る。
+ * 目的:
+ *   「その 1 回の実行」を server 側だけで識別できるようにする。retry / 二重送信は
+ *   同じ identity になり、ユーザーが明示的に実行し直したときは別の実行として扱われる。
  *
  * 設計の核（security）:
  *   operation id は **server が request 内容から計算する digest** であり、
- *   client が任意に指定できる id ではない。
- *     - client が同じ id を送り続けて quota を無限に迂回する、という攻撃が成立しない。
- *     - 同一 digest = 同一入力 = 同一の成果物なので、消費しないのが正しい
- *       （AI の再実行が起きても得られる価値は増えない）。
- *   逆に入力が 1 文字でも変われば別 operation として 1 消費する。
+ *   client が任意に指定できる id ではない。したがって
+ *     - client が同じ id を送り続けて quota を無限に迂回する
+ *     - client が毎回違う id を送って dedupe を壊す
+ *   のどちらも成立しない。
  *
- * dedupe の粒度:
- *   - 既定は「その JST 日のあいだ同一 digest は 1 回」。
- *   - `windowSeconds` を渡した機能（面接 start）は digest に時間 bucket を混ぜる。
- *     境界で取りこぼさないよう、直前 bucket の id も候補として返す。
+ * ★ digest が同一でも「永久に同じ operation」にはならない。
+ *   同一性の判定には DB 側の **実行状態**（in_flight / settled）が組み合わさる:
+ *     in_flight 中の同一 digest … retry / 二重送信 → +0
+ *     settled 後の同一 digest   … 明示的な再実行   → +1
+ *   （supabase/career_daily_quota_apply.sql §6.1）
+ *   digest だけで dedupe を完結させないのが、この設計の要点。
  *
  * server-only を付けない理由: QA script（tsx 直実行）から unit test するため。
  * node:crypto しか使わず I/O は無い（client bundle からは import しない）。
@@ -67,28 +69,12 @@ export function careerQuotaOperationDigest(source: unknown): string {
   return createHash('sha256').update(canonicalJson(source)).digest('hex').slice(0, 32);
 }
 
-export type CareerQuotaOperationIdInput = {
-  feature: string;
-  /** request 内容など、operation を一意に決める素材（server 側の値のみ）。 */
-  source: unknown;
-  /** 時間 bucket 幅（秒）。null / undefined なら bucket を混ぜない（＝ 日単位 dedupe）。 */
-  windowSeconds?: number | null;
-  nowMs?: number;
-};
-
 /**
- * dedupe 候補の operation id 列を返す。
+ * operation id を返す（feature で namespace 化した digest）。
  *
- * `[0]` が **canonical**（実際に記録する id）。以降は「同一操作とみなす別名」で、
- * 時間 bucket の境界をまたいだ retry を取りこぼさないための直前 bucket。
+ * @param feature quota bucket。同一入力でも feature が違えば別 operation。
+ * @param source  operation を決める素材（server 側の値のみ。通常は parse 済み body）。
  */
-export function buildCareerQuotaOperationIds(input: CareerQuotaOperationIdInput): string[] {
-  const digest = careerQuotaOperationDigest(input.source);
-  const base = `${input.feature}:${digest}`;
-  const windowSeconds = input.windowSeconds ?? null;
-  if (!windowSeconds || windowSeconds <= 0) return [base];
-
-  const nowSec = Math.floor((input.nowMs ?? Date.now()) / 1000);
-  const bucket = Math.floor(nowSec / windowSeconds);
-  return [`${base}:${bucket}`, `${base}:${bucket - 1}`];
+export function buildCareerQuotaOperationId(feature: string, source: unknown): string {
+  return `${feature}:${careerQuotaOperationDigest(source)}`;
 }

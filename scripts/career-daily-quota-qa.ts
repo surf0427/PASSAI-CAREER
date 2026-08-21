@@ -6,10 +6,12 @@
  * 検証:
  *   [1] 上限マトリクス（商品仕様値そのもの）と canonical feature key
  *   [2] JST（Asia/Tokyo）の 1 日境界 — 23:59:59 / 00:00:00 / リセット時刻
- *   [3] operation identity — 同一入力の dedupe / key 順序非依存 / 時間 bucket
+ *   [3] operation identity — server 計算の digest / key 順序非依存 / feature 名前空間
  *   [4] consume の状態機械（SQL と同一意味の reference 実装）
  *        - Boundary: limit-1 ALLOW / limit ALLOW / limit+1 BLOCK（全 7 feature）
  *        - Multi-call dedup: ES / 自己分析 / 面接 / プレゼン / GD の 1 ワークフロー = 1 消費
+ *        - ★ 事故の重複（retry / 二重送信 / 20 並列）= +0
+ *        - ★ 同一内容でもユーザーが明示的に再実行 = 毎回 +1（全 anchor で 3 連続検証）
  *        - Cross-feature isolation
  *        - Concurrency: 残り 1 に 20 並列 → ALLOW=1 / REJECT=19 / 最終 count=limit
  *        - Day reset: JST 日付が変われば 0 から
@@ -26,9 +28,10 @@ import { join } from 'node:path';
 
 import {
   CAREER_BASIC_DAILY_LIMITS,
-  CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS,
   CAREER_DAILY_QUOTA_FEATURES,
   CAREER_DAILY_QUOTA_LABELS,
+  CAREER_QUOTA_LEASE_SECONDS,
+  CAREER_QUOTA_MAX_DEDUPE_HITS,
   careerQuotaJstDate,
   careerQuotaJstResetAtMs,
   getCareerDailyLimit,
@@ -36,7 +39,7 @@ import {
   type CareerDailyQuotaFeature,
 } from '../lib/careerQuota/limits';
 import {
-  buildCareerQuotaOperationIds,
+  buildCareerQuotaOperationId,
   canonicalJson,
   careerQuotaOperationDigest,
 } from '../lib/careerQuota/operationId';
@@ -151,7 +154,7 @@ console.log('[2] JST（Asia/Tokyo）の 1 日境界');
 console.log('');
 
 // ═══════════════════════════════════════════════════════════════
-console.log('[3] operation identity（retry / 二重送信 / reload 対策）');
+console.log('[3] operation identity（server 計算 / client 指定不可）');
 {
   const bodyA = { answer: 'これは私のES本文です。', question: '学生時代に力を入れたこと' };
   const bodyAReordered = { question: '学生時代に力を入れたこと', answer: 'これは私のES本文です。' };
@@ -171,49 +174,58 @@ console.log('[3] operation identity（retry / 二重送信 / reload 対策）');
   );
   check(!/[^0-9a-f]/.test(careerQuotaOperationDigest(bodyA)), 'digest は hex のみ（本文は復元不能）');
 
-  // 日単位 dedupe（既定）。
-  const es1 = buildCareerQuotaOperationIds({ feature: 'es', source: bodyA, windowSeconds: null });
-  const es2 = buildCareerQuotaOperationIds({ feature: 'es', source: bodyA, windowSeconds: null });
-  check(es1.length === 1 && es1[0] === es2[0], '窓なし feature は同一入力 → 同一 id 1 本');
-  check(es1[0].startsWith('es:'), 'operation id は feature で namespace 化される');
-  const gd1 = buildCareerQuotaOperationIds({ feature: 'gd', source: bodyA, windowSeconds: null });
-  check(gd1[0] !== es1[0], '同一入力でも feature が違えば別 operation（bucket 混線なし）');
-
-  // 面接だけ時間 bucket（同設定の無限再開始を防ぐ）。
+  const es1 = buildCareerQuotaOperationId('es', bodyA);
+  const es2 = buildCareerQuotaOperationId('es', bodyA);
+  check(es1 === es2, '同一入力 → 同一 operation id（決定的）');
+  check(es1.startsWith('es:'), 'operation id は feature で namespace 化される');
   check(
-    CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS.interview === 1800 &&
-      CAREER_DAILY_QUOTA_FEATURES.filter(
-        (f) => CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS[f] !== null,
-      ).length === 1,
-    '時間 bucket を使うのは面接だけ（他は日単位 dedupe）',
+    buildCareerQuotaOperationId('gd', bodyA) !== es1,
+    '同一入力でも feature が違えば別 operation（bucket 混線なし）',
   );
-  const t0 = Date.parse('2026-08-21T03:00:00.000Z');
-  const iv0 = buildCareerQuotaOperationIds({ feature: 'interview', source: bodyA, windowSeconds: 1800, nowMs: t0 });
-  const ivRetry = buildCareerQuotaOperationIds({ feature: 'interview', source: bodyA, windowSeconds: 1800, nowMs: t0 + 5_000 });
-  const ivLater = buildCareerQuotaOperationIds({ feature: 'interview', source: bodyA, windowSeconds: 1800, nowMs: t0 + 90 * 60_000 });
-  check(iv0.length === 2, '時間 bucket 使用時は「現在 bucket + 直前 bucket」を返す');
-  check(iv0[0] === ivRetry[0], '数秒後の retry は同一 canonical id（二重消費しない）');
-  check(iv0[0] !== ivLater[0] && !ivLater.includes(iv0[0]), '90 分後の新セッションは別 operation');
-  // 窓の境界をまたいだ retry を取りこぼさない。
-  const edge = Date.parse('2026-08-21T03:29:59.000Z');
-  const edgeIds = buildCareerQuotaOperationIds({ feature: 'interview', source: bodyA, windowSeconds: 1800, nowMs: edge });
-  const afterEdge = buildCareerQuotaOperationIds({ feature: 'interview', source: bodyA, windowSeconds: 1800, nowMs: edge + 3_000 });
-  check(afterEdge.includes(edgeIds[0]), 'bucket 境界をまたぐ retry も dedupe 候補に含まれる');
+
+  // ★ 時間依存を持たない = 「30 分以内の 2 回目が無料」という不具合が構造的に起きない。
+  const opSrc = readFileSync(join(ROOT, 'lib/careerQuota/operationId.ts'), 'utf8');
+  check(
+    !/Date\.now\(\)|nowMs|windowSeconds|bucket/.test(stripComments(opSrc)),
+    'operation id は時刻に依存しない（time bucket による誤 dedupe が無い）',
+  );
+  check(
+    !/operationId|operationKey|idempotency/i.test(stripComments(opSrc).replace(/careerQuotaOperationDigest|buildCareerQuotaOperationId/g, '')),
+    'client 指定の operation id / idempotency key を受け取らない',
+  );
+
+  // lease / 畳み上限の定義が妥当な範囲にあること。
+  check(
+    CAREER_QUOTA_LEASE_SECONDS >= 300 && CAREER_QUOTA_LEASE_SECONDS <= 3600,
+    `in_flight lease は最長 AI route（300s）より長い（${CAREER_QUOTA_LEASE_SECONDS}s）`,
+  );
+  check(
+    CAREER_QUOTA_MAX_DEDUPE_HITS >= 20,
+    `同一 operation の 20 並列を畳める（max dedupe hits = ${CAREER_QUOTA_MAX_DEDUPE_HITS}）`,
+  );
 }
 console.log('');
 
-// ═══════════════════════════════════════════════════════════════
-// SQL `career_daily_quota_consume` と同一意味の reference 実装。
-//   - operation を先に確保 → 勝った側だけが used を条件付きで +1
-//   - `used < limit` の評価は **行 lock を保持したまま**行う（Postgres の
-//     ON CONFLICT DO UPDATE ... WHERE と同じ意味）。ここを模した mutex を挟むことで、
-//     「read → await → write」の間に他 request が割り込む余地が無いことを検証する。
+// SQL `career_daily_quota_consume` / `career_daily_quota_settle` と同一意味の reference 実装。
+//   - operation は実行状態を持つ（in_flight / settled）
+//       in_flight 中の同一 digest … retry / 二重送信 → DEDUPED（+0）
+//       settled 後の同一 digest   … 明示的な再実行   → CONSUMED（+1・再 arm）
+//   - counter の +1 は「行 lock を保持したまま used < limit を評価」する条件付き UPSERT。
+//     ここを模した mutex を挟むことで、read → await → write の割り込み余地が無いことを検証する。
+//   - operation 行の判定も FOR UPDATE 相当の lock で直列化する。
 type Outcome = 'CONSUMED' | 'DEDUPED' | 'LIMIT_REACHED';
+
+type OpRow = {
+  state: 'in_flight' | 'settled';
+  dedupeHits: number;
+  executions: number;
+  startedAtMs: number;
+};
 
 class QuotaModel {
   private used = new Map<string, number>();
-  private ops = new Set<string>();
-  private rowLocks = new Map<string, Promise<void>>();
+  private ops = new Map<string, OpRow>();
+  private locks = new Map<string, Promise<void>>();
 
   constructor(private nowMs: number) {}
 
@@ -221,15 +233,27 @@ class QuotaModel {
     this.nowMs = nowMs;
   }
 
+  advance(ms: number) {
+    this.nowMs += ms;
+  }
+
   usedOf(userId: string, feature: string, nowMs = this.nowMs): number {
     return this.used.get(`${userId}|${feature}|${careerQuotaJstDate(nowMs)}`) ?? 0;
   }
 
-  private async withRowLock<T>(key: string, fn: () => Promise<T> | T): Promise<T> {
-    const prev = this.rowLocks.get(key) ?? Promise.resolve();
+  executionsOf(userId: string, feature: string, operationId: string): number {
+    return this.ops.get(this.opKey(userId, feature, operationId))?.executions ?? 0;
+  }
+
+  private opKey(userId: string, feature: string, operationId: string): string {
+    return `${userId}|${feature}|${careerQuotaJstDate(this.nowMs)}|${operationId}`;
+  }
+
+  private async withLock<T>(key: string, fn: () => Promise<T> | T): Promise<T> {
+    const prev = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const next = new Promise<void>((r) => (release = r));
-    this.rowLocks.set(key, prev.then(() => next));
+    this.locks.set(key, prev.then(() => next));
     await prev;
     try {
       return await fn();
@@ -238,38 +262,90 @@ class QuotaModel {
     }
   }
 
+  /** 条件付き UPSERT（行 lock を保持したまま used < limit を評価）。上限到達なら null。 */
+  private async increment(scope: string, limit: number): Promise<number | null> {
+    return this.withLock(scope, async () => {
+      await Promise.resolve(); // 非原子な実装ならここで overshoot が起きる
+      const current = this.used.get(scope) ?? 0;
+      if (current >= limit) return null;
+      this.used.set(scope, current + 1);
+      return current + 1;
+    });
+  }
+
   async consume(input: {
     userId: string;
     feature: CareerDailyQuotaFeature;
-    operationIds: readonly string[];
+    operationId: string;
     limit: number;
+    leaseSeconds?: number;
+    maxDedupeHits?: number;
   }): Promise<{ outcome: Outcome; used: number }> {
+    const leaseSeconds = input.leaseSeconds ?? CAREER_QUOTA_LEASE_SECONDS;
+    const maxDedupeHits = input.maxDedupeHits ?? CAREER_QUOTA_MAX_DEDUPE_HITS;
     const date = careerQuotaJstDate(this.nowMs);
     const scope = `${input.userId}|${input.feature}|${date}`;
-    const canonical = `${scope}|${input.operationIds[0]}`;
+    const opKey = this.opKey(input.userId, input.feature, input.operationId);
 
-    // (1) 既に計上済みの operation か。
-    if (input.operationIds.some((id) => this.ops.has(`${scope}|${id}`))) {
-      return { outcome: 'DEDUPED', used: this.used.get(scope) ?? 0 };
-    }
-    // (2) operation を確保（同一 operation の同時 request は 1 本だけ勝つ）。
-    if (this.ops.has(canonical)) {
-      return { outcome: 'DEDUPED', used: this.used.get(scope) ?? 0 };
-    }
-    this.ops.add(canonical);
-
-    // (3) 行 lock を取ったうえで最新値に対して used < limit を評価する。
-    return this.withRowLock(scope, async () => {
-      // 非原子な実装なら、ここでの await が overshoot を生む。
-      await Promise.resolve();
-      const current = this.used.get(scope) ?? 0;
-      if (current >= input.limit) {
-        this.ops.delete(canonical);
-        return { outcome: 'LIMIT_REACHED' as const, used: current };
+    // (1) 新規 operation（初回実行）。
+    if (!this.ops.has(opKey)) {
+      this.ops.set(opKey, {
+        state: 'in_flight',
+        dedupeHits: 0,
+        executions: 1,
+        startedAtMs: this.nowMs,
+      });
+      const used = await this.increment(scope, input.limit);
+      if (used === null) {
+        this.ops.delete(opKey); // 予約は残さない
+        return { outcome: 'LIMIT_REACHED', used: this.used.get(scope) ?? 0 };
       }
-      this.used.set(scope, current + 1);
-      return { outcome: 'CONSUMED' as const, used: current + 1 };
+      return { outcome: 'CONSUMED', used };
+    }
+
+    // (2) 既存 operation は lock を取って直列に判定する（SQL の FOR UPDATE 相当）。
+    return this.withLock(opKey, async () => {
+      const row = this.ops.get(opKey)!;
+      const fresh = this.nowMs - row.startedAtMs < leaseSeconds * 1000;
+      const reusable = row.state === 'in_flight' && fresh && row.dedupeHits < maxDedupeHits;
+
+      if (reusable) {
+        row.dedupeHits += 1;
+        return { outcome: 'DEDUPED' as const, used: this.used.get(scope) ?? 0 };
+      }
+
+      // (3) settled / stale / 畳み上限超過 → 新しい logical operation として消費する。
+      const used = await this.increment(scope, input.limit);
+      if (used === null) {
+        // 既存行は消さない（過去の実行記録であり予約ではない）。
+        return { outcome: 'LIMIT_REACHED' as const, used: this.used.get(scope) ?? 0 };
+      }
+      row.state = 'in_flight';
+      row.dedupeHits = 0;
+      row.executions += 1;
+      row.startedAtMs = this.nowMs;
+      return { outcome: 'CONSUMED' as const, used };
     });
+  }
+
+  /** 実行成功の記録（冪等）。失敗パスでは呼ばれない。 */
+  settle(userId: string, feature: CareerDailyQuotaFeature, operationId: string): void {
+    const row = this.ops.get(this.opKey(userId, feature, operationId));
+    if (row && row.state === 'in_flight') row.state = 'settled';
+  }
+
+  /** 1 回の成功実行（consume → AI → settle）を模す。 */
+  async execute(input: {
+    userId: string;
+    feature: CareerDailyQuotaFeature;
+    source: unknown;
+    limit?: number;
+  }): Promise<Outcome> {
+    const operationId = buildCareerQuotaOperationId(input.feature, input.source);
+    const limit = input.limit ?? getCareerDailyLimit(input.feature);
+    const r = await this.consume({ userId: input.userId, feature: input.feature, operationId, limit });
+    if (r.outcome !== 'LIMIT_REACHED') this.settle(input.userId, input.feature, operationId);
+    return r.outcome;
   }
 }
 
@@ -285,13 +361,8 @@ console.log('[4a] Boundary QA — limit-1 ALLOW / limit ALLOW / limit+1 BLOCK');
     const model = new QuotaModel(T_NOON_JST);
     const outcomes: Outcome[] = [];
     for (let i = 1; i <= limit + 1; i++) {
-      const ids = buildCareerQuotaOperationIds({
-        feature,
-        source: { op: i }, // 毎回別の top-level operation
-        windowSeconds: CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS[feature],
-        nowMs: T_NOON_JST,
-      });
-      outcomes.push((await model.consume({ userId: 'u1', feature, operationIds: ids, limit })).outcome);
+      // 毎回別の top-level operation（別内容）を成功実行する。
+      outcomes.push(await model.execute({ userId: 'u1', feature, source: { op: i } }));
     }
     const allowed = outcomes.filter(allow).length;
     check(
@@ -309,64 +380,190 @@ console.log('[4b] Multi-call dedup — 内部 AI call を利用回数として�
 {
   // 実 route での「消費するのは anchor だけ」は [6] で静的に検証する。
   // ここでは「1 ワークフローが anchor を 1 度だけ通ると usage=1」を確認する。
-  const workflows: Array<{ label: string; feature: CareerDailyQuotaFeature; calls: string[]; anchorCalls: number }> = [
-    { label: 'ES workflow（organize/materials/deep×5/review）', feature: 'es', calls: ['materials', 'deep', 'deep', 'deep', 'deep', 'deep', 'organize', 'review'], anchorCalls: 1 },
-    { label: '自己分析 session（seed/followup×N/summary）', feature: 'self_analysis', calls: ['seed', 'followup', 'followup', 'followup', 'summary'], anchorCalls: 1 },
-    { label: '面接 session（start/turn×4/complete）', feature: 'interview', calls: ['start', 'turn', 'turn', 'turn', 'turn', 'complete'], anchorCalls: 1 },
-    { label: 'プレゼン session（theme/evaluate/QA×4）', feature: 'presentation', calls: ['theme', 'evaluate', 'qa', 'qa', 'qa', 'qa'], anchorCalls: 1 },
-    { label: 'GD session（theme/turn×N/feedback）', feature: 'gd', calls: ['theme', 'turn', 'turn', 'turn', 'feedback'], anchorCalls: 1 },
+  const workflows: Array<{ label: string; feature: CareerDailyQuotaFeature; calls: string[] }> = [
+    { label: 'ES workflow（organize/materials/deep×5/review）', feature: 'es', calls: ['materials', 'deep', 'deep', 'deep', 'deep', 'deep', 'organize', 'review'] },
+    { label: '自己分析 session（seed/followup×N/summary）', feature: 'self_analysis', calls: ['seed', 'followup', 'followup', 'followup', 'summary'] },
+    { label: '面接 session（start/turn×4/complete）', feature: 'interview', calls: ['start', 'turn', 'turn', 'turn', 'turn', 'complete'] },
+    { label: 'プレゼン session（theme/evaluate/QA×4）', feature: 'presentation', calls: ['theme', 'evaluate', 'qa', 'qa', 'qa', 'qa'] },
+    { label: 'GD session（theme/turn×N/feedback）', feature: 'gd', calls: ['theme', 'turn', 'turn', 'turn', 'feedback'] },
   ];
   for (const wf of workflows) {
     const model = new QuotaModel(T_NOON_JST);
-    const ids = buildCareerQuotaOperationIds({
-      feature: wf.feature,
-      source: { session: wf.label },
-      windowSeconds: CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS[wf.feature],
-      nowMs: T_NOON_JST,
-    });
-    for (let i = 0; i < wf.anchorCalls; i++) {
-      await model.consume({ userId: 'u1', feature: wf.feature, operationIds: ids, limit: getCareerDailyLimit(wf.feature) });
-    }
+    await model.execute({ userId: 'u1', feature: wf.feature, source: { session: wf.label } });
     check(
       model.usedOf('u1', wf.feature) === 1,
       `${wf.label} → daily usage = 1（内部 ${wf.calls.length} call）`,
     );
   }
-
-  // retry / 二重送信 / reload 後の再送 = 同一 body → 追加消費 0。
-  const model = new QuotaModel(T_NOON_JST);
-  const body = { answer: '同じ本文', question: '同じ設問' };
-  const ids = buildCareerQuotaOperationIds({ feature: 'es', source: body, windowSeconds: null });
-  const r1 = await model.consume({ userId: 'u1', feature: 'es', operationIds: ids, limit: 10 });
-  const r2 = await model.consume({ userId: 'u1', feature: 'es', operationIds: ids, limit: 10 });
-  const r3 = await model.consume({ userId: 'u1', feature: 'es', operationIds: ids, limit: 10 });
-  check(
-    r1.outcome === 'CONSUMED' && r2.outcome === 'DEDUPED' && r3.outcome === 'DEDUPED' &&
-      model.usedOf('u1', 'es') === 1,
-    '同一 operation の 3 連投（double click / retry / reload）→ usage 1',
-  );
-  check(allow(r2.outcome) && allow(r3.outcome), 'dedupe された retry は 429 にならず処理を続行できる');
-
-  // 再添削（本文が変わる）は ES bucket の +1。
-  const ids2 = buildCareerQuotaOperationIds({ feature: 'es', source: { ...body, answer: '改善版の本文' }, windowSeconds: null });
-  await model.consume({ userId: 'u1', feature: 'es', operationIds: ids2, limit: 10 });
-  check(model.usedOf('u1', 'es') === 2, '改善版の再添削は ES bucket の +1（新規と合算で 10 回/日）');
-
-  // マルチ GD は room 単位。
-  const gdModel = new QuotaModel(T_NOON_JST);
-  const roomIds = buildCareerQuotaOperationIds({ feature: 'gd', source: { roomId: 'room-1' }, windowSeconds: null });
-  await gdModel.consume({ userId: 'u1', feature: 'gd', operationIds: roomIds, limit: 5 });
-  await gdModel.consume({ userId: 'u1', feature: 'gd', operationIds: roomIds, limit: 5 });
-  check(gdModel.usedOf('u1', 'gd') === 1, 'マルチ GD は room 単位で 1 消費（評価の再実行でも +0）');
 }
 console.log('');
 
-console.log('[4c] Cross-feature isolation');
+console.log('[4c] 事故の重複は +0 — retry / double click / timeout 後の再送');
+{
+  // ★ dedupe が効くのは「実行中（in_flight）の operation への再送」だけ。
+  const body = { answer: '同じ本文', question: '同じ設問' };
+  const opId = buildCareerQuotaOperationId('es', body);
+
+  // double click: 1 本目が返る前に 2 本目・3 本目が届く。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    const r1 = await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 });
+    const r2 = await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 });
+    const r3 = await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 });
+    check(
+      r1.outcome === 'CONSUMED' && r2.outcome === 'DEDUPED' && r3.outcome === 'DEDUPED' &&
+        m.usedOf('u1', 'es') === 1,
+      '実行中の 3 連投（double click / 二重送信）→ usage 1',
+    );
+    check(allow(r2.outcome) && allow(r3.outcome), '畳まれた再送は 429 にならず処理を続行できる');
+  }
+
+  // 失敗した実行の retry: settle していないので +0。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 }); // 失敗 → settle しない
+    m.advance(3_000);
+    const retry = await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 });
+    check(
+      retry.outcome === 'DEDUPED' && m.usedOf('u1', 'es') === 1,
+      'AI 失敗後のユーザー再試行 → +0（settle していない実行への再送）',
+    );
+  }
+
+  // 20 並列の同一 operation（script / 多タブ）。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        m.consume({ userId: 'u1', feature: 'presentation', operationId: buildCareerQuotaOperationId('presentation', { t: 'same' }), limit: 5 }),
+      ),
+    );
+    check(
+      m.usedOf('u1', 'presentation') === 1 && results.every((r) => allow(r.outcome)),
+      '同一 operation の 20 並列 → usage 1・全件 ALLOW（連打で枠を溶かさない）',
+    );
+  }
+
+  // settle されないまま lease を過ぎた in_flight は回収される（永久無料の穴を塞ぐ）。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 }); // crash（settle されず）
+    m.advance((CAREER_QUOTA_LEASE_SECONDS + 60) * 1000);
+    const after = await m.consume({ userId: 'u1', feature: 'es', operationId: opId, limit: 10 });
+    check(
+      after.outcome === 'CONSUMED' && m.usedOf('u1', 'es') === 2,
+      'lease 切れの stale in_flight は新しい実行として消費される',
+    );
+  }
+
+  // 畳み上限を超えた再送は消費に回る（1 消費で無制限実行にしない）。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    const id = buildCareerQuotaOperationId('es', { flood: true });
+    for (let i = 0; i <= 3; i++) {
+      await m.consume({ userId: 'u1', feature: 'es', operationId: id, limit: 10, maxDedupeHits: 3 });
+    }
+    const over = await m.consume({ userId: 'u1', feature: 'es', operationId: id, limit: 10, maxDedupeHits: 3 });
+    check(
+      over.outcome === 'CONSUMED' && m.usedOf('u1', 'es') === 2,
+      '畳み上限を超えた再送は消費される（コスト増幅に上限がある）',
+    );
+  }
+}
+console.log('');
+
+console.log('[4d] 意図的な再実行は毎回 +1（同一内容でも）');
+{
+  // ★ 本 Phase の最重要要件。同じ payload を hash しただけの dedupe だと
+  //   「同じ内容 = 永久に同一 operation」になり、上限を無限に迂回できてしまう。
+  const CASES: Array<{ label: string; feature: CareerDailyQuotaFeature; source: unknown }> = [
+    {
+      label: 'ES 再添削（企業 Keyence / 本文・文字数・選考種別すべて同一）',
+      feature: 'es',
+      source: { company: 'Keyence', question: 'ガクチカ', answer: '全く同じ本文', maxChars: 400, selectionType: '本選考' },
+    },
+    {
+      label: '企業分析（同一企業・同一資料）',
+      feature: 'company_research',
+      source: { companyName: 'Keyence', verifiedResearchText: '同じ企業研究テキスト' },
+    },
+    {
+      label: 'マッチング（同一プロフィール・同一条件）',
+      feature: 'matching',
+      source: { profile: { name: 'A' }, values: { axis: '成長' } },
+    },
+    {
+      label: 'プレゼン再評価（同一 transcript）',
+      feature: 'presentation',
+      source: { theme: '同じお題', transcript: '同じ発表内容' },
+    },
+    {
+      label: 'ソロ GD 再評価（同一 transcript）',
+      feature: 'gd',
+      source: { theme: { title: '同じテーマ' }, transcript: ['同じ発言'] },
+    },
+    {
+      label: '面接の再開始（同一設定 / 同一 30 分内）',
+      feature: 'interview',
+      source: { target: { company: 'Keyence', industry: '製造', jobType: '技術' }, interviewType: 'real' },
+    },
+    {
+      label: '自己分析の再生成（同一会話内容）',
+      feature: 'self_analysis',
+      source: { conversation: [{ role: 'answer', content: '同じ回答' }] },
+    },
+  ];
+
+  for (const c of CASES) {
+    const m = new QuotaModel(T_NOON_JST);
+    const outcomes: Outcome[] = [];
+    const useds: number[] = [];
+    for (let i = 1; i <= 3; i++) {
+      outcomes.push(await m.execute({ userId: 'u1', feature: c.feature, source: c.source }));
+      useds.push(m.usedOf('u1', c.feature));
+    }
+    check(
+      outcomes.every((o) => o === 'CONSUMED') && useds[0] === 1 && useds[1] === 2 && useds[2] === 3,
+      `${c.label} ×3 → used ${useds.join(' / ')}（期待 1 / 2 / 3）`,
+    );
+  }
+
+  // 面接は「同じ設定で 30 分以内に 2 回開始」でも 2 消費（旧 time bucket 実装の不具合の回帰テスト）。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    const src = { target: { company: 'Keyence' }, interviewType: 'real' };
+    await m.execute({ userId: 'u1', feature: 'interview', source: src });
+    m.advance(5 * 60_000);
+    await m.execute({ userId: 'u1', feature: 'interview', source: src });
+    check(m.usedOf('u1', 'interview') === 2, '面接: 同一設定を 5 分後に再開始 → +1（time bucket による誤 dedupe が無い）');
+  }
+
+  // 別セッションで内容が同じ場合も新しい実行として +1。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    const src = { theme: '同じ', transcript: '同じ' };
+    await m.execute({ userId: 'u1', feature: 'gd', source: src });
+    await m.execute({ userId: 'u1', feature: 'gd', source: src });
+    check(m.usedOf('u1', 'gd') === 2, 'different session / same content → +1');
+  }
+
+  // マルチ GD は room 単位。同一 room の再評価は消費しない（route 側が cached を先に返す）。
+  {
+    const m = new QuotaModel(T_NOON_JST);
+    await m.execute({ userId: 'u1', feature: 'gd', source: { roomId: 'room-1' } });
+    await m.execute({ userId: 'u1', feature: 'gd', source: { roomId: 'room-2' } });
+    check(m.usedOf('u1', 'gd') === 2, 'マルチ GD: 別 room は別 operation（+1 ずつ）');
+    const opId = buildCareerQuotaOperationId('gd', { roomId: 'room-1' });
+    check(m.executionsOf('u1', 'gd', opId) === 1, 'マルチ GD: room 1 つにつき実行 1 回として記録される');
+  }
+}
+console.log('');
+
+console.log('[4e] Cross-feature isolation');
 {
   const model = new QuotaModel(T_NOON_JST);
   for (let i = 1; i <= 10; i++) {
-    const ids = buildCareerQuotaOperationIds({ feature: 'es', source: { op: i }, windowSeconds: null });
-    await model.consume({ userId: 'u1', feature: 'es', operationIds: ids, limit: 10 });
+    await model.execute({ userId: 'u1', feature: 'es', source: { op: i } });
   }
   check(model.usedOf('u1', 'es') === 10, 'ES を 10 回使用した');
   const others: Array<[CareerDailyQuotaFeature, number]> = [
@@ -378,20 +575,17 @@ console.log('[4c] Cross-feature isolation');
     ['self_analysis', 10],
   ];
   for (const [feature, limit] of others) {
-    const remaining = limit - model.usedOf('u1', feature);
-    check(remaining === limit, `${feature} の残りは ${limit}（ES の消費に巻き込まれない）`);
+    check(limit - model.usedOf('u1', feature) === limit, `${feature} の残りは ${limit}（ES の消費に巻き込まれない）`);
   }
-  // 別ユーザーにも影響しない。
   check(model.usedOf('u2', 'es') === 0, '他ユーザーの counter に影響しない');
 }
 console.log('');
 
-console.log('[4d] Concurrency — 残り 1 に 20 並列');
+console.log('[4f] Concurrency — 残り 1 に 20 並列');
 {
   const model = new QuotaModel(T_NOON_JST);
   for (let i = 1; i <= 9; i++) {
-    const ids = buildCareerQuotaOperationIds({ feature: 'es', source: { op: i }, windowSeconds: null });
-    await model.consume({ userId: 'u1', feature: 'es', operationIds: ids, limit: 10 });
+    await model.execute({ userId: 'u1', feature: 'es', source: { op: i } });
   }
   check(model.usedOf('u1', 'es') === 9, '前提: used = 9 / limit = 10');
 
@@ -401,7 +595,7 @@ console.log('[4d] Concurrency — 残り 1 に 20 並列');
         userId: 'u1',
         feature: 'es',
         // すべて **別の** operation（＝ dedupe ではなく本当の同時消費）。
-        operationIds: buildCareerQuotaOperationIds({ feature: 'es', source: { parallel: i }, windowSeconds: null }),
+        operationId: buildCareerQuotaOperationId('es', { parallel: i }),
         limit: 10,
       }),
     ),
@@ -411,56 +605,27 @@ console.log('[4d] Concurrency — 残り 1 に 20 並列');
   check(allowed === 1, `20 並列のうち ALLOW = 1（実測 ${allowed}）`);
   check(rejected === 19, `20 並列のうち REJECT = 19（実測 ${rejected}）`);
   check(model.usedOf('u1', 'es') === 10, `最終 count = 10（実測 ${model.usedOf('u1', 'es')}）`);
-
-  // 同一 operation の 20 並列は 1 消費（dedupe 側の並列安全性）。
-  const dedupeModel = new QuotaModel(T_NOON_JST);
-  const sameIds = buildCareerQuotaOperationIds({ feature: 'presentation', source: { t: 'same' }, windowSeconds: null });
-  const dedupeResults = await Promise.all(
-    Array.from({ length: 20 }, () =>
-      dedupeModel.consume({ userId: 'u1', feature: 'presentation', operationIds: sameIds, limit: 5 }),
-    ),
-  );
-  check(
-    dedupeModel.usedOf('u1', 'presentation') === 1 && dedupeResults.every((r) => allow(r.outcome)),
-    '同一 operation の 20 並列 → usage 1・全件 ALLOW（連打で上限を溶かさない）',
-  );
 }
 console.log('');
 
-console.log('[4e] Day reset（JST 00:00）');
+console.log('[4g] Day reset（JST 00:00）');
 {
   const late = Date.parse('2026-08-21T14:59:59.000Z'); // 23:59:59 JST
   const midnight = Date.parse('2026-08-21T15:00:00.000Z'); // 翌 00:00:00 JST
   const model = new QuotaModel(late);
   for (let i = 1; i <= 5; i++) {
-    await model.consume({
-      userId: 'u1',
-      feature: 'gd',
-      operationIds: buildCareerQuotaOperationIds({ feature: 'gd', source: { op: i }, windowSeconds: null }),
-      limit: 5,
-    });
+    await model.execute({ userId: 'u1', feature: 'gd', source: { op: i } });
   }
-  const blocked = await model.consume({
-    userId: 'u1',
-    feature: 'gd',
-    operationIds: buildCareerQuotaOperationIds({ feature: 'gd', source: { op: 6 }, windowSeconds: null }),
-    limit: 5,
-  });
-  check(blocked.outcome === 'LIMIT_REACHED', '23:59:59 JST — 上限到達');
+  const blocked = await model.execute({ userId: 'u1', feature: 'gd', source: { op: 6 } });
+  check(blocked === 'LIMIT_REACHED', '23:59:59 JST — 上限到達');
 
   model.setNow(midnight);
-  const after = await model.consume({
-    userId: 'u1',
-    feature: 'gd',
-    operationIds: buildCareerQuotaOperationIds({ feature: 'gd', source: { op: 6 }, windowSeconds: null }),
-    limit: 5,
-  });
-  check(after.outcome === 'CONSUMED' && after.used === 1, '00:00:00 JST — usage がリセットされる');
+  const after = await model.execute({ userId: 'u1', feature: 'gd', source: { op: 6 } });
+  check(after === 'CONSUMED' && model.usedOf('u1', 'gd') === 1, '00:00:00 JST — usage がリセットされる');
   check(model.usedOf('u1', 'gd', late) === 5, '前日の記録は消えない（監査可能）');
 }
 console.log('');
 
-// ═══════════════════════════════════════════════════════════════
 console.log('[5] DDL 契約（原子性 / JST / 最小権限）');
 {
   const sqlPath = 'supabase/career_daily_quota_apply.sql';
@@ -486,15 +651,56 @@ console.log('[5] DDL 契約（原子性 / JST / 最小権限）');
     '原子的 consume（ON CONFLICT DO UPDATE ... WHERE used < limit）',
   );
   check(
-    !/SELECT[\s\S]{0,400}?FOR UPDATE[\s\S]{0,200}?UPDATE public\.career_daily_usage/.test(sql),
-    'SELECT してから UPDATE する非原子的な経路が無い',
+    !/SELECT[\s\S]{0,400}?FOR UPDATE[\s\S]{0,200}?UPDATE public\.career_daily_usage\s+SET used/.test(sql),
+    'SELECT してから UPDATE する非原子的な counter 更新が無い',
+  );
+  // 実行状態の state machine（本 Phase の核心）。
+  check(
+    /state\s+text\s+NOT NULL DEFAULT 'in_flight'/.test(sql) &&
+      /CHECK \(state IN \('in_flight', 'settled'\)\)/.test(sql),
+    'operation は実行状態（in_flight / settled）を持つ',
+  );
+  check(
+    /v_reusable := v_op\.state = 'in_flight'[\s\S]{0,240}?dedupe_hits < p_max_dedupe_hits/.test(sql),
+    'dedupe は in_flight かつ lease 内かつ畳み上限内のときだけ効く',
+  );
+  check(
+    /started_at > now\(\) - make_interval\(secs => p_lease_seconds\)/.test(sql),
+    'settle されない stale in_flight は lease で回収される（永久無料の穴が無い）',
+  );
+  check(
+    /executions = executions \+ 1/.test(sql),
+    'settled 後の同一 digest は新しい実行として再 arm される（明示的な再実行 = +1）',
+  );
+  check(
+    /FOR UPDATE;/.test(sql),
+    '既存 operation 行は FOR UPDATE で lock してから判定する（並行再送の直列化）',
+  );
+  check(
+    /CREATE OR REPLACE FUNCTION public\.career_daily_quota_settle/.test(sql) &&
+      /SET state = 'settled', settled_at = now\(\)[\s\S]{0,300}?AND state = 'in_flight'/.test(sql),
+    'settle function は冪等（in_flight のときだけ settled にする）',
+  );
+  check(
+    !/p_operation_ids|windowSeconds|bucket/.test(sql),
+    'operation は時間 bucket を持たない（時刻依存の誤 dedupe が無い）',
   );
   check(
     /now\(\) AT TIME ZONE 'Asia\/Tokyo'/.test(sql),
     '日付は DB 側で JST 判定（client 時計を受け取らない）',
   );
+  // 公開 entry point（consume / settle）が日付・現在時刻を引数で受け取らないこと。
+  //   内部 helper（increment / used）は consume が JST で決めた日付を渡すだけなので対象外。
+  const consumeSig = sql.slice(
+    sql.indexOf('CREATE OR REPLACE FUNCTION public.career_daily_quota_consume('),
+    sql.indexOf('RETURNS TABLE'),
+  );
+  const settleSig = sql.slice(
+    sql.indexOf('CREATE OR REPLACE FUNCTION public.career_daily_quota_settle('),
+    sql.indexOf('RETURNS void'),
+  );
   check(
-    !/p_date|p_usage_date|p_now|p_today/.test(sql),
+    !/p_date|p_usage_date|p_now|p_today/.test(consumeSig + settleSig),
     '日付 / 現在時刻を引数で受け取っていない（client 由来の日付を信用しない）',
   );
   check(
@@ -526,9 +732,46 @@ console.log('[5] DDL 契約（原子性 / JST / 最小権限）');
       !/GRANT SELECT ON public\.career_daily_usage_operations TO authenticated/.test(sql),
     'owner が読めるのは counter のみ（dedupe 台帳は server 内部）',
   );
+  // ★ PostgreSQL は関数作成時に PUBLIC へ EXECUTE を暗黙付与する。
+  //   明示的に REVOKE しないと anon / authenticated が PostgREST 経由で RPC を直接叩き、
+  //   user_id / feature / limit / operation_id を偽装できてしまう。
+  const QUOTA_FNS = [
+    'career_daily_quota_consume',
+    'career_daily_quota_increment',
+    'career_daily_quota_used',
+    'career_daily_quota_settle',
+  ];
+  const revokeBlock = sql.slice(sql.indexOf('FOREACH v_sig IN ARRAY'));
+  for (const fn of QUOTA_FNS) {
+    check(
+      new RegExp(`public\\.${fn}\\(`).test(revokeBlock),
+      `${fn}: 権限剥奪の対象に含まれている`,
+    );
+  }
   check(
-    /REVOKE ALL ON FUNCTION public\.career_daily_quota_consume[\s\S]{0,400}?GRANT EXECUTE ON FUNCTION public\.career_daily_quota_consume\(uuid, text, text\[\], int\) TO service_role/.test(sql),
-    'RPC の EXECUTE は service_role のみ（client から直接叩けない）',
+    /REVOKE ALL ON FUNCTION %s FROM PUBLIC/.test(revokeBlock),
+    'PUBLIC への暗黙 EXECUTE を明示的に剥奪している',
+  );
+  check(
+    /REVOKE ALL ON FUNCTION %s FROM anon/.test(revokeBlock) &&
+      /REVOKE ALL ON FUNCTION %s FROM authenticated/.test(revokeBlock),
+    'anon / authenticated から EXECUTE を剥奪している',
+  );
+  check(
+    /GRANT EXECUTE ON FUNCTION %s TO service_role/.test(revokeBlock),
+    'EXECUTE は service_role にだけ付与している',
+  );
+  check(
+    (sql.match(/^SECURITY DEFINER$/gm) ?? []).length === QUOTA_FNS.length,
+    `全 quota 関数が SECURITY DEFINER（${QUOTA_FNS.length}）`,
+  );
+  check(
+    (sql.match(/^SET search_path = public, pg_temp$/gm) ?? []).length === QUOTA_FNS.length,
+    '全 quota 関数で search_path を固定（SECURITY DEFINER の乗っ取り面を塞ぐ）',
+  );
+  check(
+    /p_limit IS NULL OR p_limit <= 0 OR p_limit > 1000/.test(sql),
+    'p_limit は範囲検証される（呼び出し側の異常値を通さない）',
   );
   // feature 語彙が TS と一致していること。
   const chk = sql.match(/career_daily_usage_feature_chk CHECK \(\s*feature IN \(([\s\S]*?)\)\s*\)/);
@@ -569,12 +812,33 @@ console.log('[6] route 配線契約（anchor だけが消費 / guard の後 / AI
 
     check(postAt >= 0, `${anchor.route}: POST handler がある`);
     const quotaAt = postSrc.search(ENFORCE);
+    // gate の受け取り方（429 をそのまま返す）。
+    check(
+      /if \(quota\.blocked\) return quota\.blocked;/.test(postSrc),
+      `${anchor.route}: 上限到達の 429 をそのまま返す`,
+    );
+    // settle は成功パスに 1 箇所だけ。
+    const settleCalls = [...postSrc.matchAll(/quota\.settle\(\)/g)].length;
+    check(settleCalls === 1, `${anchor.route}: settle を成功パスに 1 度だけ置く（${settleCalls} 箇所）`);
     // guard（identity / rate limit / body 上限）より後ろ。
     const guardAt = postSrc.search(/guard(CareerAiRequest|EsRequest|InterviewRequest|PresentationRequest)\s*\(|authenticateGdMember\s*\(/);
     check(guardAt >= 0 && guardAt < quotaAt, `${anchor.route}: quota は identity/rate limit guard より後`);
     // AI 呼び出しより前。
     const aiAt = postSrc.search(/anthropic\.messages\.create|generateRoomFeedback|generateCareerGdSummary|handleSelfAnalysisJobPost/);
     check(aiAt < 0 || quotaAt < aiAt, `${anchor.route}: quota は AI 実行より前（上限到達なら AI コール 0 回）`);
+    // settle は AI 実行より後（＝ 成功が確定してから記録する）。
+    const settleAt = postSrc.search(/quota\.settle\(\)/);
+    check(
+      settleAt > quotaAt && (aiAt < 0 || settleAt > aiAt),
+      `${anchor.route}: settle は consume と AI 実行より後にある`,
+    );
+    // settle は成功レスポンスの直前にある（失敗パスでは settle しない）。
+    const afterSettle = settleAt >= 0 ? postSrc.slice(settleAt, settleAt + 260) : '';
+    check(
+      /return (Response\.json\(|jobResponse;)/.test(afterSettle) &&
+        !/status:\s*(4|5)\d\d/.test(afterSettle),
+      `${anchor.route}: settle は成功レスポンス直前にある（失敗パスでは settle しない）`,
+    );
     // 上限値の直書き禁止。
     check(
       !new RegExp(`limit:\\s*${getCareerDailyLimit(anchor.feature)}\\b`).test(src),
@@ -648,8 +912,27 @@ console.log('[7] security / failure semantics');
     'client 申告の userId / plan / limit / used / feature を読まない',
   );
   check(
-    !/operationId\s*\?\?|input\.operationId|body\.operationId/.test(opid + enforce),
-    'operation id は server が計算する（client 指定 id を受け取らない）',
+    !/body\.operationId|headers\.get\(['"][xX]-.*[Oo]peration/.test(opid + enforce),
+    'operation id は server が計算する（client 指定 id / header を受け取らない）',
+  );
+  check(
+    /leaseSeconds: CAREER_QUOTA_LEASE_SECONDS/.test(enforce) &&
+      /maxDedupeHits: CAREER_QUOTA_MAX_DEDUPE_HITS/.test(enforce),
+    'lease / 畳み上限は server 定数から渡す（route ごとに書き換えられない）',
+  );
+  check(
+    /limit = getCareerDailyLimit\(feature\)/.test(enforce),
+    '上限値は limits.ts の正本から解決する（client からも route からも渡させない）',
+  );
+  // settle は成功時だけ（enforce 側に「失敗でも settle」する経路が無い）。
+  check(
+    /settle: async \(\) => \{\}/.test(enforce),
+    '上限到達 gate の settle は no-op（ブロック時に実行を記録しない）',
+  );
+  const repoSrc = stripComments(read('lib/careerQuota/repository.server.ts'));
+  check(
+    /p_operation_id: input\.operationId/.test(repoSrc) && !/p_operation_ids/.test(repoSrc),
+    'RPC には単一の server 計算 operation id を渡す',
   );
   check(
     /getCareerServiceRoleSupabaseClient/.test(enforce),

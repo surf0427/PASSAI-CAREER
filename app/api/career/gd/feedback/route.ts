@@ -187,12 +187,12 @@ export async function POST(req: Request) {
   //   ★ GD bucket はソロ / マルチ共通。マルチ側は room 単位で
   //     /api/career/gd/room/[roomId]/result が消費する（room 作成・参加・発言は消費しない）。
   //   ★ 入力検証（テーマ / 本人 / 発言 0 件）の**後**、AI 到達**前**に置く。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'gd',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   // ── STEP-GD-31: User Data Spine（ソロ GD 評価）──
   //    ソロは client が transcript を送る stateless route だが、評価の宛先合わせのために
@@ -333,6 +333,9 @@ export async function POST(req: Request) {
         });
     }
 
+    // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+    //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+    await quota.settle();
     return Response.json({
       feedbacks,
       selfCompanyGrade: selfFeedback.companyGrade,

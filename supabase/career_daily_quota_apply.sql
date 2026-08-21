@@ -66,15 +66,32 @@ CREATE TABLE IF NOT EXISTS career_daily_usage_operations (
   usage_date_jst date        NOT NULL,
   -- server が request 内容から計算した digest（client 指定の id ではない / PII を含まない）。
   operation_id   text        NOT NULL,
+
+  -- 実行状態。dedupe は「まだ完了していない実行への再送」だけに効かせる。
+  --   in_flight … 実行中（この間に来た同一 digest の request は retry / 二重送信）
+  --   settled   … 実行が成功して結果を返し終わった（以降の同一 digest は **新しい実行**）
+  state          text        NOT NULL DEFAULT 'in_flight',
+  -- in_flight 中に畳んだ再送の回数。上限を超えたら dedupe をやめる（コスト増幅の上限）。
+  dedupe_hits    int         NOT NULL DEFAULT 0,
+  -- この operation が消費した回数（＝ ユーザーが明示的に実行し直した回数）。
+  executions     int         NOT NULL DEFAULT 1,
+
+  started_at     timestamptz NOT NULL DEFAULT now(),
+  settled_at     timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
 
   CONSTRAINT career_daily_usage_operations_pkey
-    PRIMARY KEY (user_id, feature, usage_date_jst, operation_id)
+    PRIMARY KEY (user_id, feature, usage_date_jst, operation_id),
+  CONSTRAINT career_daily_usage_operations_state_chk
+    CHECK (state IN ('in_flight', 'settled')),
+  CONSTRAINT career_daily_usage_operations_counts_chk
+    CHECK (dedupe_hits >= 0 AND executions >= 1)
 );
 
 COMMENT ON TABLE career_daily_usage_operations IS
-  'STEP-CAREER-DAILY-QUOTA. 同一 operation の二重消費を防ぐ台帳（server 計算の SHA-256 digest）。'
-  '同一 (user, feature, JST 日付, operation_id) は 1 行 = 利用回数 +1 は 1 度だけ。';
+  'STEP-CAREER-DAILY-QUOTA. 実行中の operation への再送だけを畳む台帳（server 計算の SHA-256 digest）。'
+  'state=in_flight のあいだの同一 digest は retry / 二重送信として +0。'
+  'settled 後の同一 digest は「ユーザーが明示的に実行し直した」＝ 新しい logical operation として +1。';
 
 -- 日次の掃除（保持ポリシー運用）のための index。
 CREATE INDEX IF NOT EXISTS career_daily_usage_operations_date_idx
@@ -123,24 +140,95 @@ REVOKE ALL ON public.career_daily_usage_operations FROM authenticated;
 GRANT ALL ON public.career_daily_usage_operations TO service_role;
 
 -- ----------------------------------------------------------------------------
--- §6 atomic consume function
+-- §6 counter helpers — 条件付き UPSERT による原子的 +1。
+--
+--   conflict 時は行 lock を取ったうえで **最新値**に対して `used < p_limit` を
+--   評価するため、並行 request が上限を追い越せない。条件を満たさなければ
+--   1 行も返らず、NULL（= 上限到達）を返す。
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.career_daily_quota_increment(
+  p_user_id uuid,
+  p_feature text,
+  p_date    date,
+  p_limit   int
+)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_used int;
+BEGIN
+  INSERT INTO public.career_daily_usage (user_id, feature, usage_date_jst, used)
+  VALUES (p_user_id, p_feature, p_date, 1)
+  ON CONFLICT (user_id, feature, usage_date_jst) DO UPDATE
+    SET used = career_daily_usage.used + 1
+    WHERE career_daily_usage.used < p_limit
+  RETURNING career_daily_usage.used INTO v_used;
+
+  RETURN v_used;
+END $$;
+
+-- 現在の used（行が無ければ 0、上限到達時は limit へ丸めない素の値）。
+CREATE OR REPLACE FUNCTION public.career_daily_quota_used(
+  p_user_id uuid,
+  p_feature text,
+  p_date    date,
+  p_limit   int
+)
+RETURNS int
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(
+    (SELECT u.used FROM public.career_daily_usage u
+      WHERE u.user_id = p_user_id AND u.feature = p_feature AND u.usage_date_jst = p_date),
+    0
+  );
+$$;
+
+-- ----------------------------------------------------------------------------
+-- §6.1 atomic consume function
 --
 --   check と consume を **1 statement の中**で決める。SELECT してから UPDATE する
 --   実装だと、残り 1 回に 2 request が同時に来たとき両方 ALLOW になりうる。
 --
+--   ★ dedupe の意味論（本 function の中核）
+--
+--     「同じ入力内容なら永久に同一 operation」にしてはいけない。それだと
+--     ユーザーが明示的に「もう一度添削 / 再分析 / 再評価」しても消費されず、
+--     同じ内容を繰り返すだけで上限を無限に迂回できてしまう。
+--
+--     そこで operation は **実行状態**を持つ:
+--       - in_flight（実行中）に届いた同一 digest … retry / 二重送信 / timeout 後の再送
+--                                                  → DEDUPED（+0）
+--       - settled（成功して返し終わった）後の同一 digest
+--                                                  … ユーザーによる明示的な再実行
+--                                                  → CONSUMED（+1・再 arm）
+--     これで「事故の重複は無料 / 意図した再実行は課金」が成立する。
+--
+--     コスト増幅の上限（濫用対策）:
+--       - dedupe_hits が p_max_dedupe_hits に達したら、以降は畳まず消費する。
+--         同一 request を並列に浴びせても「1 消費で無制限の AI 実行」にならない。
+--       - settle されないまま p_lease_seconds を過ぎた in_flight は stale とみなし、
+--         次の同一 digest は新しい実行として消費する（crash / 強制中断で
+--         永久に無料になる穴を塞ぐ）。
+--
 --   outcome:
 --     CONSUMED      利用回数を +1 した（呼び出し側は AI を実行してよい）
---     DEDUPED       同一 operation を既に計上済み（+0 で実行してよい＝ retry / 二重送信）
+--     DEDUPED       実行中の同一 operation への再送（+0 で実行してよい）
 --     LIMIT_REACHED 本日の上限に到達（呼び出し側は 429 を返し AI を呼ばない）
---
---   引数 p_operation_ids は「同一操作とみなす id の候補列」。[1] が canonical
---   （実際に記録する id）で、以降は時間 bucket 境界の別名。
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.career_daily_quota_consume(
-  p_user_id       uuid,
-  p_feature       text,
-  p_operation_ids text[],
-  p_limit         int
+  p_user_id         uuid,
+  p_feature         text,
+  p_operation_id    text,
+  p_limit           int,
+  p_lease_seconds   int,
+  p_max_dedupe_hits int
 )
 RETURNS TABLE (
   outcome      text,
@@ -153,87 +241,163 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_date      date;
-  v_reset     timestamptz;
-  v_used      int;
-  v_canonical text;
+  v_date     date;
+  v_reset    timestamptz;
+  v_used     int;
+  v_op       public.career_daily_usage_operations%ROWTYPE;
+  v_reusable boolean;
 BEGIN
   IF p_user_id IS NULL
      OR p_feature IS NULL OR p_feature = ''
-     OR p_operation_ids IS NULL OR array_length(p_operation_ids, 1) IS NULL
-     OR p_limit IS NULL OR p_limit <= 0 THEN
+     OR p_operation_id IS NULL OR p_operation_id = ''
+     OR p_limit IS NULL OR p_limit <= 0 OR p_limit > 1000
+     OR p_lease_seconds IS NULL OR p_lease_seconds <= 0
+     OR p_max_dedupe_hits IS NULL OR p_max_dedupe_hits < 0 THEN
     RAISE EXCEPTION 'career_daily_quota_consume: missing/invalid argument';
   END IF;
 
   -- 日付権威は **DB の JST**。client 時計・呼び出し側の日付は一切受け取らない。
-  v_date      := (now() AT TIME ZONE 'Asia/Tokyo')::date;
-  v_reset     := ((v_date + 1)::timestamp AT TIME ZONE 'Asia/Tokyo');
-  v_canonical := p_operation_ids[1];
+  v_date  := (now() AT TIME ZONE 'Asia/Tokyo')::date;
+  v_reset := ((v_date + 1)::timestamp AT TIME ZONE 'Asia/Tokyo');
 
-  -- (1) 既に計上済みの operation か（retry / 二重送信 / reload 後の再送）。
-  IF EXISTS (
-    SELECT 1 FROM public.career_daily_usage_operations o
-    WHERE o.user_id = p_user_id
-      AND o.feature = p_feature
-      AND o.usage_date_jst = v_date
-      AND o.operation_id = ANY (p_operation_ids)
-  ) THEN
-    SELECT u.used INTO v_used
-    FROM public.career_daily_usage u
-    WHERE u.user_id = p_user_id AND u.feature = p_feature AND u.usage_date_jst = v_date;
-    RETURN QUERY SELECT 'DEDUPED'::text, COALESCE(v_used, 0), p_limit, v_reset;
-    RETURN;
-  END IF;
-
-  -- (2) operation を先に確保する。同一 operation の同時 2 request は
-  --     ここで 1 本だけが勝ち、負けた側は DEDUPED（+0 で実行可）になる。
-  INSERT INTO public.career_daily_usage_operations (user_id, feature, usage_date_jst, operation_id)
-  VALUES (p_user_id, p_feature, v_date, v_canonical)
+  -- (1) 新規 operation を原子的に試みる。勝てば「初回実行」。
+  INSERT INTO public.career_daily_usage_operations (
+    user_id, feature, usage_date_jst, operation_id, state, dedupe_hits, executions, started_at
+  ) VALUES (
+    p_user_id, p_feature, v_date, p_operation_id, 'in_flight', 0, 1, now()
+  )
   ON CONFLICT (user_id, feature, usage_date_jst, operation_id) DO NOTHING;
 
-  IF NOT FOUND THEN
-    SELECT u.used INTO v_used
-    FROM public.career_daily_usage u
-    WHERE u.user_id = p_user_id AND u.feature = p_feature AND u.usage_date_jst = v_date;
-    RETURN QUERY SELECT 'DEDUPED'::text, COALESCE(v_used, 0), p_limit, v_reset;
+  IF FOUND THEN
+    v_used := public.career_daily_quota_increment(p_user_id, p_feature, v_date, p_limit);
+    IF v_used IS NULL THEN
+      -- 上限到達。予約した operation 行は残さない（翌日の同一操作を潰さないため）。
+      DELETE FROM public.career_daily_usage_operations
+      WHERE user_id = p_user_id AND feature = p_feature
+        AND usage_date_jst = v_date AND operation_id = p_operation_id;
+      RETURN QUERY SELECT 'LIMIT_REACHED'::text, public.career_daily_quota_used(p_user_id, p_feature, v_date, p_limit), p_limit, v_reset;
+      RETURN;
+    END IF;
+    RETURN QUERY SELECT 'CONSUMED'::text, v_used, p_limit, v_reset;
     RETURN;
   END IF;
 
-  -- (3) 原子的 consume。conflict 時は行 lock を取ったうえで最新値に対して
-  --     `used < p_limit` を評価するため、並行 request が上限を追い越せない。
-  --     条件を満たさなければ **1 行も返らない** ＝ 上限到達。
-  INSERT INTO public.career_daily_usage (user_id, feature, usage_date_jst, used)
-  VALUES (p_user_id, p_feature, v_date, 1)
-  ON CONFLICT (user_id, feature, usage_date_jst) DO UPDATE
-    SET used = career_daily_usage.used + 1
-    WHERE career_daily_usage.used < p_limit
-  RETURNING career_daily_usage.used INTO v_used;
+  -- (2) 既存 operation。行 lock を取り、並行する同一 digest の判定を直列化する。
+  SELECT * INTO v_op
+  FROM public.career_daily_usage_operations
+  WHERE user_id = p_user_id AND feature = p_feature
+    AND usage_date_jst = v_date AND operation_id = p_operation_id
+  FOR UPDATE;
 
+  -- 実行中 かつ lease 内 かつ 畳み上限内 → retry / 二重送信として +0。
+  v_reusable := v_op.state = 'in_flight'
+            AND v_op.started_at > now() - make_interval(secs => p_lease_seconds)
+            AND v_op.dedupe_hits < p_max_dedupe_hits;
+
+  IF v_reusable THEN
+    UPDATE public.career_daily_usage_operations
+    SET dedupe_hits = dedupe_hits + 1
+    WHERE user_id = p_user_id AND feature = p_feature
+      AND usage_date_jst = v_date AND operation_id = p_operation_id;
+    RETURN QUERY SELECT 'DEDUPED'::text, public.career_daily_quota_used(p_user_id, p_feature, v_date, p_limit), p_limit, v_reset;
+    RETURN;
+  END IF;
+
+  -- (3) settled / stale / 畳み上限超過 → **新しい logical operation** として消費する。
+  v_used := public.career_daily_quota_increment(p_user_id, p_feature, v_date, p_limit);
   IF v_used IS NULL THEN
-    -- 上限到達。予約した operation 行は残さない（明日の同一操作を潰さないため）。
-    DELETE FROM public.career_daily_usage_operations
-    WHERE user_id = p_user_id
-      AND feature = p_feature
-      AND usage_date_jst = v_date
-      AND operation_id = v_canonical;
-
-    SELECT u.used INTO v_used
-    FROM public.career_daily_usage u
-    WHERE u.user_id = p_user_id AND u.feature = p_feature AND u.usage_date_jst = v_date;
-    RETURN QUERY SELECT 'LIMIT_REACHED'::text, COALESCE(v_used, p_limit), p_limit, v_reset;
+    -- 既存行は消さない（過去の実行記録であり、予約ではない）。
+    RETURN QUERY SELECT 'LIMIT_REACHED'::text, public.career_daily_quota_used(p_user_id, p_feature, v_date, p_limit), p_limit, v_reset;
     RETURN;
   END IF;
+
+  UPDATE public.career_daily_usage_operations
+  SET state = 'in_flight',
+      dedupe_hits = 0,
+      executions = executions + 1,
+      started_at = now(),
+      settled_at = NULL
+  WHERE user_id = p_user_id AND feature = p_feature
+    AND usage_date_jst = v_date AND operation_id = p_operation_id;
 
   RETURN QUERY SELECT 'CONSUMED'::text, v_used, p_limit, v_reset;
 END $$;
 
--- 実行権限は service_role のみ（client から直接 RPC できない）。
-REVOKE ALL ON FUNCTION public.career_daily_quota_consume(uuid, text, text[], int) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.career_daily_quota_consume(uuid, text, text[], int) FROM anon;
-REVOKE ALL ON FUNCTION public.career_daily_quota_consume(uuid, text, text[], int) FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.career_daily_quota_consume(uuid, text, text[], int) TO service_role;
+-- ----------------------------------------------------------------------------
+-- §7 settle function — 実行が成功して返し終わったことを記録する。
+--
+--   これ以降、同じ digest で来た request は「ユーザーが明示的に実行し直した」と
+--   みなして +1 する。冪等（何度呼んでも結果は同じ）。
+--   ★ 失敗した実行では **呼ばない**。失敗のまま in_flight を残すことで、
+--     ユーザーの再試行が二重課金にならない（lease 切れで自然に回収される）。
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.career_daily_quota_settle(
+  p_user_id      uuid,
+  p_feature      text,
+  p_operation_id text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_user_id IS NULL
+     OR p_feature IS NULL OR p_feature = ''
+     OR p_operation_id IS NULL OR p_operation_id = '' THEN
+    RAISE EXCEPTION 'career_daily_quota_settle: missing/invalid argument';
+  END IF;
 
-COMMENT ON FUNCTION public.career_daily_quota_consume(uuid, text, text[], int) IS
+  UPDATE public.career_daily_usage_operations
+  SET state = 'settled', settled_at = now()
+  WHERE user_id = p_user_id
+    AND feature = p_feature
+    AND usage_date_jst = (now() AT TIME ZONE 'Asia/Tokyo')::date
+    AND operation_id = p_operation_id
+    AND state = 'in_flight';
+END $$;
+
+-- ----------------------------------------------------------------------------
+-- §8 実行権限 — browser / anon / authenticated からは一切呼べない。
+--
+--   ★ PostgreSQL は関数作成時に PUBLIC へ EXECUTE を暗黙付与する。明示的に
+--     REVOKE しないと anon / authenticated が PostgREST 経由で RPC を直接叩き、
+--     user_id / feature / limit / operation_id を偽装できてしまう。
+--   ★ したがって全 quota 関数について PUBLIC / anon / authenticated から剥奪し、
+--     service_role にだけ EXECUTE を与える（server 経由のみ）。
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_sig text;
+BEGIN
+  FOREACH v_sig IN ARRAY ARRAY[
+    'public.career_daily_quota_consume(uuid, text, text, int, int, int)',
+    'public.career_daily_quota_increment(uuid, text, date, int)',
+    'public.career_daily_quota_used(uuid, text, date, int)',
+    'public.career_daily_quota_settle(uuid, text, text)'
+  ] LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', v_sig);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM anon', v_sig);
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM authenticated', v_sig);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', v_sig);
+  END LOOP;
+END $$;
+
+COMMENT ON FUNCTION public.career_daily_quota_consume(uuid, text, text, int, int, int) IS
   'STEP-CAREER-DAILY-QUOTA. 日次利用回数の原子的 check + consume。'
   'JST 日付は本 function 内で決定（client 時計を信用しない）。'
-  'outcome=CONSUMED / DEDUPED / LIMIT_REACHED。';
+  'in_flight 中の同一 digest は DEDUPED（retry）/ settled 後は CONSUMED（明示的な再実行）。'
+  'EXECUTE は service_role のみ。';
+
+COMMENT ON FUNCTION public.career_daily_quota_settle(uuid, text, text) IS
+  'STEP-CAREER-DAILY-QUOTA. 実行成功の記録（冪等）。以降の同一 digest は新しい実行として消費される。';
+
+-- ----------------------------------------------------------------------------
+-- §9 適用後の確認（SQL Editor で実行して 4 行とも service_role のみになること）
+--
+--   SELECT p.proname, p.prosecdef, array_to_string(p.proacl, ' | ') AS acl
+--   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--   WHERE n.nspname = 'public' AND p.proname LIKE 'career_daily_quota%';
+--
+--   期待: prosecdef = true、acl に anon= / authenticated= / PUBLIC の EXECUTE が無い。
+-- ----------------------------------------------------------------------------

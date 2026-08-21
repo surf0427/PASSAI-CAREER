@@ -191,14 +191,15 @@ export async function POST(req: Request) {
 
   // 日次利用回数（PASSAI Career BASIC / プレゼン = 1 セッション 1 回）。
   //   ★ anchor は評価だけ。同一セッションの theme / Q&A は消費しない。
-  //   ★ 同一 transcript の再送（retry / 二重送信）は operation dedupe で +0。
+  //   ★ 実行中の同一 transcript への再送（retry / 二重送信）は +0。評価が返った後の
+  //     再評価は、内容が同じでも明示的な再実行なので +1。
   //   ★ 入力検証（空 / 長すぎ）の**後**、AI 到達**前**に置く。
-  const quotaBlocked = await enforceCareerDailyQuota({
+  const quota = await enforceCareerDailyQuota({
     identity: guard.identity,
     feature: 'presentation',
     operationSource: body,
   });
-  if (quotaBlocked) return quotaBlocked;
+  if (quota.blocked) return quota.blocked;
 
   const config = b.config ?? null;
   const theme = str(b.theme);
@@ -322,6 +323,9 @@ export async function POST(req: Request) {
       );
     }
 
+    // 実行が成功した。以降、同じ入力で来た request は「ユーザーが明示的に
+    //   実行し直した」＝ 新しい 1 回として消費される（retry は in_flight 中のみ +0）。
+    await quota.settle();
     return Response.json({ result });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
