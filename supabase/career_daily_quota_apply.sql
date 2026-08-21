@@ -28,7 +28,34 @@
 --   / DO ブロックの trigger 存在チェック / REVOKE・GRANT は自然に冪等）。
 --
 -- 適用: Supabase SQL Editor（Project B / CAREER）で本ファイル全文を実行。
+--   ★ Claude Code からは適用しない（この環境に DDL 実行手段が無い）。operator 手動。
+--   ★ 適用後、下の「適用状態」を更新すること。
+--
+-- 適用状態: **未適用**（2026-08-22 時点 / Project B の read-only probe で確認:
+--   career_daily_usage・career_daily_usage_operations = PGRST205、
+--   career_daily_quota_consume・_settle = PGRST202）。
+--
+-- 前提: 本ファイルは **単体で適用できる**（依存する set_updated_at() を下で
+--   冪等に定義するため、他の career DDL の適用順序に依存しない）。
 -- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- §0 updated_at を UPDATE 毎に自動更新する共通トリガ関数。
+--
+--   他の career DDL（career_billing_apply.sql / schema.sql §3）と同一定義。
+--   ★ ここで冪等に定義しておかないと、この関数が未定義の DB へ本ファイルを単体適用
+--     したときに §3 の CREATE TRIGGER が落ちる（実 Postgres で再現確認済み）。
+--     既に定義済みの DB では CREATE OR REPLACE が同じ内容で上書きするだけ。
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at := timezone('utc', now());
+  RETURN NEW;
+END;
+$$;
 
 -- ----------------------------------------------------------------------------
 -- §1 counter table（user × feature × JST 日付 で 1 行）
@@ -98,7 +125,7 @@ CREATE INDEX IF NOT EXISTS career_daily_usage_operations_date_idx
   ON career_daily_usage_operations (usage_date_jst);
 
 -- ----------------------------------------------------------------------------
--- §3 updated_at trigger（schema.sql §3 の set_updated_at() を冪等に張る）
+-- §3 updated_at trigger（§0 の set_updated_at() を冪等に張る）
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
