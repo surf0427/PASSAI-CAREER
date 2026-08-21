@@ -63,6 +63,11 @@ const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
 
+// 出力上限。実測 throughput は約 52〜56 tok/s で、per-call 60s に収まる上限は約 3000 tok。
+//   ★ 旧実装はこの 3000 に対して出力契約が大きすぎ（配列 4 種で最大 28 件 + fitAnalysis 6 項目
+//     + 要約 3〜5 文）、実在企業の入力で **恒常的に truncate（502）** していた。
+//     上限を上げると今度は 60s を超えて abort するため、出力契約側を締めて収める
+//     （評価・すり合わせ項目は 1 つも削らず、件数と 1 件あたりの長さだけを縛る）。
 const MAX_TOKENS = 3000;
 
 const BREAKDOWN_KEYS = [
@@ -203,13 +208,13 @@ const RESEARCHER_PERSONA = [
   '',
   '【すり合わせ（fitAnalysis）】',
   '与えられた本人情報（自己分析・就活軸・活動整理・マッチング結果）と、この企業研究を照らし合わせます。',
-  '- selfAnalysisFit / valuesFit / activityFit / matchingFit: それぞれの情報との整合を 1〜3 文で述べる。',
+  '- selfAnalysisFit / valuesFit / activityFit / matchingFit: それぞれの情報との整合を 1〜2 文で述べる。',
   '  対象情報が与えられていない／不足している場合は、無理に断定せず「情報が不足している」と述べてください。',
   '- gaps: 本人情報と研究内容のギャップ・確認すべき点（配列）。',
   '- strengthsToUse: この企業で活かせる本人の強み（配列）。',
   '',
   '【面接連携要約（interviewContextSummary）】',
-  '後で面接練習機能に渡すための短い要約（3〜5文程度）を作ってください。',
+  '後で面接練習機能に渡すための短い要約（3文程度）を作ってください。',
   'この企業に対して本人が語れる志望の核・接点・まだ弱い論点を、面接官AIが文脈として使える形でまとめます。',
   '研究メモに無い事実を足さないでください。',
   '',
@@ -223,6 +228,8 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '出力は次の JSON オブジェクトのみとし、前後に説明文・コードブロック記号（```）を一切付けないでください。',
   '出力の 1 文字目が { 、最後の文字が } であること。配列は該当が無ければ空配列 [] にする（キーは省略しない）。',
   'すべてのコメント・指摘は、断定を避けた添削者の文体（です・ます調）で日本語で書いてください。',
+  // 出力長の契約（runtime budget 内に収めるための上限。項目は 1 つも削っていない）。
+  '配列は 1 要素 1 文（40字以内）で書き、同じ内容を言い換えて繰り返さないでください。',
   '',
   '{',
   '  "review": {',
@@ -235,20 +242,20 @@ const OUTPUT_FORMAT_INSTRUCTION = [
   '      "depthOfThought": number,          // 0〜100',
   '      "motivationConnection": number     // 0〜100',
   '    },',
-  '    "goodPoints": string[],              // よく調べられている/考察が良い点（最大6件）',
-  '    "missingInfo": string[],             // 不足している情報・調べきれていない観点（最大8件）',
-  '    "weakAssumptions": string[],         // 思い込み・根拠不足・断定しすぎの指摘（最大6件）',
-  '    "nextResearchActions": string[]      // 次に調べるべき具体的アクション（最大8件）',
+  '    "goodPoints": string[],              // よく調べられている/考察が良い点（最大3件）',
+  '    "missingInfo": string[],             // 不足している情報・調べきれていない観点（最大4件）',
+  '    "weakAssumptions": string[],         // 思い込み・根拠不足・断定しすぎの指摘（最大3件）',
+  '    "nextResearchActions": string[]      // 次に調べるべき具体的アクション（最大4件）',
   '  },',
   '  "fitAnalysis": {',
-  '    "selfAnalysisFit": string,           // 自己分析との整合（1〜3文。無ければ不足と述べる）',
-  '    "valuesFit": string,                 // 就活軸との整合（1〜3文）',
-  '    "activityFit": string,               // 活動・経験との整合（1〜3文）',
-  '    "matchingFit": string,               // 企業マッチング結果との整合（1〜3文）',
-  '    "gaps": string[],                    // 本人情報とのギャップ・確認すべき点（最大6件）',
-  '    "strengthsToUse": string[]           // この企業で活かせる本人の強み（最大6件）',
+  '    "selfAnalysisFit": string,           // 自己分析との整合（1〜2文。無ければ不足と述べる）',
+  '    "valuesFit": string,                 // 就活軸との整合（1〜2文）',
+  '    "activityFit": string,               // 活動・経験との整合（1〜2文）',
+  '    "matchingFit": string,               // 企業マッチング結果との整合（1〜2文）',
+  '    "gaps": string[],                    // 本人情報とのギャップ・確認すべき点（最大3件）',
+  '    "strengthsToUse": string[]           // この企業で活かせる本人の強み（最大3件）',
   '  },',
-  '  "interviewContextSummary": string      // 面接機能へ渡す文脈要約（3〜5文）',
+  '  "interviewContextSummary": string      // 面接機能へ渡す文脈要約（3文）',
   '}',
 ].join('\n');
 
@@ -421,16 +428,20 @@ export async function POST(req: Request) {
           { status: 502 },
         );
       }
-      const message = await anthropic.messages.create(
-        {
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          temperature: attempt === 2 ? 0 : 0.4,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMessage }],
-        },
-        { signal: createTimeoutSignal(callTimeoutMs) },
-      );
+      // ★ streaming で受ける（長い出力での HTTP timeout 回避。Anthropic の推奨既定）。
+      //   受け取り方が変わるだけで、prompt・model・temperature・schema は不変。
+      const message = await anthropic.messages
+        .stream(
+          {
+            model: MODEL,
+            max_tokens: MAX_TOKENS,
+            temperature: attempt === 2 ? 0 : 0.4,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userMessage }],
+          },
+          { signal: createTimeoutSignal(callTimeoutMs) },
+        )
+        .finalMessage();
 
       const raw = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
