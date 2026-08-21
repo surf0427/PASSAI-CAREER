@@ -1,12 +1,16 @@
 import Link from 'next/link';
 import { LinkButton } from '@/components/ui/LinkButton';
+import { CAREER_LOGIN_PATH, CAREER_START_PATH } from '@/lib/careerLandingRoutes';
 
 // LP の締め。FAQ で不安を解消した直後の「感情に残る最後の一押し」。
 // 上から indigo→blue→white にフェードする縦グラデで「光が差す」雰囲気を作り、
 // 中央寄せの本文 → メイン CTA（/career/profile）→ サブ導線（ログイン）で締める。
 //
-// メイン CTA の遷移先は Hero と同じ /career/profile（基本情報入力・ログイン不要）。
-// 入力後は /career/home に着地する（app/career/home/page.tsx の redirect 参照）。
+// CTA の遷移先は Header 右上の LP CTA と同一（lib/careerLandingRoutes.ts に集約）。
+//   - メイン CTA … /career/profile（基本情報入力・ログイン不要）。入力後は
+//     /career/home に着地する（app/career/profile/ProfileClient.tsx の push 参照）。
+//   - サブ導線   … /career/login（redirect 無し）。既定先 /career/home へ着き、
+//     基本情報が未入力なら /career/home 側の既存 guard が /career/profile へ送る。
 
 export function ClosingCtaSection() {
   return (
@@ -54,7 +58,7 @@ export function ClosingCtaSection() {
 
         <div className="flex flex-col gap-3 max-w-md mx-auto">
           <LinkButton
-            href="/career/profile"
+            href={CAREER_START_PATH}
             variant="accent"
             size="cta"
             className="font-bold"
@@ -65,7 +69,7 @@ export function ClosingCtaSection() {
             </span>
           </LinkButton>
           <Link
-            href="/career/login?redirect=%2Fcareer%2Fprofile"
+            href={CAREER_LOGIN_PATH}
             className="inline-flex justify-center items-center bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-semibold text-sm sm:text-base px-6 py-3 rounded-xl transition-colors"
           >
             ログイン

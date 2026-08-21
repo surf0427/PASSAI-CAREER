@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ReactNode } from 'react';
 import { Logo } from '@/app/components/Logo';
+import { CAREER_LOGIN_PATH, CAREER_START_PATH } from '@/lib/careerLandingRoutes';
 
 // ── Header ────────────────────────────────────────────────────────
 // 上部ナビは「Home」と「基本情報」だけに限定する。
@@ -28,11 +29,13 @@ const LP_NAV_LINKS = [
   { href: '#faq', label: 'FAQ' },
 ] as const;
 
-// LP ヘッダーの導線は CAREER 固定。
-//   - ログイン: /career/login（redirect は同一オリジン相対パスのみ尊重される）
+// LP ヘッダーの導線は CAREER 固定。route literal は lib/careerLandingRoutes.ts に集約し、
+// ページ下部の Closing CTA と必ず同じ遷移先になるようにする。
+//   - ログイン: /career/login（redirect 無し → 既定先 /career/home。未入力なら home 側 guard が
+//               /career/profile へ送る。再訪ユーザーを基本情報フォームに戻さない）
 //   - 始める  : /career/profile（基本情報入力・ログイン不要、入力後 /career/home）
-const LP_LOGIN_HREF = '/career/login?redirect=%2Fcareer%2Fprofile';
-const LP_START_HREF = '/career/profile';
+const LP_LOGIN_HREF = CAREER_LOGIN_PATH;
+const LP_START_HREF = CAREER_START_PATH;
 
 export function Header() {
   const pathname = usePathname();
