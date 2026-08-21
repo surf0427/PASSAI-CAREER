@@ -29,13 +29,13 @@
  * 既存の burst rate limit（lib/rateLimit）とは **別レイヤー**。短時間の連打防御はそちら、
  * 商品仕様としての 1 日の利用回数は本 module。両方を通す。
  *
- * ★ ENTITLEMENT_INTEGRATION_REQUIRED（既知の限界・意図的に未解決）:
- *   CAREER の AI route は guest 利用を正式に許可しており（401 で閉じない設計）、
- *   guest には user_id が無いため本 quota の対象にできない。したがって現状
- *   「member には日次上限があるが guest には無い」。guest を突然禁止するのは
- *   今回のスコープ外（商品仕様の変更）なので、**仕様変更はせず**に限界として記録する。
- *   同様に plan（free / basic / premium）別の出し分けも行わず、member 全員に
- *   BASIC の上限を適用する（現状 repo に plan gate は 1 つも配線されていない）。
+ * ★ entitlement との関係（2026-08-21 の商品決定で解決済み）:
+ *   本 module へ到達する時点で、request は既に有料ゲート
+ *   （lib/careerBilling/aiAccess.ts）を通過している。したがって:
+ *     - guest / 未契約は quota に**到達しない**（＝ quota を消費しない）
+ *     - quota を数える対象は「有効な契約を持つ member」だけ
+ *   PASSAI CAREER は単一の有料プランなので、plan 別の上限出し分けは存在しない。
+ *   下の guest 判定は「順序を間違えて guest が来ても消費しない」ための保険である。
  */
 
 import 'server-only';
@@ -120,7 +120,7 @@ function warnOnce(message: string): void {
  *
  * fail-open（可用性優先）にしている経路と、その理由:
  *   - `CAREER_DAILY_QUOTA_DISABLED` … 明示的な無効化。
- *   - guest（user_id 無し）        … 上記 ENTITLEMENT_INTEGRATION_REQUIRED。
+ *   - guest（user_id 無し）        … 有料ゲートで既に弾かれている（保険の no-op）。
  *   - DDL 未適用 / service_role 未設定 / DB エラー
  *       … 「上限が数えられない」を理由に有料ユーザーの機能を止めない。既存 rate limit の
  *         member 経路（fail-open）と同じ判断。濫用面（未認証・短時間連打）は burst rate limit
@@ -148,7 +148,7 @@ const NOOP_GATE: CareerQuotaGate = { blocked: null, settle: async () => {} };
  *
  * fail-open（可用性優先）にしている経路と、その理由:
  *   - `CAREER_DAILY_QUOTA_DISABLED` … 明示的な無効化。
- *   - guest（user_id 無し）        … 上記 ENTITLEMENT_INTEGRATION_REQUIRED。
+ *   - guest（user_id 無し）        … 有料ゲートで既に弾かれている（保険の no-op）。
  *   - DDL 未適用 / service_role 未設定 / DB エラー
  *       … 「上限が数えられない」を理由に有料ユーザーの機能を止めない。既存 rate limit の
  *         member 経路（fail-open）と同じ判断。濫用面（未認証・短時間連打）は burst rate limit

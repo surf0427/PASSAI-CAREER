@@ -2,11 +2,11 @@
  * PASSAI CAREER — Stripe Checkout Session 作成 API。
  *
  * POST /api/career/billing/checkout
- *   body: { plan: 'basic' | 'premium' }
+ *   body: なし（読まない）
  *
  * レスポンス:
  *   200 { url }                                → client が window.location で遷移
- *   400 { error: 'BAD_REQUEST' | 'INVALID_PLAN' | 'EMAIL_REQUIRED' }
+ *   400 { error: 'EMAIL_REQUIRED' }
  *   401 { error: 'LOGIN_REQUIRED' }
  *   403 { error: 'MEMBER_REQUIRED' }
  *   409 { error: 'ALREADY_SUBSCRIBED' }        → 既契約。client は Portal へ誘導する
@@ -14,10 +14,10 @@
  *   503 { error: 'BILLING_UNCONFIGURED' | 'SUPABASE_UNAVAILABLE' | ... }
  *
  * ── security 契約（AGENTS §14 / §30）────────────────────────────────────
- *   - body から受け取るのは **plan key だけ**。priceId / userId / customerId /
- *     email / premium 等を client から受け取る経路は存在しない。
- *   - priceId は plan key → server-side allowlist（CAREER_PLANS）→ env で解決する。
- *     任意の Stripe Price ID を指定させない。
+ *   - **body を一切読まない**。plan / priceId / userId / customerId / email を
+ *     client から受け取る経路は存在しない（送られても構造上使いようが無い）。
+ *   - CAREER は単一の有料プラン。priceId は server が env（CAREER_PRICE_ENV_NAMES）
+ *     からのみ解決する。任意の Stripe Price ID も plan 選択も client に許さない。
  *   - identity は server session（Project B cookie）が唯一の正本。
  *   - Customer は career_billing_customers の 1:1 mapping から解決（重複契約防止）。
  *
@@ -39,13 +39,11 @@ import {
   getCareerBillingAdmin,
   getCareerSubscriptionState,
 } from '@/lib/careerBilling/entitlement';
-import { hasCareerPaidAccess } from '@/lib/careerBilling/entitlementPolicy';
 import { getOrCreateCareerStripeCustomer } from '@/lib/careerBilling/customer';
-import { isCareerPaidPlanId } from '@/lib/careerBilling/plans';
 import {
   getStripeClient,
-  isCareerPlanConfigured,
-  retrieveCareerPlanPrice,
+  isCareerBillingConfigured,
+  retrieveCareerPrice,
 } from '@/lib/careerBilling/stripe';
 import { CAREER_METADATA_USER_ID_KEY } from '@/lib/careerBilling/subscription';
 import { resolveCareerAppOrigin } from '@/lib/careerBilling/origin';
@@ -71,20 +69,8 @@ function jsonError(error: string, detail: string, status: number): Response {
 }
 
 export async function POST(req: Request) {
-  // ── 1) body（plan key のみ）──
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError('BAD_REQUEST', 'リクエストボディが不正です。', 400);
-  }
-  const planRaw = (body as { plan?: unknown } | null)?.plan;
-  if (!isCareerPaidPlanId(planRaw)) {
-    return jsonError('INVALID_PLAN', 'プランの指定が不正です。', 400);
-  }
-  const plan = planRaw;
-
-  // ── 2) 認証（server session が唯一の identity）──
+  // ── 1) 認証（server session が唯一の identity）──
+  //    ★ body は読まない。単一プランなので client が選ぶものは何も無い。
   const auth = await authenticateCareerMember();
   if (auth.kind === 'reject') return auth.response;
   const { userId } = auth;
@@ -105,8 +91,8 @@ export async function POST(req: Request) {
   }
   const email = auth.email;
 
-  // ── 3) 課金設定の存在確認（fail-closed。未設定なら売らない）──
-  if (!isCareerPlanConfigured(plan)) {
+  // ── 2) 課金設定の存在確認（fail-closed。未設定なら売らない）──
+  if (!isCareerBillingConfigured()) {
     return jsonError(
       'BILLING_UNCONFIGURED',
       'ただいまお申し込みを受け付けていません。',
@@ -118,7 +104,7 @@ export async function POST(req: Request) {
   if (adminResult.kind === 'reject') return adminResult.response;
   const { admin } = adminResult;
 
-  // ── 4) 二重契約の防止（AGENTS §15）──
+  // ── 3) 二重契約の防止（AGENTS §15）──
   //    既に権利が立っているユーザーには新しい Checkout を作らせず、Portal へ送る。
   const state = await getCareerSubscriptionState({ admin, userId });
   if (state.kind === 'not-provisioned') {
@@ -135,18 +121,17 @@ export async function POST(req: Request) {
       503,
     );
   }
-  if (hasCareerPaidAccess(state.snapshot.plan)) {
+  if (state.snapshot.paid) {
     return Response.json(
       {
         error: 'ALREADY_SUBSCRIBED',
-        detail: '既にご契約中です。プランの変更・解約は「契約を管理」から行えます。',
-        plan: state.snapshot.plan,
+        detail: '既にご契約中です。お支払い方法の変更・解約は「契約を管理」から行えます。',
       },
       { status: 409 },
     );
   }
 
-  // ── 5) canonical Stripe Customer（1 account : 1 customer）──
+  // ── 4) canonical Stripe Customer（1 account : 1 customer）──
   const customer = await getOrCreateCareerStripeCustomer({ admin, userId, email });
   if (customer.kind === 'db-error') {
     return jsonError(
@@ -163,7 +148,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── 6) URL / Price ──
+  // ── 5) URL / Price（server が env から解決する単一 Price）──
   const origin = resolveCareerAppOrigin(req);
   if (!origin) {
     return jsonError('ORIGIN_UNRESOLVED', 'サーバ設定が未完了です。', 503);
@@ -172,14 +157,11 @@ export async function POST(req: Request) {
   // Price は Stripe から実物を引き、**実行環境の test/live と一致すること**まで
   // 確認してから使う。未設定・不在・モード混線はいずれも「売らない」に倒す
   // （fail-closed。取り違えた Price で課金を作らせない）。
-  const priceCheck = await retrieveCareerPlanPrice(plan);
+  const priceCheck = await retrieveCareerPrice();
   if (priceCheck.kind !== 'ok') {
     // 原因は server ログにのみ残す。client には理由を出し分けない
     // （env の設定状況を外から推測させない）。
-    devWarn('[career/billing/checkout] price unusable', {
-      plan,
-      reason: priceCheck.kind,
-    });
+    devWarn('[career/billing/checkout] price unusable', { reason: priceCheck.kind });
     return jsonError(
       'BILLING_UNCONFIGURED',
       'ただいまお申し込みを受け付けていません。',
@@ -187,7 +169,7 @@ export async function POST(req: Request) {
     );
   }
   if (!priceCheck.price.active) {
-    devWarn('[career/billing/checkout] price is archived', { plan });
+    devWarn('[career/billing/checkout] price is archived');
     return jsonError(
       'BILLING_UNCONFIGURED',
       'ただいまお申し込みを受け付けていません。',
@@ -196,7 +178,7 @@ export async function POST(req: Request) {
   }
   const priceId = priceCheck.price.id;
 
-  // ── 7) Checkout Session ──
+  // ── 6) Checkout Session ──
   const params: Stripe.Checkout.SessionCreateParams = {
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],

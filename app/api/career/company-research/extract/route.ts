@@ -23,6 +23,7 @@ import type { CareerCompanyResearchExtractionStatus } from '@/types/careerCompan
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
 import { guardCareerAiUpload } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 // pdfjs / 画像 OCR は Node ランタイムが必要（Edge では動かさない）。
 export const runtime = 'nodejs';
@@ -143,6 +144,12 @@ export async function POST(req: Request): Promise<Response> {
     label: 'company-research-extract',
   });
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
 
   let form: FormData;
   try {

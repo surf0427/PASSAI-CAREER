@@ -9,7 +9,6 @@
 // 型
 export type {
   CareerAiFeatureKey,
-  CareerPlan,
   CareerProfileContext,
   CareerActivityContext,
   CareerValuesContext,
@@ -37,13 +36,6 @@ export {
   buildCareerSystemPrompt,
   buildCareerFeatureInstruction,
 } from './prompts';
-
-// usage（利用上限 設計値）
-export {
-  CAREER_PLAN_LIMITS,
-  getCareerFeatureLimit,
-  isCareerAiFeatureKey,
-} from './usage';
 
 // ログ（スタブ）
 export type {

@@ -37,6 +37,7 @@ import { resolveInterviewPersonalMemory } from '../resolvePersonalMemory';
 // P0-1（HARDENING）: 認証 identity / rate limit / body・turns サイズ上限の共通ガード。
 import { guardInterviewRequest } from '../requestGuard';
 import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 export const maxDuration = 80;
 
@@ -53,6 +54,12 @@ export async function POST(req: Request) {
   //   start は 1 面接につき 1 回。モードを選び直す程度の再開始は許す上限にしてある。
   const guard = await guardInterviewRequest(req, 'start');
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {

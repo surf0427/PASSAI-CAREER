@@ -59,6 +59,7 @@ import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.serv
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
 import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -272,6 +273,12 @@ export async function POST(req: Request) {
     badRequest: () => Response.json({ error: 'リクエストボディが不正です。' }, { status: 400 }),
   });
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {

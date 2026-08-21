@@ -4,8 +4,7 @@
  * GET /api/career/billing/status
  *
  * 200 {
- *   plan: 'free' | 'basic' | 'premium',   // ★ 権利の正本（server 導出）
- *   paid: boolean,
+ *   paid: boolean,                        // ★ 権利の正本（server 導出）。単一プランなので tier は無い
  *   subscription: { plan, status, currentPeriodEnd, cancelAtPeriodEnd } | null
  * }
  * 401 / 403 / 503 は resolveCareerEntitlement の reject をそのまま返す。
@@ -37,7 +36,6 @@ export async function GET() {
 
   return Response.json(
     {
-      plan: entitlement.plan,
       paid: entitlement.paid,
       subscription: latest
         ? {

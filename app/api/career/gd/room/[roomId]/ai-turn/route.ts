@@ -26,6 +26,7 @@ import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 import { finishRoomIfExpired } from '../../roomLifecycle';
 import { reportGdFailure } from '../../../gdObservability';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
+import { requireCareerAiAccessForUser } from '@/lib/careerBilling/aiAccess';
 export const maxDuration = 80;
 
 const MAX_UTTERANCE_CHARS = 400;
@@ -118,6 +119,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ roomId: strin
   // STEP-GD-31: AI 発言は Anthropic 課金に直結するため user 単位の上限を掛ける。
   const limited = await enforceRateLimit(auth.userId, CAREER_GD_RATE_LIMITS.aiTurn);
   if (limited) return limited;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 発言は Anthropic 課金に直結するため、
+  //   Quota を消費しない subflow でも契約確認は必須（paid gate ≠ quota unit）。
+  const accessDenied = await requireCareerAiAccessForUser(auth.userId);
+  if (accessDenied) return accessDenied;
 
   const adminRes = getGdAdmin();
   if (adminRes.kind === 'reject') return adminRes.response;

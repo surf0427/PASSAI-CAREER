@@ -54,8 +54,6 @@ export const CAREER_AI_FEATURE_LABELS: Record<CareerAiFeatureKey, string> = {
 
 // ── プラン ────────────────────────────────────────────────────────
 
-// 就活版のプラン区分。既存課金（Stripe）には未接続。usage.ts の上限設計値でのみ利用。
-export type CareerPlan = 'free' | 'basic' | 'premium';
 
 // ── プロフィールコンテキスト ──────────────────────────────────────
 

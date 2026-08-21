@@ -1,29 +1,11 @@
-// PASSAI CAREER — プレゼン AI route 共通の request guard（server-only・3 route 共有）。
-//
-// STEP-CAREER-PRESENTATION-HARDENING-P0。
-// theme / evaluate / qa は Anthropic 課金に直結する公開 endpoint でありながら、
-// 認証・rate limit・body サイズ上限のいずれも持っていなかった（Production Readiness Audit P0-1）。
-// 本 module がその 3 つを 1 箇所で担う。
-//
-// ★ 機能非依存の部分（identity 解決 / client IP / body 上限 / payload 構造検査 / 共通レスポンス）は
-//   `lib/careerApi/requestGuard.ts` にある。本 module はその上に **プレゼン固有の adapter**
-//   （operation の種類・rate limit ルール）だけを載せる。
-//
-// ★ 設計判断（guest を 401 で閉じない理由）:
-//   CAREER のプレゼン機能は **guest 利用を正式に許可**している。
-//     - `/career` は PlanGate の PROTECTED_PREFIXES に無い（課金・ログイン非ゲート）
-//     - 各画面の mirror 呼び出しは一貫して `if (userId) void upsert...`（guest は素通し）
-//     - CareerAuthProvider 自身が「env 未設定でも guest として扱い、既存機能は素通しさせる」
-//   member 必須なのは GD（マルチプレイで identity が構造的に必須）だけである。
-//   したがって本 guard は **401 を返さない**。代わりに identity を server 側で確定し、
+// ★ 設計判断（本 guard 自体は 401 を返さない）:
+//   PASSAI CAREER は **単一の有料プラン**で、AI 本実行は契約者だけが利用できる
+//   （2026-08-21 商品決定。旧「guest 利用は許可」仕様は廃止）。契約の確認は本 module
+//   ではなく `lib/careerBilling/aiAccess.ts` の requireCareerAiAccess が行う。
+//   本 guard は identity を確定して **rate limit のキーを決める**ところまでを担当する:
 //     member … user_id をキーに通常上限
 //     guest  … IP をキーに厳しめ上限（fail-closed）
-//   の 2 系統で「誰でも無制限に叩ける」状態だけを塞ぐ。
-//
-// ★ client が body に入れてくる userId 類は **認証として一切信用しない**。
-//   identity は Career Supabase（Project B）の server session cookie からのみ導く。
-//
-// 厳守: never-throw / PII・生 IP・user_id を log しない / AI 到達前に必ず判定する。
+//   順序: request guard → 有料ゲート → Daily Quota → AI。
 
 import 'server-only';
 

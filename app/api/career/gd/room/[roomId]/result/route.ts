@@ -41,6 +41,7 @@ import {
 import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
 import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
+import { requireCareerAiAccessForUser } from '@/lib/careerBilling/aiAccess';
 import { reportGdFailure } from '../../../gdObservability';
 import { resolveGdContextInputs } from '../../../resolveContextInputs';
 import { resolveGdCompanyOfficial } from '../../../resolveCompanyOfficial';
@@ -174,6 +175,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
   //   ★ 上の冪等 return（評価済み room の再取得）より**後ろ**に置く＝ AI を呼ばない経路は
   //     消費しない。評価が途中で失敗して再実行しても room が同じなら +0。
   //   ★ roomId は参加者検証済みの server 側の値（client が名乗った id ではない）。
+  // 有料ゲート（PASSAI CAREER 単一プラン）。**Quota consume より前**に置く
+  //   （未契約者に Quota を消費させない）。
+  //   ★ 上の冪等 return（評価済み room の再取得）より後ろに置いてあるので、
+  //     既に生成済みの結果を読むだけの経路は契約が切れても閲覧できる。
+  //     ここから先は AI を実際に呼ぶので契約が必要。
+  const accessDenied = await requireCareerAiAccessForUser(auth.userId);
+  if (accessDenied) return accessDenied;
+
   const quota = await enforceCareerDailyQuota({
     identity: { kind: 'member', userId: auth.userId },
     feature: 'gd',

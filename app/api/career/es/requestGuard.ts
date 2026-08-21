@@ -10,15 +10,14 @@
 //   （operation の種類・rate limit ルール・ES 固有の入力上限・ES 既存の 400 契約）だけを載せる。
 //   プレゼン（`app/api/career/presentation/requestGuard.ts`）/ 面接（同 interview）と同型。
 //
-// ★ 設計判断（guest を 401 で閉じない理由）:
-//   ES は **guest 利用を正式に許可**している機能である。
-//     - `/career/es` 配下は PlanGate の PROTECTED_PREFIXES に無い（課金・ログイン非ゲート）
-//     - 各画面の mirror 呼び出しは一貫して `if (userId) void upsert...`（guest は素通し）
-//     - draft ストアは ownerId=null（guest）を正規の owner として扱う
-//   したがって本 guard は **401 を返さない**。代わりに identity を server 側で確定し、
+// ★ 設計判断（本 guard 自体は 401 を返さない）:
+//   PASSAI CAREER は **単一の有料プラン**で、AI 本実行は契約者だけが利用できる
+//   （2026-08-21 商品決定。旧「guest 利用は許可」仕様は廃止）。契約の確認は本 module
+//   ではなく `lib/careerBilling/aiAccess.ts` の requireCareerAiAccess が行う。
+//   本 guard は identity を確定して **rate limit のキーを決める**ところまでを担当する:
 //     member … user_id をキーに通常上限
 //     guest  … IP をキーに厳しめ上限（fail-closed）
-//   の 2 系統で「誰でも無制限に叩ける」状態だけを塞ぐ。
+//   順序: request guard → 有料ゲート → Daily Quota → AI。
 //
 // ★ client が body に入れてくる userId 類は **認証として一切信用しない**
 //   （そもそも ES の 4 route は userId を受け取らない）。

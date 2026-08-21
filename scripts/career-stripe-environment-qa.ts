@@ -226,7 +226,7 @@ console.log('[4] implementation uses the single policy');
   // Price の livemode 突き合わせ。
   const careerStripe = stripComments(read('lib/careerBilling/stripe.ts'));
   check(
-    /retrieveCareerPlanPrice/.test(careerStripe),
+    /retrieveCareerPrice/.test(careerStripe),
     'CAREER の Price 取得が livemode 検証つきの関数に集約されている',
   );
   check(
@@ -238,8 +238,8 @@ console.log('[4] implementation uses the single policy');
   // checkout は livemode 検証済み Price だけを使う。
   const checkout = stripComments(read('app/api/career/billing/checkout/route.ts'));
   check(
-    /retrieveCareerPlanPrice\(plan\)/.test(checkout),
-    'checkout が livemode 検証つきの Price 取得を使う',
+    /retrieveCareerPrice\(\)/.test(checkout),
+    'checkout が livemode 検証つきの Price 取得を使う（引数なし = 単一 Price）',
   );
   check(
     !/getCareerStripePriceId\(/.test(checkout),
@@ -275,13 +275,16 @@ console.log('[5] env separation (CAREER vs exam app)');
   const webhook = stripComments(read('app/api/career/billing/webhook/route.ts'));
 
   // Price env は CAREER 専用名のまま（環境差は Vercel の environment scope で入れ分ける）。
+  // ★ 単一プラン化後も env 名は CAREER 専用名のまま（新しい名前を発明しない）。
+  //   先頭が canonical。2 つ目は旧 Price で作られた subscription を認識するための
+  //   legacy read compatibility であり、新規 Checkout には使わない。
   check(
     /STRIPE_PRICE_ID_CAREER_BASIC/.test(read('lib/careerBilling/plans.ts')),
-    'basic の Price env は STRIPE_PRICE_ID_CAREER_BASIC',
+    'canonical Price env は STRIPE_PRICE_ID_CAREER_BASIC',
   );
   check(
     /STRIPE_PRICE_ID_CAREER_PREMIUM/.test(read('lib/careerBilling/plans.ts')),
-    'premium の Price env は STRIPE_PRICE_ID_CAREER_PREMIUM',
+    '旧 Price env（STRIPE_PRICE_ID_CAREER_PREMIUM）も読み取り互換として残す',
   );
   // 環境別の新 env を増やしていないこと（_TEST / _LIVE / _PREVIEW 等）。
   const allBilling = [

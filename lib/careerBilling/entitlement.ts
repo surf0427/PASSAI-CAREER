@@ -29,12 +29,9 @@ import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/service
 import { CAREER_SUBSCRIPTIONS_TABLE } from './subscription';
 import { isUndefinedTable } from './customer';
 import {
-  careerPlanSatisfies,
-  deriveCareerEffectivePlan,
-  hasCareerPaidAccess,
+  deriveCareerPaidAccess,
   type CareerSubscriptionRow,
 } from './entitlementPolicy';
-import type { CareerEffectivePlan, CareerPaidPlanId } from './plans';
 
 const SUBSCRIPTION_COLUMNS =
   'plan, status, current_period_end, cancel_at_period_end';
@@ -109,7 +106,8 @@ export function getCareerBillingAdmin(): CareerBillingAdmin {
 // ── subscription state の取得 ────────────────────────────────────────────
 
 export type CareerSubscriptionSnapshot = {
-  plan: CareerEffectivePlan;
+  /** 有効な契約があるか。単一プランなので tier は持たない。 */
+  paid: boolean;
   /** UI 表示用。最新（current_period_end 降順）の 1 行。行が無ければ null。 */
   latest: CareerSubscriptionRow | null;
   rows: CareerSubscriptionRow[];
@@ -141,7 +139,7 @@ export async function getCareerSubscriptionState(input: {
   }
 
   const rows = (data ?? []) as CareerSubscriptionRow[];
-  const plan = deriveCareerEffectivePlan(rows);
+  const paid = deriveCareerPaidAccess(rows);
 
   // 表示用の代表行: 権利のある行を優先し、その中で period_end が最も未来のもの。
   const latest =
@@ -153,7 +151,7 @@ export async function getCareerSubscriptionState(input: {
       )
       .at(0) ?? null;
 
-  return { kind: 'ok', snapshot: { plan, latest, rows } };
+  return { kind: 'ok', snapshot: { paid, latest, rows } };
 }
 
 // ── 統合 resolver ────────────────────────────────────────────────────────
@@ -161,7 +159,7 @@ export async function getCareerSubscriptionState(input: {
 export type CareerEntitlement = {
   userId: string;
   email: string | null;
-  plan: CareerEffectivePlan;
+  /** 有効な契約があるか。CAREER の権利判定はこの 1 つだけ。 */
   paid: boolean;
   snapshot: CareerSubscriptionSnapshot;
 };
@@ -213,8 +211,7 @@ export async function resolveCareerEntitlement(): Promise<CareerEntitlementResul
     entitlement: {
       userId: auth.userId,
       email: auth.email,
-      plan: state.snapshot.plan,
-      paid: hasCareerPaidAccess(state.snapshot.plan),
+      paid: state.snapshot.paid,
       snapshot: state.snapshot,
     },
   };
@@ -223,39 +220,97 @@ export async function resolveCareerEntitlement(): Promise<CareerEntitlementResul
 /**
  * 有料機能の server 側ゲート。**paywall を張る route はこれだけを呼ぶ。**
  *
- * ⚠️ 現時点で CAREER のどの機能が Free / Paid かは repo 上に根拠が無いため
- *    （AGENTS §19: 根拠なしに gate しない）、既存の CAREER AI route には
- *    本 guard を**適用していない**。料金仕様が確定したら、対象 route の先頭で
- *      const gate = await requireCareerPaidAccess();
- *      if (gate.kind === 'reject') return gate.response;
- *    を呼ぶだけで server 強制が効く。UI 側の出し分けと二重防御になる。
+ * ★ 商品仕様（2026-08-21 決定）: PASSAI CAREER は単一の有料プラン。
+ *   Career の AI 本実行は **有効な契約を持つ member だけ**が利用できる。
+ *   以前あった「guest / 未契約でも AI を実行できる」仕様は廃止された。
  *
- * @param required 'basic'（有料であればよい）/ 'premium'（premium 限定機能）。
+ * ★ 判定不能（DB 未適用 / service_role 未設定 / DB エラー）は必ず **fail-closed**。
+ *   「確認できないから通す」は課金の穴になる。
  */
 export type CareerPaidGate =
   | { kind: 'ok'; entitlement: CareerEntitlement }
   | { kind: 'reject'; response: Response };
 
-export async function requireCareerPaidAccess(
-  required: CareerPaidPlanId = 'basic',
-): Promise<CareerPaidGate> {
+export async function requireCareerPaidAccess(): Promise<CareerPaidGate> {
   const result = await resolveCareerEntitlement();
   if (result.kind === 'reject') return result;
 
   const { entitlement } = result;
-  if (!careerPlanSatisfies(entitlement.plan, required)) {
+  if (!entitlement.paid) return { kind: 'reject', response: paymentRequiredResponse() };
+  return { kind: 'ok', entitlement };
+}
+
+// ── AI route 用の軽量ゲート ──────────────────────────────────────────
+//
+// AI route は入口 guard（lib/careerApi/requestGuard.ts など）で既に identity を
+// 解決している。そこで解決済みの identity を渡せるようにして、1 request で
+// `auth.getUser()` を 2 回叩かないようにする（判定内容は上の gate と同一）。
+
+/** 未ログイン / 未契約 / 判定不能に返す共通レスポンス。 */
+export function loginRequiredResponse(): Response {
+  return Response.json(
+    {
+      error: 'LOGIN_REQUIRED',
+      code: 'LOGIN_REQUIRED',
+      detail: 'この機能のご利用にはログインが必要です。',
+    },
+    { status: 401 },
+  );
+}
+
+export function paymentRequiredResponse(): Response {
+  return Response.json(
+    {
+      error: 'PAYMENT_REQUIRED',
+      code: 'PAYMENT_REQUIRED',
+      detail: 'この機能のご利用にはご契約が必要です。',
+    },
+    { status: 402 },
+  );
+}
+
+export type CareerAiAccessResult =
+  | { kind: 'ok'; userId: string }
+  | { kind: 'reject'; response: Response };
+
+/**
+ * server session で確定済みの userId に対して契約を確認する（AI route 用）。
+ *
+ * fail-closed: DB 未適用 / service_role 未設定 / DB エラーはすべて reject。
+ */
+export async function requireCareerPaidAccessForUser(
+  userId: string,
+): Promise<CareerAiAccessResult> {
+  const adminResult = getCareerBillingAdmin();
+  if (adminResult.kind === 'reject') return adminResult;
+
+  const state = await getCareerSubscriptionState({
+    admin: adminResult.admin,
+    userId,
+  });
+
+  if (state.kind === 'not-provisioned') {
     return {
       kind: 'reject',
-      response: Response.json(
-        {
-          error: 'PAYMENT_REQUIRED',
-          detail: 'この機能のご利用にはプランのご契約が必要です。',
-          plan: entitlement.plan,
-          requiredPlan: required,
-        },
-        { status: 402 },
+      response: jsonError(
+        'BILLING_NOT_PROVISIONED',
+        'ただいまご利用いただけません。時間をおいて再度お試しください。',
+        503,
       ),
     };
   }
-  return { kind: 'ok', entitlement };
+  if (state.kind === 'db-error') {
+    return {
+      kind: 'reject',
+      response: jsonError(
+        'ENTITLEMENT_CHECK_FAILED',
+        '契約状態を確認できませんでした。時間をおいて再度お試しください。',
+        503,
+      ),
+    };
+  }
+  if (!state.snapshot.paid) {
+    return { kind: 'reject', response: paymentRequiredResponse() };
+  }
+  return { kind: 'ok', userId };
 }

@@ -5,7 +5,7 @@
  *
  * 検証:
  *   [1] entitlement policy の unit test（deriveCareerEffectivePlan / 解約予約 / grace）
- *   [2] plan catalog（server-side allowlist・受験版 env 名との分離）
+ *   [2] 単一プラン catalog（server-side Price 解決・受験版 env 名との分離）
  *   [3] Checkout route の security 契約（priceId / userId / customerId を受け取らない）
  *   [4] Portal route の security 契約（body を読まない = 他人 customer を開けない）
  *   [5] Webhook の security / 冪等契約（署名検証が DB より先・専用 secret・event 表）
@@ -13,7 +13,8 @@
  *   [7] client bundle 安全性（server-only module を 'use client' から import しない）
  *   [8] success ページが到達を根拠に権利を与えないこと
  *   [9] DDL（RLS + GRANT の最小権限・UNIQUE 制約・client 書き込み不可）
- *  [10] 既存 CAREER AI route を根拠なく paywall していないこと（AGENTS §19）
+ *  [10] cost-bearing な CAREER AI route が **すべて** 有料ゲートを通ること
+ *       （2026-08-21 商品決定: guest / 未契約は AI 本実行不可）
  *
  * ★ 実 Stripe / 実 Supabase へ接続しない。env 実値も secret も読まない・表示しない。
  * 使い方: npx tsx scripts/career-billing-qa.ts
@@ -23,16 +24,14 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import {
-  CAREER_PAID_PLAN_IDS,
-  CAREER_PLANS,
-  isCareerEffectivePlan,
-  isCareerPaidPlanId,
+  CAREER_PRICE_ENV_NAMES,
+  CAREER_PRICE_ENV_TO_PLAN_VALUE,
+  CAREER_SUBSCRIPTION_PLAN_VALUES,
+  isCareerSubscriptionPlanValue,
 } from '../lib/careerBilling/plans';
 import {
   CAREER_SUBSCRIPTION_STATUSES,
-  careerPlanSatisfies,
-  deriveCareerEffectivePlan,
-  hasCareerPaidAccess,
+  deriveCareerPaidAccess,
   type CareerSubscriptionRow,
 } from '../lib/careerBilling/entitlementPolicy';
 
@@ -75,7 +74,7 @@ console.log('');
 // ═══════════════════════════════════════════════════════════════
 // [1] entitlement policy（純粋関数の unit test）
 // ═══════════════════════════════════════════════════════════════
-console.log('[1] entitlement policy (deriveCareerEffectivePlan)');
+console.log('[1] entitlement policy (deriveCareerPaidAccess)');
 {
   const NOW = Date.UTC(2026, 0, 15); // 2026-01-15 固定（時刻依存を排除）
   const future = new Date(NOW + 30 * 86400_000).toISOString();
@@ -88,64 +87,72 @@ console.log('[1] entitlement policy (deriveCareerEffectivePlan)');
     cancel_at_period_end: false,
     ...over,
   });
-  const derive = (rows: CareerSubscriptionRow[]) =>
-    deriveCareerEffectivePlan(rows, NOW);
+  const paid = (rows: CareerSubscriptionRow[]) => deriveCareerPaidAccess(rows, NOW);
 
-  check(derive([]) === 'free', '契約なし → free');
-  check(derive([row({ status: 'active' })]) === 'basic', 'active → 権利あり');
-  check(derive([row({ status: 'trialing' })]) === 'basic', 'trialing → 権利あり');
+  check(paid([]) === false, '契約なし → 権利なし');
+  check(paid([row({ status: 'active' })]), 'active → 権利あり');
+  check(paid([row({ status: 'trialing' })]), 'trialing → 権利あり');
   // past_due は受験版 policy をそのまま踏襲（dunning 期間中はアクセス維持）。
-  check(derive([row({ status: 'past_due' })]) === 'basic', 'past_due → 権利あり（受験版 policy 踏襲）');
+  check(paid([row({ status: 'past_due' })]), 'past_due → 権利あり（受験版 policy 踏襲）');
 
-  check(derive([row({ status: 'unpaid' })]) === 'free', 'unpaid → 権利なし');
-  check(derive([row({ status: 'incomplete' })]) === 'free', 'incomplete → 権利なし');
-  check(derive([row({ status: 'incomplete_expired' })]) === 'free', 'incomplete_expired → 権利なし');
-  check(derive([row({ status: 'paused' })]) === 'free', 'paused → 権利なし');
+  check(!paid([row({ status: 'unpaid' })]), 'unpaid → 権利なし');
+  check(!paid([row({ status: 'incomplete' })]), 'incomplete → 権利なし');
+  check(!paid([row({ status: 'incomplete_expired' })]), 'incomplete_expired → 権利なし');
+  check(!paid([row({ status: 'paused' })]), 'paused → 権利なし');
 
   // ★ AGENTS §9 / QA Case 16: 解約予約しただけでは即時失効しない。
   check(
-    derive([row({ status: 'active', cancel_at_period_end: true, current_period_end: future })]) === 'basic',
+    paid([row({ status: 'active', cancel_at_period_end: true, current_period_end: future })]),
     'active + cancel_at_period_end + 期間内 → 期間終了まで権利維持',
   );
   check(
-    derive([row({ status: 'canceled', cancel_at_period_end: true, current_period_end: future })]) === 'basic',
+    paid([row({ status: 'canceled', cancel_at_period_end: true, current_period_end: future })]),
     'canceled + 期間内 → grace period として権利維持',
   );
   // ★ QA Case 17: 期間終了後は権利なし。
   check(
-    derive([row({ status: 'canceled', cancel_at_period_end: true, current_period_end: past })]) === 'free',
+    !paid([row({ status: 'canceled', cancel_at_period_end: true, current_period_end: past })]),
     'canceled + 期間終了 → 権利なし',
   );
   check(
-    derive([row({ status: 'canceled', current_period_end: null })]) === 'free',
+    !paid([row({ status: 'canceled', current_period_end: null })]),
     'canceled + period_end なし → 権利なし',
   );
   check(
-    derive([row({ status: 'canceled', current_period_end: 'not-a-date' })]) === 'free',
+    !paid([row({ status: 'canceled', current_period_end: 'not-a-date' })]),
     'canceled + 不正な日付 → 権利なし（fail-closed）',
   );
 
-  // 未知の plan / status は権利に数えない。
-  check(derive([row({ plan: 'attacker' })]) === 'free', '未知の plan → 権利なし');
-  check(derive([row({ plan: 'free' })]) === 'free', "plan='free' 行 → 権利なし");
+  // 未知の plan 値は権利に数えない（別商品の行が紛れ込んでも通さない）。
+  check(!paid([row({ plan: 'attacker' })]), '未知の plan → 権利なし');
+  check(!paid([row({ plan: 'free' })]), "plan='free' 行 → 権利なし");
 
-  // 複数行は強い方が勝つ。
+  // ★ 単一プラン化: 旧 basic / 旧 premium いずれの行でも「有効な契約」として同じ扱い。
+  //   （historical compatibility。過去 row を production で UPDATE せずに移行する）
+  check(paid([row({ plan: 'basic' })]), '旧 basic 行 → 有効な契約として認識される');
+  check(paid([row({ plan: 'premium' })]), '旧 premium 行 → 有効な契約として認識される');
   check(
-    derive([row({ plan: 'basic' }), row({ plan: 'premium' })]) === 'premium',
-    '複数契約 → premium > basic',
+    paid([row({ plan: 'premium', status: 'canceled', current_period_end: past }), row({ plan: 'basic' })]),
+    '失効した行 + 有効な行 → 権利あり（行単位で判定）',
   );
   check(
-    derive([row({ plan: 'premium', status: 'canceled', current_period_end: past }), row({ plan: 'basic' })]) === 'basic',
-    '失効した premium + 有効な basic → basic',
+    !paid([
+      row({ plan: 'premium', status: 'canceled', current_period_end: past }),
+      row({ plan: 'basic', status: 'unpaid' }),
+    ]),
+    '有効な行が 1 つも無ければ権利なし',
   );
 
-  // 述語
-  check(!hasCareerPaidAccess('free'), 'hasCareerPaidAccess(free) === false');
-  check(hasCareerPaidAccess('basic') && hasCareerPaidAccess('premium'), 'hasCareerPaidAccess(basic/premium) === true');
-  check(!careerPlanSatisfies('free', 'basic'), 'free は basic を満たさない');
-  check(careerPlanSatisfies('basic', 'basic'), 'basic は basic を満たす');
-  check(!careerPlanSatisfies('basic', 'premium'), 'basic は premium を満たさない');
-  check(careerPlanSatisfies('premium', 'basic'), 'premium は basic を満たす');
+  // ★ tier 判定が復活していないこと（単一プラン化の回帰防止）。
+  const policySrc = stripComments(read('lib/careerBilling/entitlementPolicy.ts'));
+  check(
+    !/PLAN_RANK|careerPlanSatisfies|premium\s*>/.test(policySrc),
+    'entitlementPolicy に tier の順位比較が無い（単一プラン）',
+  );
+  check(
+    !/CareerEffectivePlan|deriveCareerEffectivePlan/.test(policySrc),
+    '2 段階 plan の導出関数が残っていない',
+  );
 
   // status 集合が DDL の CHECK と一致していること。
   const ddl = read(DDL);
@@ -158,42 +165,70 @@ console.log('');
 // ═══════════════════════════════════════════════════════════════
 // [2] plan catalog（server-side allowlist / 受験版との分離）
 // ═══════════════════════════════════════════════════════════════
-console.log('[2] plan catalog & Stripe Price env separation');
+console.log('[2] single plan catalog & Stripe Price env separation');
 {
   const plansSrc = stripComments(read('lib/careerBilling/plans.ts'));
 
-  check(CAREER_PAID_PLAN_IDS.length === 2, '有料プランは basic / premium の 2 つ');
-  check(isCareerPaidPlanId('basic') && isCareerPaidPlanId('premium'), 'isCareerPaidPlanId が basic/premium を受理');
-  check(!isCareerPaidPlanId('free'), "isCareerPaidPlanId は 'free' を拒否（契約は有料のみ）");
-  check(!isCareerPaidPlanId('price_attacker'), '任意文字列は plan として拒否');
-  check(isCareerEffectivePlan('free'), "isCareerEffectivePlan は 'free' を受理");
-
+  // ★ 単一プラン。tier の型 / catalog が残っていないこと。
+  check(
+    !/CareerPaidPlanId|CareerEffectivePlan|CAREER_PAID_PLAN_IDS|CAREER_PLANS\b/.test(plansSrc),
+    'plans.ts に 2 段階 tier の型 / catalog が残っていない',
+  );
+  check(
+    CAREER_PRICE_ENV_NAMES.length >= 1,
+    `CAREER Price env の候補が定義されている（${CAREER_PRICE_ENV_NAMES.length}）`,
+  );
   // ★ 受験版 Price env 名を CAREER の catalog に持ち込んでいないこと（AGENTS §10）。
-  for (const plan of CAREER_PAID_PLAN_IDS) {
-    const envName = CAREER_PLANS[plan].stripePriceIdEnvName;
-    check(envName.startsWith('STRIPE_PRICE_ID_CAREER_'), `${plan} の env 名が CAREER 専用（${envName}）`);
+  for (const envName of CAREER_PRICE_ENV_NAMES) {
+    check(envName.startsWith('STRIPE_PRICE_ID_CAREER_'), `env 名が CAREER 専用（${envName}）`);
   }
   check(
     !/STRIPE_PRICE_ID_BASIC\b/.test(plansSrc) && !/STRIPE_PRICE_ID_PREMIUM\b/.test(plansSrc),
     'plans.ts に受験版 Price env 名（STRIPE_PRICE_ID_BASIC/PREMIUM）が無い',
   );
-  // 価格・訴求文言を repo 側に持たない（CAREER の料金仕様が repo に存在しないため）。
-  check(!/priceJpy/.test(plansSrc), 'plans.ts に金額（priceJpy）をハードコードしていない');
+  // 価格・訴求文言を repo 側に持たない（金額は Stripe Price が正本）。
+  check(!/priceJpy|3,?000/.test(plansSrc), 'plans.ts に金額をハードコードしていない');
   check(!/process\.env/.test(plansSrc), 'plans.ts は env を読まない（pure constants）');
 
-  // 逆引きは CAREER env のみを見る。
+  // DB の plan 列は既存 CHECK（'basic' / 'premium'）のままで、migration を足していない。
+  check(
+    CAREER_SUBSCRIPTION_PLAN_VALUES.every((v) => isCareerSubscriptionPlanValue(v)),
+    'DB へ書く plan 値が型 guard と一致している',
+  );
+  check(!isCareerSubscriptionPlanValue('career'), '未知の plan 値は拒否される');
+  const ddlCodeForPlan = stripSqlComments(read(DDL));
+  for (const v of CAREER_SUBSCRIPTION_PLAN_VALUES) {
+    check(
+      new RegExp(`'${v}'`).test(ddlCodeForPlan),
+      `DDL の plan CHECK が '${v}' を許容している（migration 不要）`,
+    );
+  }
+  check(
+    Object.values(CAREER_PRICE_ENV_TO_PLAN_VALUE).every((v) => isCareerSubscriptionPlanValue(v)),
+    'env → plan 値の写像が DDL 許容値に閉じている',
+  );
+
+  // Price 解決は server-only。単一 Price / 逆引き / 受験版誤設定ガード。
   const stripeSrc = stripComments(read('lib/careerBilling/stripe.ts'));
   check(
-    /getCareerPlanFromPriceId/.test(stripeSrc),
-    'CAREER 専用の Price → plan 逆引きが存在する',
+    /export function getCareerCanonicalPrice/.test(stripeSrc),
+    'Checkout に使う canonical price は 1 本だけ解決する',
+  );
+  check(
+    /export function resolveCareerPlanValueFromPriceId/.test(stripeSrc),
+    'CAREER 専用の Price → plan 値 逆引きが存在する（他商品の subscription を弾く）',
+  );
+  check(
+    !/CareerPaidPlanId|listCareerPlanOffers|retrieveCareerPlanPrice/.test(stripeSrc),
+    'stripe.ts に tier 前提の API が残っていない',
   );
   check(
     /EXAM_PRICE_ENV_NAMES/.test(stripeSrc),
     '受験版 Price ID の誤設定を検知するガードがある',
   );
   check(
-    /is not set/.test(stripeSrc) && /getCareerStripePriceId/.test(stripeSrc),
-    'Price env 未設定は throw（fail-closed。既定 price へ fallback しない）',
+    /kind: 'unconfigured'/.test(stripeSrc),
+    'Price env 未設定は unconfigured（fail-closed。既定 price へ fallback しない）',
   );
 }
 console.log('');
@@ -205,28 +240,25 @@ console.log('[3] checkout route security contract');
 {
   const src = stripComments(read(CHECKOUT));
 
-  // body から読むのは plan だけ。
-  const bodyReads = [...src.matchAll(/\(body as[^)]*\)\??\.(\w+)/g)].map((m) => m[1]);
-  check(
-    bodyReads.length > 0 && bodyReads.every((k) => k === 'plan'),
-    `body から読むのは plan のみ（実際: ${JSON.stringify([...new Set(bodyReads)])}）`,
-  );
-  // ★ QA Case 8 / 9: 任意 priceId / userId / customerId の注入経路が無い。
-  for (const forbidden of ['priceId', 'price_id', 'customerId', 'customer_id', 'userId', 'user_id', 'premium']) {
+  // ★ 単一プラン: body を **一切読まない**（client は plan も price も選べない）。
+  check(!/req\.json\(\)/.test(src), 'checkout は request body を読まない');
+  check(!/\bbody\b/.test(src), 'checkout に body 由来の値が存在しない');
+  // ★ QA Case 8 / 9: 任意 priceId / userId / customerId / plan の注入経路が無い。
+  for (const forbidden of ['priceId', 'price_id', 'customerId', 'customer_id', 'userId', 'user_id', 'premium', 'plan']) {
     check(
       !new RegExp(`body[^\\n]*\\b${forbidden}\\b`).test(src),
       `body から ${forbidden} を読まない`,
     );
   }
   check(
-    /isCareerPaidPlanId\(planRaw\)/.test(src),
-    'plan は server-side allowlist（isCareerPaidPlanId）で検証する',
+    !/isCareerPaidPlanId|INVALID_PLAN/.test(src),
+    'plan 選択の入口が残っていない（単一プラン）',
   );
-  // priceId は plan key → server allowlist → env → Stripe 実物照合、の順でのみ決まる。
-  // （retrieveCareerPlanPrice が内部で getCareerStripePriceId を呼び、livemode まで検証する）
+  // priceId は env → server 解決 → Stripe 実物照合、の順でのみ決まる。
+  // （retrieveCareerPrice が内部で canonical price env を読み、livemode まで検証する）
   check(
-    /retrieveCareerPlanPrice\(plan\)/.test(src),
-    'priceId は plan key から server 側で解決する（livemode 検証つき）',
+    /retrieveCareerPrice\(\)/.test(src),
+    'priceId は server が env から解決する（引数を取らない / livemode 検証つき）',
   );
   check(
     /const priceId = priceCheck\.price\.id/.test(src),
@@ -243,7 +275,7 @@ console.log('[3] checkout route security contract');
   );
   // ★ AGENTS §15: 既契約者に checkout を作らせない。
   check(/ALREADY_SUBSCRIBED/.test(src), '既契約時は 409 ALREADY_SUBSCRIBED を返す（重複契約防止）');
-  check(/hasCareerPaidAccess\(/.test(src), '重複契約判定は entitlement policy を使う');
+  check(/state\.snapshot\.paid/.test(src), '重複契約判定は server 導出の paid フラグを使う');
   // webhook との契約キー。
   check(
     /subscription_data/.test(src) && /CAREER_METADATA_USER_ID_KEY/.test(src),
@@ -252,7 +284,7 @@ console.log('[3] checkout route security contract');
   check(/success_url/.test(src) && /cancel_url/.test(src), 'success_url / cancel_url を設定する');
   check(/\/career\/billing\/success/.test(src), 'success_url は CAREER 名前空間内');
   // fail-closed
-  check(/isCareerPlanConfigured\(plan\)/.test(src), 'Price 未設定なら 503（fail-closed。売らない）');
+  check(/isCareerBillingConfigured\(\)/.test(src), 'Price 未設定なら 503（fail-closed。売らない）');
   // secret / Stripe raw message を返さない。
   check(
     !/message:\s*(err|message)\b/.test(src) && !/detail:\s*message\b/.test(src),
@@ -466,11 +498,11 @@ console.log('[7] client bundle safety (no secrets, no server-only imports)');
     check(true, "'use client' から server-only module / secret を参照していない");
   }
 
-  // client 側 CTA は plan key しか送らない。
+  // client 側 CTA は body を一切送らない（単一プランなので選ぶものが無い）。
   const btn = stripComments(read('app/career/components/CareerCheckoutButton.tsx'));
   check(
-    /JSON\.stringify\(\{\s*plan\s*\}\)/.test(btn),
-    'CTA が送る body は { plan } のみ',
+    !/JSON\.stringify/.test(btn) && !/\bbody:/.test(btn),
+    'CTA は checkout に body を送らない（plan / price を client が選べない）',
   );
   check(!/priceId|customerId|price_/.test(btn), 'CTA は priceId / customerId を送らない');
   // ★ QA Case 5: open redirect 防止（login への戻り先は CAREER 相対 path 固定）。
@@ -479,7 +511,7 @@ console.log('[7] client bundle safety (no secrets, no server-only imports)');
     'login への戻り先は encodeURIComponent 済みの CAREER 相対 path',
   );
   check(
-    /const next = `\/career\/billing\?plan=\$\{plan\}`/.test(btn),
+    /const next = `\/career\/billing\?\$\{CHECKOUT_RESUME_PARAM\}=1`/.test(btn),
     '戻り先はリテラル構築（外部 URL が入り込む経路が無い）',
   );
 }
@@ -565,42 +597,117 @@ console.log('[9] DDL: RLS + GRANT least privilege');
 console.log('');
 
 // ═══════════════════════════════════════════════════════════════
-// [10] 根拠のない paywall を張っていないこと（AGENTS §19）
+// [10] cost-bearing な CAREER AI route が **すべて** 有料ゲートを通ること
+//
+//   ★ 2026-08-21 の商品決定により、旧仕様（guest 利用を正式に許可 / paywall 適用数 0）は
+//     廃止された。PASSAI CAREER は単一の有料プランで、AI 本実行は契約者のみ。
+//   ★ paid gate と quota unit は別概念:
+//       paid gate … AI 原価が発生する **すべての** route
+//       quota     … 商品仕様で決めた 8 anchor だけ
+//     したがって quota を消費しない subflow（ES 深掘り / 面接 turn / GD AI 発言 …）にも
+//     gate は必要。
 // ═══════════════════════════════════════════════════════════════
-console.log('[10] no ungrounded paywall on existing CAREER features');
+console.log('[10] every cost-bearing CAREER AI route is behind the paid gate');
 {
-  // CAREER の料金仕様（有料対象機能）が repo に存在しないため、既存 AI route を
-  // 勝手に有料化しない。gate helper は存在するが呼び出しは 0 でなければならない。
-  function walk(dir: string): string[] {
-    if (!existsSync(dir)) return [];
-    const out: string[] = [];
-    for (const entry of readdirSync(dir)) {
-      const p = join(dir, entry);
-      if (statSync(p).isDirectory()) out.push(...walk(p));
-      else if (/\.(ts|tsx)$/.test(entry)) out.push(p);
+  /** Anthropic / OpenAI など課金 API を実行する CAREER route（正本）。 */
+  const COST_BEARING_ROUTES = [
+    'app/api/career/self-analysis/route.ts',
+    'app/api/career/self-analysis/question/route.ts',
+    'app/api/career/company-research/route.ts',
+    'app/api/career/company-research/extract/route.ts',
+    'app/api/career/consultation/route.ts',
+    'app/api/career/es-review/route.ts',
+    'app/api/career/es/deep/route.ts',
+    'app/api/career/es/materials/route.ts',
+    'app/api/career/es/organize/route.ts',
+    'app/api/career/interview/start/route.ts',
+    'app/api/career/interview/turn/route.ts',
+    'app/api/career/interview/complete/route.ts',
+    'app/api/career/presentation/theme/route.ts',
+    'app/api/career/presentation/evaluate/route.ts',
+    'app/api/career/presentation/qa/route.ts',
+    'app/api/career/gd/theme/route.ts',
+    'app/api/career/gd/turn/route.ts',
+    'app/api/career/gd/feedback/route.ts',
+    'app/api/career/gd/room/[roomId]/ai-turn/route.ts',
+    'app/api/career/gd/room/[roomId]/result/route.ts',
+    'app/api/career/matching/route.ts',
+  ];
+  const GATE = /requireCareerAiAccess(ForUser)?\s*\(/;
+
+  for (const rel of COST_BEARING_ROUTES) {
+    if (!existsSync(join(ROOT, rel))) {
+      check(false, `${rel} が存在する`);
+      continue;
     }
-    return out;
+    const routeSrc = stripImports(stripComments(read(rel)));
+    const postAt = routeSrc.search(/export async function POST/);
+    const post = postAt >= 0 ? routeSrc.slice(postAt) : routeSrc;
+
+    const gateAt = post.search(GATE);
+    check(gateAt >= 0, `${rel}: 有料ゲートを通る`);
+    if (gateAt < 0) continue;
+
+    // ★ AI 到達前。
+    const aiAt = post.search(
+      /anthropic\.messages\.create|handleSelfAnalysisJobPost|generateRoomFeedback|generateCareerGdSummary|buildGdAiTurn|runAiTurn/,
+    );
+    check(aiAt < 0 || gateAt < aiAt, `${rel}: 有料ゲートは AI 実行より前`);
+
+    // ★ Quota より前（未契約者に quota を消費させない）。
+    const quotaAt = post.search(/enforceCareerDailyQuota\s*\(/);
+    check(quotaAt < 0 || gateAt < quotaAt, `${rel}: 有料ゲートは Daily Quota consume より前`);
+
+    // ★ identity は server 側で解決したものだけを渡す（client 申告値を渡さない）。
+    check(
+      /requireCareerAiAccess\(guard\.identity\)|requireCareerAiAccessForUser\(auth\.userId\)/.test(post),
+      `${rel}: gate へ渡す identity は server 解決値`,
+    );
   }
-  const careerApiFiles = walk(join(ROOT, 'app/api/career')).filter(
-    (f) => !f.includes(`${'app/api/career/billing'.split('/').join('/')}`),
-  );
 
-  const gated = careerApiFiles.filter((f) =>
-    /requireCareerPaidAccess\s*\(/.test(stripComments(readFileSync(f, 'utf8'))),
-  );
+  // gate helper 自体の契約。
+  const gateSrc = stripComments(read('lib/careerBilling/aiAccess.ts'));
+  check(/import 'server-only';/.test(gateSrc), 'aiAccess は server-only');
   check(
-    gated.length === 0,
-    `既存 CAREER AI route に paywall を適用していない（適用数: ${gated.length}）`,
+    /identity\.kind !== 'member'/.test(gateSrc) && /loginRequiredResponse\(\)/.test(gateSrc),
+    'guest は 401 LOGIN_REQUIRED（AI 実行前に終了）',
+  );
+  const ent = stripComments(read('lib/careerBilling/entitlement.ts'));
+  check(/status:\s*402/.test(ent), '未契約は 402 PAYMENT_REQUIRED');
+  check(
+    /export async function requireCareerPaidAccessForUser/.test(ent),
+    'server 解決済み userId 用の gate がある（auth.getUser を 2 回叩かない）',
+  );
+  // ★ fail-closed: 判定不能で AI を通さない。
+  check(/BILLING_NOT_PROVISIONED/.test(ent), 'billing DDL 未適用なら reject（fail-closed）');
+  check(/ENTITLEMENT_CHECK_FAILED/.test(ent), 'DB エラーなら reject（fail-closed）');
+  check(
+    !/return\s*\{\s*kind:\s*'ok'[^}]*\}\s*;?\s*\/\/\s*fail-open/.test(ent),
+    'fail-open で権利を与える経路が無い',
+  );
+  // ★ tier 引数が復活していないこと。
+  check(
+    !/requireCareerPaidAccess\(\s*required/.test(ent) && !/CareerPaidPlanId/.test(ent),
+    'paid gate に tier 引数が無い（単一プラン）',
   );
 
-  // central resolver が存在し、将来の gate の唯一の入口になっていること。
-  const ent = stripComments(read('lib/careerBilling/entitlement.ts'));
-  check(/export async function requireCareerPaidAccess\(/.test(ent), 'central な paywall guard が用意されている');
-  check(/export async function resolveCareerEntitlement\(/.test(ent), 'central な entitlement resolver が用意されている');
-  check(/status:\s*402/.test(ent), 'paywall は 402 を返す（client 側 hide だけに依存しない）');
-  // fail-closed
-  check(/ENTITLEMENT_CHECK_FAILED/.test(ent), '判定不能時は fail-closed（権利を与えない）');
-  check(!/return\s*{\s*kind:\s*'ok'[^}]*plan:\s*'premium'/.test(ent), '既定値として premium を返す経路が無い');
+  // ★ guest を許可すると明言していた旧コメントが残っていないこと（仕様の二重化を防ぐ）。
+  for (const rel of [
+    'lib/careerApi/requestGuard.ts',
+    'app/api/career/es/requestGuard.ts',
+    'app/api/career/interview/requestGuard.ts',
+    'app/api/career/presentation/requestGuard.ts',
+  ]) {
+    const src = read(rel);
+    check(
+      !/guest 利用を正式に許可(した|している)/.test(src) && !/401 では閉じない/.test(src),
+      `${rel}: 旧仕様（guest に AI を許可）の記述が残っていない`,
+    );
+    check(
+      /有料ゲート|requireCareerAiAccess/.test(src),
+      `${rel}: 有料ゲートが後段にあることを明記している`,
+    );
+  }
 }
 console.log('');
 

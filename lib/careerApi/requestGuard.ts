@@ -17,10 +17,13 @@
 //     - rate limit のルール値と namespace
 //     - 機能固有の payload 上限（面接の turns 件数・transcript 合計文字数など）
 //
-// ★ 設計判断（guest を 401 で閉じない）:
-//   CAREER は guest 利用を正式に許可した機能群（localStorage canonical / mirror は member のみ）。
-//   したがって identity は「拒否するため」ではなく **rate limit のキーを決めるため**に使う。
-//   member 必須なのは GD（マルチプレイで identity が構造的に必須）だけ。
+// ★ 設計判断（本 guard 自体は 401 を返さない）:
+//   PASSAI CAREER は **単一の有料プラン**で、AI 本実行は契約者だけが利用できる
+//   （2026-08-21 商品決定。旧「guest 利用を正式に許可」仕様は廃止）。
+//   ただし契約の確認は本 module の責務ではない。本 guard は identity を確定して
+//   **rate limit のキーを決める**ところまでを担当し、契約は
+//   `lib/careerBilling/aiAccess.ts` の requireCareerAiAccess が判定する。
+//   順序: request guard → 有料ゲート → Daily Quota → AI。
 //
 // ★ client が body に入れてくる userId 類は認証として一切信用しない。
 //

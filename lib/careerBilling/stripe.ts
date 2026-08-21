@@ -10,6 +10,10 @@
  *     `getPlanFromPriceId` は STRIPE_PRICE_ID_{BASIC,PREMIUM}（受験版 Product）を見るため、
  *     CAREER が使うと別プロダクトを売ってしまう。
  *
+ * ★ CAREER は **単一の有料プラン**。Checkout に使う Price は
+ *   `CAREER_PRICE_ENV_NAMES` を先頭から探して最初に見つかった 1 本だけであり、
+ *   client は Price も plan も選べない（Price authority は完全に server 側）。
+ *
  * 秘密の取り扱い:
  *   - `import 'server-only'` で client bundle への混入を build error にする。
  *   - Price ID / secret の実値はログにも例外 message にも出さない（env 名だけ出す）。
@@ -27,9 +31,11 @@ import {
   currentStripeRuntimeEnv,
 } from '@/lib/stripe/environment';
 import {
-  CAREER_PAID_PLAN_IDS,
-  CAREER_PLANS,
-  type CareerPaidPlanId,
+  CAREER_PRICE_ENV_NAMES,
+  CAREER_PRICE_ENV_TO_PLAN_VALUE,
+  CAREER_PLAN_LABEL,
+  type CareerPriceEnvName,
+  type CareerSubscriptionPlanValue,
 } from './plans';
 
 export { getStripeClient };
@@ -43,14 +49,11 @@ const EXAM_PRICE_ENV_NAMES = [
   'STRIPE_PRICE_ID_PREMIUM',
 ] as const;
 
-function readCareerPriceEnv(plan: CareerPaidPlanId): string | null {
-  const envName = CAREER_PLANS[plan].stripePriceIdEnvName;
+function readCareerPriceEnv(envName: CareerPriceEnvName): string | null {
   const value = process.env[envName];
   if (!value) return null;
   if (!value.startsWith('price_')) {
-    throw new Error(
-      `${envName} must be a Stripe Price ID (starts with "price_")`,
-    );
+    throw new Error(`${envName} must be a Stripe Price ID (starts with "price_")`);
   }
   // 受験版 Price との取り違え検知。実値は出さない。
   for (const examEnv of EXAM_PRICE_ENV_NAMES) {
@@ -64,73 +67,72 @@ function readCareerPriceEnv(plan: CareerPaidPlanId): string | null {
   return value;
 }
 
-/**
- * CAREER plan → Stripe Price ID。未設定なら throw（fail-closed。
- * 「env が無いから free で通す / 適当な price で売る」は絶対にしない）。
- */
-export function getCareerStripePriceId(plan: CareerPaidPlanId): string {
-  const value = readCareerPriceEnv(plan);
-  if (!value) {
-    throw new Error(`${CAREER_PLANS[plan].stripePriceIdEnvName} is not set`);
-  }
-  return value;
-}
+export type CareerConfiguredPrice = {
+  envName: CareerPriceEnvName;
+  priceId: string;
+  /** career_subscriptions.plan に書く既存許容値（DDL CHECK を変えないため）。 */
+  planValue: CareerSubscriptionPlanValue;
+};
 
 /**
- * 逆引き: Stripe Price ID → CAREER PlanId。
+ * 設定済みの CAREER Price をすべて返す（**優先順**）。
  *
- * webhook が受け取った subscription.items[0].price.id を CAREER のプラン名に正規化する。
- * **CAREER の env にしかマッチしない**ため、同一 Stripe アカウントの受験版 subscription が
- * 誤って CAREER webhook に届いても null（= unknown-plan → permanent error, DB 書き込み無し）
- * になる。プロダクト間の状態混線に対する最後の砦。
+ * 先頭が Checkout に使う canonical price。2 つ目以降は
+ * 「旧 Price で作られた subscription を CAREER の契約として認識する」ための
+ * legacy read compatibility にだけ使う（新規販売には使わない）。
  */
-export function getCareerPlanFromPriceId(
-  priceId: string,
-): CareerPaidPlanId | null {
-  for (const plan of CAREER_PAID_PLAN_IDS) {
-    let configured: string | null = null;
+export function listConfiguredCareerPrices(): CareerConfiguredPrice[] {
+  const out: CareerConfiguredPrice[] = [];
+  for (const envName of CAREER_PRICE_ENV_NAMES) {
+    let value: string | null = null;
     try {
-      configured = readCareerPriceEnv(plan);
+      value = readCareerPriceEnv(envName);
     } catch {
-      // 形式不正 / 受験版との衝突は「未設定」と同じく一致なし扱い（fail-closed）。
-      configured = null;
+      // 形式不正 / 受験版との衝突は「未設定」と同じ扱い（fail-closed）。
+      value = null;
     }
-    if (configured && configured === priceId) return plan;
+    if (!value) continue;
+    // 同じ Price を両方の env に入れてある場合は 1 本として扱う。
+    if (out.some((p) => p.priceId === value)) continue;
+    out.push({
+      envName,
+      priceId: value,
+      planValue: CAREER_PRICE_ENV_TO_PLAN_VALUE[envName],
+    });
   }
-  return null;
+  return out;
 }
 
-/** その plan が販売可能に設定されているか（Price env が正しく入っているか）。 */
-export function isCareerPlanConfigured(plan: CareerPaidPlanId): boolean {
-  try {
-    return readCareerPriceEnv(plan) !== null;
-  } catch {
-    return false;
-  }
+/** 新規 Checkout に使う canonical price。未設定なら null（= 売らない）。 */
+export function getCareerCanonicalPrice(): CareerConfiguredPrice | null {
+  return listConfiguredCareerPrices()[0] ?? null;
 }
 
-/** CAREER 課金が 1 つでも販売可能か。false なら課金 UI を出さない（fail-closed）。 */
+/**
+ * 逆引き: Stripe Price ID → career_subscriptions.plan に書く値。
+ *
+ * webhook が受け取った subscription.items[0].price.id を CAREER の契約として
+ * 認識できるかを判定する。**CAREER の env にしかマッチしない**ため、同一 Stripe
+ * アカウントの受験版 subscription が誤って CAREER webhook に届いても null
+ * （= unknown-plan → permanent error, DB 書き込み無し）になる。
+ */
+export function resolveCareerPlanValueFromPriceId(
+  priceId: string,
+): CareerSubscriptionPlanValue | null {
+  return listConfiguredCareerPrices().find((p) => p.priceId === priceId)?.planValue ?? null;
+}
+
+/** CAREER 課金が販売可能に設定されているか。false なら課金 UI を出さない（fail-closed）。 */
 export function isCareerBillingConfigured(): boolean {
   if (!process.env.STRIPE_SECRET_KEY) return false;
-  return CAREER_PAID_PLAN_IDS.some((plan) => isCareerPlanConfigured(plan));
+  return getCareerCanonicalPrice() !== null;
 }
 
-/**
- * 販売可能な plan を Stripe から実データ付きで取得する。
- *
- * **価格と訴求文言を repo 側に持たないための経路**。CAREER の料金仕様（金額・
- * 有料対象機能）は repo のどこにも存在しないため（LP に料金セクション無し / docs に
- * 価格記載無し）、それらを実装側で創作しない。代わりに:
- *   - 金額 / 通貨 / 請求間隔 → Stripe **Price**
- *   - 商品名 / 提供内容の説明 → Stripe **Product**（運用者が Dashboard で記述したもの）
- * を正本として読む。取得に失敗した plan は一覧から落とす
- * （壊れた価格・名前の無い商品を売らない = fail-closed）。
- */
 /**
  * Stripe Price を取得し、**実行環境の期待モードと一致するか**を検証して返す。
  *
  * Secret key のモードは environment.ts が env で固定しているが、Price ID 側は
- * 別 env（STRIPE_PRICE_ID_CAREER_*）なので取り違えが独立に起こり得る:
+ * 別 env なので取り違えが独立に起こり得る:
  *   例) Vercel Preview に test key を入れたまま、Price だけ live のものを貼ってしまう。
  * その場合 Stripe は "No such price" を返すため原因が分かりにくい。ここで
  * `price.livemode`（Stripe が返す真の所属モード）を明示的に突き合わせ、
@@ -142,22 +144,17 @@ export type CareerPriceCheck =
   | { kind: 'not-found' }
   | { kind: 'mode-mismatch'; expectedLivemode: boolean; actualLivemode: boolean };
 
-export async function retrieveCareerPlanPrice(
-  plan: CareerPaidPlanId,
-): Promise<CareerPriceCheck> {
-  let priceId: string;
-  try {
-    priceId = getCareerStripePriceId(plan);
-  } catch (err) {
-    // 未設定 / 形式不正 / 受験版 Price との衝突。env 名のみログに出す。
-    devWarn('[careerBilling/stripe] price env unusable', String(err));
+export async function retrieveCareerPrice(): Promise<CareerPriceCheck> {
+  const configured = getCareerCanonicalPrice();
+  if (!configured) {
+    devWarn('[careerBilling/stripe] career price env unusable');
     return { kind: 'unconfigured' };
   }
 
   let price: Stripe.Price;
   try {
     // product を expand して商品名・説明も同時に取得する。
-    price = await getStripeClient().prices.retrieve(priceId, {
+    price = await getStripeClient().prices.retrieve(configured.priceId, {
       expand: ['product'],
     });
   } catch (err) {
@@ -170,7 +167,7 @@ export async function retrieveCareerPlanPrice(
   const expectedLivemode = currentExpectedStripeLivemode();
   if (price.livemode !== expectedLivemode) {
     devWarn('[careerBilling/stripe] price livemode mismatch', {
-      plan,
+      envName: configured.envName,
       runtimeEnv: currentStripeRuntimeEnv(),
       expectedLivemode,
       actualLivemode: price.livemode,
@@ -185,9 +182,16 @@ export async function retrieveCareerPlanPrice(
   return { kind: 'ok', price };
 }
 
+/**
+ * 販売中の単一プランを Stripe から実データ付きで取得する。
+ *
+ * **価格と訴求文言を repo 側に持たないための経路**:
+ *   - 金額 / 通貨 / 請求間隔 → Stripe **Price**
+ *   - 商品名 / 提供内容の説明 → Stripe **Product**（運用者が Dashboard で記述したもの）
+ * 取得に失敗 / archived なら null（壊れた価格・名前の無い商品を売らない = fail-closed）。
+ */
 export type CareerPlanOffer = {
-  plan: CareerPaidPlanId;
-  /** repo 側の plan key ラベル（'Basic' / 'Premium'）。 */
+  /** UI 表示名（Stripe Product.name が無いときの代替）。 */
   label: string;
   /** Stripe Product.name。運用者が Dashboard で決めた商品名。 */
   productName: string | null;
@@ -201,33 +205,23 @@ export type CareerPlanOffer = {
   intervalCount: number | null;
 };
 
-export async function listCareerPlanOffers(): Promise<CareerPlanOffer[]> {
-  const offers: CareerPlanOffer[] = [];
+export async function getCareerPlanOffer(): Promise<CareerPlanOffer | null> {
+  const checked = await retrieveCareerPrice();
+  if (checked.kind !== 'ok') return null;
+  const price = checked.price;
+  if (!price.active) return null;
 
-  for (const plan of CAREER_PAID_PLAN_IDS) {
-    // 未設定 / Stripe に無い / test⇄live 混線 はいずれも「販売しない」に倒す。
-    const checked = await retrieveCareerPlanPrice(plan);
-    if (checked.kind !== 'ok') continue;
-    const price = checked.price;
-    if (!price.active) continue;
+  // Stripe Product は expand 済みなら object、失敗時は id 文字列 or 削除済み。
+  const product =
+    typeof price.product === 'object' && !price.product.deleted ? price.product : null;
 
-    // Stripe Product は expand 済みなら object、失敗時は id 文字列 or 削除済み。
-    const product =
-      typeof price.product === 'object' && !price.product.deleted
-        ? price.product
-        : null;
-
-    offers.push({
-      plan,
-      label: CAREER_PLANS[plan].label,
-      productName: product?.name ?? null,
-      productDescription: product?.description ?? null,
-      unitAmount: price.unit_amount,
-      currency: price.currency,
-      interval: price.recurring?.interval ?? null,
-      intervalCount: price.recurring?.interval_count ?? null,
-    });
-  }
-
-  return offers;
+  return {
+    label: CAREER_PLAN_LABEL,
+    productName: product?.name ?? null,
+    productDescription: product?.description ?? null,
+    unitAmount: price.unit_amount,
+    currency: price.currency,
+    interval: price.recurring?.interval ?? null,
+    intervalCount: price.recurring?.interval_count ?? null,
+  };
 }

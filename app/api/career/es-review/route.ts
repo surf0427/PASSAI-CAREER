@@ -55,6 +55,7 @@ import {
   createAiCallBudget,
   createTimeoutSignal,
 } from '@/lib/aiTimeout';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 // 機能キー（就活版共通基盤の出し分け）。
 const FEATURE_KEY = 'career-es' as const;
@@ -144,6 +145,12 @@ export async function POST(req: Request) {
   //   ★ answer はこれまで完全に無制限だった（Audit P0）。guard 側で 8,000 字上限を掛ける。
   const guard = await guardEsRequest(req, 'review');
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {

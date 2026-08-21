@@ -1,25 +1,11 @@
-// PASSAI CAREER — 面接 AI route 共通の request guard（server-only・3 route 共有）。
-//
-// STEP-CAREER-INTERVIEW-HARDENING-P0-1（Production Readiness Audit P0-1）。
-// start / turn / complete は Anthropic 課金に直結する公開 endpoint でありながら、
-// 認証 identity・rate limit・body サイズ上限のいずれも持っていなかった。
-// 本 module がその 3 つを 1 箇所で担う。
-//
-// ★ 実装方針（新しい仕組みを作らない）:
-//   identity 解決 / client IP 抽出 / body 上限 / payload 構造検査 / 共通レスポンスは
-//   機能非依存の共通基盤 `lib/careerApi/requestGuard.ts` にある。本 module はその上に
-//   **面接固有の adapter**（rate limit ルール・turns 上限）だけを載せる。
-//   ★ 他機能（プレゼン等）の module は参照しない（機能間の依存を作らない）。
-//
-// ★ 設計判断（guest を 401 で閉じない理由）— プレゼンと同一:
-//   面接も **guest 利用を正式に許可**した機能（localStorage canonical・mirror は member のみ）。
-//   したがって本 guard は 401 を返さない。identity は「拒否するため」ではなく
-//   「rate limit のキーを決めるため」だけに使う。
-//
-// ★ client が body に入れてくる userId 類は認証として一切信用しない
-//   （identity は Career Supabase（Project B）の server session cookie からのみ導く）。
-//
-// 厳守: never-throw / PII・生 IP・user_id を log しない / **AI 到達前に必ず判定する**。
+// ★ 設計判断（本 guard 自体は 401 を返さない）:
+//   PASSAI CAREER は **単一の有料プラン**で、AI 本実行は契約者だけが利用できる
+//   （2026-08-21 商品決定。旧「guest 利用は許可」仕様は廃止）。契約の確認は本 module
+//   ではなく `lib/careerBilling/aiAccess.ts` の requireCareerAiAccess が行う。
+//   本 guard は identity を確定して **rate limit のキーを決める**ところまでを担当する:
+//     member … user_id をキーに通常上限
+//     guest  … IP をキーに厳しめ上限（fail-closed）
+//   順序: request guard → 有料ゲート → Daily Quota → AI。
 
 import 'server-only';
 

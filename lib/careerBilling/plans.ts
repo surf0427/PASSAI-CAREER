@@ -1,74 +1,69 @@
 /**
  * PASSAI CAREER — 課金プランのカタログ（pure constants / client + server 双方から import 可）。
  *
- * 受験版 `lib/billing/plans.ts` の**構造だけ**を移植したもの。受験版の Product /
- * Price ID / 金額 / 訴求文言は **一切コピーしない**（別プロダクト・別 Stripe Price）。
+ * ★ 商品モデルは **単一の有料プラン**（PASSAI CAREER）だけ。
+ *   以前の basic / premium という 2 段階 tier は廃止した。runtime に tier 判定は無く、
+ *   判断すべきことは「有効な契約があるか / 無いか」だけである。
+ *   将来のためという理由で tier 抽象（FREE / PRO / ENTERPRISE 等）を再導入しないこと。
  *
- * 設計:
- *   - plan key は CAREER 側に既存の `CareerPlan`（lib/careerAi/types.ts）と同一語彙。
- *     新語彙を発明せず、'free' | 'basic' | 'premium' の既存区分に合わせる。
- *     ズレたら build error になるよう下部で型レベルに固定する。
- *   - **金額（priceJpy）は本ファイルに持たない**。CAREER の価格仕様は repo 上のどこにも
- *     存在しない（LP に料金セクション無し・docs に価格記載無し）ため、勝手に創作しない。
- *     表示価格は Stripe Price（unit_amount / recurring）を server 側で読んで出す。
- *   - 実 Price ID は server-only helper（lib/careerBilling/stripe.ts の
- *     `getCareerStripePriceId`）だけが env から解決する。本ファイルは env を読まない。
- *   - env 名は受験版（STRIPE_PRICE_ID_BASIC / _PREMIUM）と **必ず別名**にする。
- *     同一 Stripe アカウント上で受験版 Price と CAREER Price が混線しないための境界。
+ * ★ 金額（priceJpy）は本ファイルに持たない。
+ *   金額 / 通貨 / 請求間隔は Stripe Price、商品名 / 説明は Stripe Product が正本。
+ *   実 Price ID は server-only helper（lib/careerBilling/stripe.ts）だけが env から解決する。
+ *
+ * ★ env 名は受験版（STRIPE_PRICE_ID_BASIC / _PREMIUM）と必ず別名にする。
+ *   同一 Stripe アカウント上で受験版 Price と CAREER Price が混線しないための境界。
  */
 
-import type { CareerPlan } from '@/lib/careerAi/types';
+/**
+ * CAREER 単一プランの Price ID env 名（**優先順**）。
+ *
+ * ★ 新しい env 名を発明しない。ここに並ぶ 2 つはいずれも本 repo が以前から使っている
+ *   CAREER 専用の env 名であり、単一プラン化にあたって「運用側がどちらの変数名に
+ *   単一 Price を入れたか」を repo からは断定できないため、**先頭から順に探して
+ *   最初に見つかったものを canonical price として扱う**。
+ *
+ * ★ 副次効果として、旧 premium Price で作られた subscription も
+ *   「CAREER の契約」として認識できる（legacy read compatibility）。
+ *   ただし **新規 Checkout は常に先頭で解決した 1 本の Price しか使わない**ので、
+ *   商品としては単一プランである。
+ */
+export const CAREER_PRICE_ENV_NAMES = [
+  'STRIPE_PRICE_ID_CAREER_BASIC',
+  'STRIPE_PRICE_ID_CAREER_PREMIUM',
+] as const;
 
-/** 有料プラン（契約が存在する状態）。'free' は「契約が無い」を表すので含めない。 */
-export const CAREER_PAID_PLAN_IDS = ['basic', 'premium'] as const;
-export type CareerPaidPlanId = (typeof CAREER_PAID_PLAN_IDS)[number];
+export type CareerPriceEnvName = (typeof CAREER_PRICE_ENV_NAMES)[number];
 
-/** entitlement resolver が返す実効プラン。契約なし = 'free'。 */
-export type CareerEffectivePlan = 'free' | CareerPaidPlanId;
+/** UI 表示名（Stripe Product.name が取れないときの代替）。 */
+export const CAREER_PLAN_LABEL = 'PASSAI CAREER';
 
-/** CAREER 専用 Stripe Price ID の env 名（受験版とは別名で固定）。 */
-export type CareerPriceEnvName =
-  | 'STRIPE_PRICE_ID_CAREER_BASIC'
-  | 'STRIPE_PRICE_ID_CAREER_PREMIUM';
+/**
+ * `career_subscriptions.plan` に書き込む値。
+ *
+ * ★ DB の CHECK 制約（`plan IN ('basic','premium')`）は **変更しない**。
+ *   単一プラン化のために migration を足すのは割に合わないため、どの env で解決した
+ *   Price かに応じて既存の許容値をそのまま書く。runtime の権利判定はこの値を
+ *   一切見ない（entitlementPolicy.ts は status だけで判断する）。
+ *   過去行（plan='basic' / 'premium'）もそのまま有効な CAREER 契約として読める。
+ */
+export const CAREER_SUBSCRIPTION_PLAN_VALUES = ['basic', 'premium'] as const;
+export type CareerSubscriptionPlanValue =
+  (typeof CAREER_SUBSCRIPTION_PLAN_VALUES)[number];
 
-export type CareerPlanConfig = {
-  id: CareerPaidPlanId;
-  /** UI 表示名。plan key と同語彙のみ。受験版の訴求文言は持ち込まない。 */
-  label: string;
-  /** server 側でのみ参照する env 変数名（client から process.env を引かない）。 */
-  stripePriceIdEnvName: CareerPriceEnvName;
+/** env 名 → DB へ書く plan 値。 */
+export const CAREER_PRICE_ENV_TO_PLAN_VALUE: Readonly<
+  Record<CareerPriceEnvName, CareerSubscriptionPlanValue>
+> = {
+  STRIPE_PRICE_ID_CAREER_BASIC: 'basic',
+  STRIPE_PRICE_ID_CAREER_PREMIUM: 'premium',
 };
 
-export const CAREER_PLANS: Record<CareerPaidPlanId, CareerPlanConfig> = {
-  basic: {
-    id: 'basic',
-    label: 'Basic',
-    stripePriceIdEnvName: 'STRIPE_PRICE_ID_CAREER_BASIC',
-  },
-  premium: {
-    id: 'premium',
-    label: 'Premium',
-    stripePriceIdEnvName: 'STRIPE_PRICE_ID_CAREER_PREMIUM',
-  },
-};
-
-export function isCareerPaidPlanId(value: unknown): value is CareerPaidPlanId {
+/** career_subscriptions に入りうる既知の plan 値か（未知の値は権利に数えない）。 */
+export function isCareerSubscriptionPlanValue(
+  value: unknown,
+): value is CareerSubscriptionPlanValue {
   return (
     typeof value === 'string' &&
-    (CAREER_PAID_PLAN_IDS as readonly string[]).includes(value)
+    (CAREER_SUBSCRIPTION_PLAN_VALUES as readonly string[]).includes(value)
   );
 }
-
-export function isCareerEffectivePlan(value: unknown): value is CareerEffectivePlan {
-  return value === 'free' || isCareerPaidPlanId(value);
-}
-
-// ── 既存 CAREER 語彙との型レベル整合（drift したら build error）─────────────
-//
-// lib/careerAi/types.ts の CareerPlan（'free' | 'basic' | 'premium'）と
-// CareerEffectivePlan は同一集合でなければならない。どちらかを片側だけ変更した
-// 瞬間に、この 2 行が型エラーになる。
-type _AssertPlanSubset = CareerEffectivePlan extends CareerPlan ? true : never;
-type _AssertPlanSuperset = CareerPlan extends CareerEffectivePlan ? true : never;
-const _planAlignment: [_AssertPlanSubset, _AssertPlanSuperset] = [true, true];
-void _planAlignment;

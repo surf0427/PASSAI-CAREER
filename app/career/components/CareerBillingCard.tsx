@@ -12,11 +12,14 @@
  *   権利判定と同じ server 経路をそのまま表示にも使う。
  *   結果として「表示は paid だが server は free」という乖離が構造的に起きない。
  *
+ * ★ PASSAI CAREER は **単一の有料プラン**。プラン名の出し分け・プラン比較・
+ *   upgrade / downgrade の導線は持たない（解約・支払方法の変更は Stripe Customer Portal）。
+ *
  * 表示分岐:
  *   guest / loading       → 何も描画しない（ログイン導線は CareerLoginStatusCard が持つ）
  *   課金未設定 / 取得不可  → 何も描画しない（存在しない機能の UI を出さない）
- *   free                  → 「プランを見る」導線
- *   paid                  → プラン名 + status バッジ + 次回更新日 / 解約予定日 + 「契約を管理」
+ *   未契約                → 「プランを見る」導線
+ *   契約中                → status バッジ + 次回更新日 / 解約予定日 + 「契約を管理」
  */
 
 import { useEffect, useState } from 'react';
@@ -26,7 +29,7 @@ import { Card } from '@/components/ui/Card';
 import { useCareerAuth } from '@/app/career/components/CareerAuthProvider';
 
 type StatusResponse = {
-  plan: 'free' | 'basic' | 'premium';
+  /** 有効な契約があるか。単一プランなので tier は無い。 */
   paid: boolean;
   subscription: {
     plan: string;
@@ -132,9 +135,10 @@ export default function CareerBillingCard() {
     <Card padding="md">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <p className="text-xs font-medium text-slate-500">現在のプラン</p>
+          <p className="text-xs font-medium text-slate-500">現在のご契約</p>
           <p className="mt-1 text-xl font-bold text-slate-900">
-            {planLabel(data.plan)}
+            {/* ここへ来るのは data.paid === true のときだけ（未契約は上で早期 return）。 */}
+            PASSAI CAREER
           </p>
         </div>
         {sub && <StatusBadge status={sub.status} />}
@@ -174,12 +178,6 @@ export default function CareerBillingCard() {
       </div>
     </Card>
   );
-}
-
-function planLabel(plan: StatusResponse['plan']): string {
-  if (plan === 'basic') return 'Basic';
-  if (plan === 'premium') return 'Premium';
-  return 'Free';
 }
 
 function StatusBadge({ status }: { status: string }) {

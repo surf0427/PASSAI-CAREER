@@ -214,9 +214,9 @@ export const CAREER_GD_RATE_LIMITS = {
 // ── Career プレゼン AI route の rate limit ルール（正本）────────────
 //
 // STEP-CAREER-PRESENTATION-HARDENING-P0: /api/career/presentation/{theme,evaluate,qa} は
-// Anthropic 課金に直結する公開 endpoint。プレゼンは **guest 利用を正式に許可**した機能
-// （localStorage canonical / mirror は member のみ）なので、GD のように 401 で閉じず、
-// 「member = user_id キー」「guest = IP キー」の **2 系統**で上限を分ける。
+// Anthropic 課金に直結する endpoint。AI 本実行の可否は後段の有料ゲート
+// （lib/careerBilling/aiAccess.ts）が決めるため、本 rule は「誰からの request か」で
+// burst 上限を分けるだけにする:「member = user_id キー」「guest = IP キー」の 2 系統。
 //
 // 値の根拠（通常利用を邪魔せず automated abuse を止める水準）:
 //   theme    … お題は納得いくまで作り直す（実利用で数回）。member 8/分・40/時。
@@ -268,7 +268,7 @@ export const CAREER_PRESENTATION_RATE_LIMITS = {
 // （Production Readiness Audit P0-1）。プレゼンと **同じ 2 系統設計**を横展開する:
 //   member … user_id キー（通常上限・fail-open）
 //   guest  … IP キー（厳しめ・fail-closed）
-// ★ 401 では閉じない。面接は guest 利用を正式に許可した機能（localStorage canonical）。
+// ★ 本 rule は burst 防御のみ。契約の確認は後段の有料ゲートが行う。
 //
 // 値の根拠（正常な 1 面接 = start 1 回 + turn 最大 4 回 + complete 1 回）:
 //   start    … 面接開始。モードを選び直して開始し直す程度は許す。member 6/分・30/時。
@@ -315,7 +315,7 @@ export const CAREER_INTERVIEW_RATE_LIMITS = {
 // プレゼン / 面接と **同じ 2 系統設計**を横展開する:
 //   member … user_id キー（通常上限・fail-open）
 //   guest  … IP キー（厳しめ・fail-closed）
-// ★ 401 では閉じない。ES は guest 利用を正式に許可した機能（localStorage canonical）。
+// ★ 本 rule は burst 防御のみ。契約の確認は後段の有料ゲートが行う。
 //
 // 値の根拠（正常な ES 1 本の call 回数。設問種別で最大となるガクチカ = 深掘り上限 7 問）:
 //   materials … 材料選択フェーズで 1 回（「探す」を押したとき）。再検索しても数回。

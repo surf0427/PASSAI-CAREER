@@ -34,16 +34,16 @@ import 'server-only';
 import type Stripe from 'stripe';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { getCareerPlanFromPriceId } from './stripe';
+import { resolveCareerPlanValueFromPriceId } from './stripe';
 import { rememberCareerStripeCustomer } from './customer';
-import type { CareerPaidPlanId } from './plans';
+import type { CareerSubscriptionPlanValue } from './plans';
 
 export const CAREER_SUBSCRIPTIONS_TABLE = 'career_subscriptions';
 export const CAREER_METADATA_USER_ID_KEY = 'app_user_id';
 
 /** webhook 側で結果を観測 / ログに残せるよう discriminated union を返す。 */
 export type CareerSyncResult =
-  | { kind: 'ok'; userId: string; plan: CareerPaidPlanId }
+  | { kind: 'ok'; userId: string; plan: CareerSubscriptionPlanValue }
   | { kind: 'no-user-id'; customerId: string; subscriptionId: string }
   | { kind: 'unknown-plan'; subscriptionId: string; priceId: string }
   | { kind: 'no-items'; subscriptionId: string }
@@ -67,7 +67,10 @@ export async function syncCareerSubscriptionFromStripe(input: {
 
   // ★ CAREER の Price env にしかマッチしない。受験版 subscription が誤って
   //   CAREER webhook に届いた場合はここで null になり、DB を一切変更しない。
-  const plan = getCareerPlanFromPriceId(priceId);
+  // ★ 単一プラン化後も plan 列には既存 CHECK が許す値（basic / premium）を書く。
+  //   どちらの値でも権利判定は同じ（entitlementPolicy は status だけを見る）。
+  //   DB migration を足さずに単一プランへ移行するための互換措置。
+  const plan = resolveCareerPlanValueFromPriceId(priceId);
   if (!plan) return { kind: 'unknown-plan', subscriptionId, priceId };
 
   const userId = await resolveCareerUserId({ admin, sub, customerId });

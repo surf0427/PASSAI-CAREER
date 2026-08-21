@@ -14,13 +14,15 @@
  *   代わりに **Stripe を単一の正本**として読む:
  *     金額 / 通貨 / 請求間隔 → Stripe Price
  *     商品名 / 提供内容の説明 → Stripe Product（運用者が Dashboard で記述）
- *   Price env（STRIPE_PRICE_ID_CAREER_*）が未設定なら申し込み導線ごと出さない
+ *   Price env が未設定なら申し込み導線ごと出さない
  *   （fail-closed。「とりあえず売る」は起こらない）。
+ *
+ * ★ CAREER は **単一の有料プラン**。プラン比較・upgrade/downgrade の UI は持たない。
  *
  * ── 認証との関係 ────────────────────────────────────────────────────────
  *   本ページ自体はログイン不要で閲覧できる（価格を見るのにログインは要らない）。
  *   申し込みボタンが未ログインを検知して /career/login へ送り、ログイン後に
- *   `?plan=` で戻って checkout を再開する（CareerCheckoutButton）。
+ *   `?checkout=1` で戻って checkout を再開する（CareerCheckoutButton）。
  */
 
 import Link from 'next/link';
@@ -30,8 +32,8 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { CareerCheckoutButton } from '@/app/career/components/CareerCheckoutButton';
 import {
+  getCareerPlanOffer,
   isCareerBillingConfigured,
-  listCareerPlanOffers,
   type CareerPlanOffer,
 } from '@/lib/careerBilling/stripe';
 
@@ -71,16 +73,18 @@ function formatInterval(offer: CareerPlanOffer): string | null {
 
 export default async function CareerBillingPage() {
   // env 未設定なら Stripe を呼ばずに終了（getStripeClient は throw し得る）。
-  let offers: CareerPlanOffer[] = [];
+  let offer: CareerPlanOffer | null = null;
   let loadFailed = false;
   if (isCareerBillingConfigured()) {
     try {
-      offers = await listCareerPlanOffers();
+      offer = await getCareerPlanOffer();
     } catch {
       // Stripe 障害 / key 不正。価格を偽らず「一時的に表示できない」を出す。
       loadFailed = true;
     }
   }
+  const amount = offer ? formatAmount(offer) : null;
+  const interval = offer ? formatInterval(offer) : null;
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
@@ -103,55 +107,40 @@ export default async function CareerBillingPage() {
         </AlertBox>
       )}
 
-      {!loadFailed && offers.length === 0 && (
+      {!loadFailed && !offer && (
         <AlertBox variant="info" className="mb-6">
           現在お申し込みを受け付けているプランはありません。
         </AlertBox>
       )}
 
-      {offers.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {offers.map((offer) => {
-            const amount = formatAmount(offer);
-            const interval = formatInterval(offer);
-            return (
-              <Card key={offer.plan} padding="md" className="flex flex-col">
-                <p className="text-xs font-medium text-slate-500">
-                  {offer.label}
-                </p>
-                <h2 className="mt-1 text-xl font-bold text-slate-900">
-                  {/* 商品名は Stripe Product が正本。未設定なら plan ラベルで代替。 */}
-                  {offer.productName ?? offer.label}
-                </h2>
+      {offer && (
+        <Card padding="md" className="flex flex-col max-w-md">
+          <h2 className="text-xl font-bold text-slate-900">
+            {/* 商品名は Stripe Product が正本。未設定なら既定ラベルで代替。 */}
+            {offer.productName ?? offer.label}
+          </h2>
 
-                {amount && (
-                  <p className="mt-3 text-2xl font-bold text-slate-900">
-                    {amount}
-                    {interval && (
-                      <span className="ml-1 text-sm font-medium text-slate-500">
-                        {interval}
-                      </span>
-                    )}
-                  </p>
-                )}
+          {amount && (
+            <p className="mt-3 text-2xl font-bold text-slate-900">
+              {amount}
+              {interval && (
+                <span className="ml-1 text-sm font-medium text-slate-500">
+                  {interval}
+                </span>
+              )}
+            </p>
+          )}
 
-                {offer.productDescription && (
-                  <p className="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-line">
-                    {offer.productDescription}
-                  </p>
-                )}
+          {offer.productDescription && (
+            <p className="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+              {offer.productDescription}
+            </p>
+          )}
 
-                <div className="mt-6">
-                  <CareerCheckoutButton
-                    plan={offer.plan}
-                    label="このプランを申し込む"
-                    highlight={offer.plan === 'premium'}
-                  />
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+          <div className="mt-6">
+            <CareerCheckoutButton label="このプランを申し込む" highlight />
+          </div>
+        </Card>
       )}
 
       <p className="mt-8 text-xs text-slate-500 leading-relaxed">

@@ -74,6 +74,7 @@ import {
   type AuthResolution,
   type JobClaimLogEvent,
 } from '@/lib/careerSelfAnalysis/summaryJobService';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 // Node runtime を明示（Anthropic SDK / node:crypto / service-role）。
 export const runtime = 'nodejs';
@@ -274,6 +275,12 @@ export async function POST(req: Request) {
     badRequest: () => jsonError('BAD_REQUEST', 400, 'リクエストの形式が不正です。'),
   });
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body = guard.body;
 
   const parsed = parseBody(body);

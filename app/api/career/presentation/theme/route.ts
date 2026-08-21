@@ -32,6 +32,7 @@ import { guardPresentationRequest } from '../requestGuard';
 import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
 // T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
 import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.server';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 export const maxDuration = 80;
 
@@ -49,9 +50,15 @@ function extractText(content: Array<{ type: string; text?: string }>): string {
 
 export async function POST(req: Request) {
   // P0（HARDENING）: identity 確定 → rate limit → body サイズ上限を **AI 到達前**に通す。
-  //   guest は 401 にせず IP キーの厳しい上限へ回す（プレゼンは guest 利用を正式に許可する機能）。
+  //   guest は本 guard では 401 にせず IP キーの厳しい上限へ回す（契約確認は次の有料ゲート）。
   const guard = await guardPresentationRequest(req, 'theme');
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {

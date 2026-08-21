@@ -44,6 +44,7 @@ import {
 import { guardPresentationRequest } from '../requestGuard';
 // Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
 import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
+import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
 
 export const maxDuration = 80;
 
@@ -72,6 +73,12 @@ export async function POST(req: Request) {
   //   Q&A は 1 セッション最大 5 call（kickoff + 回答 4 回）を見込んだ上限。
   const guard = await guardPresentationRequest(req, 'qa');
   if (!guard.ok) return guard.response;
+
+  // 有料ゲート（PASSAI CAREER 単一プラン）。AI 到達前・Quota より前に必ず通す。
+  //   guest / 未契約 / 契約状態が確認できない場合はここで終了し、AI コストを 0 にする。
+  //   ★ Quota より前に置くのが必須（未契約者に Quota を消費させない）。
+  const accessDenied = await requireCareerAiAccess(guard.identity);
+  if (accessDenied) return accessDenied;
   const body: unknown = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
