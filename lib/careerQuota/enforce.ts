@@ -29,13 +29,21 @@
  * 既存の burst rate limit（lib/rateLimit）とは **別レイヤー**。短時間の連打防御はそちら、
  * 商品仕様としての 1 日の利用回数は本 module。両方を通す。
  *
+ * ★ fail-closed（2026-08-22 / Project B へ quota schema 適用済み・実 DB smoke 完了後に切替）:
+ *   quota が数えられない状態で AI を実行すると、上限が静かに消えたまま原価だけが出る。
+ *   したがって **quota infrastructure の失敗はすべて 503 で止める**:
+ *     DDL 未適用 / service_role 未設定 / DB・RPC エラー / 想定外の例外
+ *   → いずれも AI provider へは 1 度も到達しない。
+ *   「上限に達した（429）」と「上限を数えられない（503）」は必ず別物として扱う。
+ *
  * ★ entitlement との関係（2026-08-21 の商品決定で解決済み）:
  *   本 module へ到達する時点で、request は既に有料ゲート
  *   （lib/careerBilling/aiAccess.ts）を通過している。したがって:
  *     - guest / 未契約は quota に**到達しない**（＝ quota を消費しない）
  *     - quota を数える対象は「有効な契約を持つ member」だけ
  *   PASSAI CAREER は単一の有料プランなので、plan 別の上限出し分けは存在しない。
- *   下の guest 判定は「順序を間違えて guest が来ても消費しない」ための保険である。
+ *   下の member 判定は「順序を間違えて guest が来た」ことを検出する保険であり、
+ *   その場合も **通さず 503**（誰の分として数えるか決められないため）。
  */
 
 import 'server-only';
@@ -56,13 +64,29 @@ import { consumeCareerDailyQuota, settleCareerDailyQuota } from './repository.se
 
 /**
  * quota を無効化する escape hatch（**local / test / CI 用**）。
- * 既定は「有効」なので、設定し忘れで本番が silent no-op になることはない。
- * 既存の `CAREER_GD_RATE_LIMIT_DISABLED` と同じ思想・同じ受理値。
+ *
+ * ★ 既定（未設定）は必ず「有効」。'1' / 'true' を **明示的に**入れたときだけ無効になるので、
+ *   env の設定し忘れで本番が silent no-op になることはない。
+ *   既存の `CAREER_GD_RATE_LIMIT_DISABLED` と同じ思想・同じ受理値。
+ * ★ 本番で有効化されていたら警告を出す（気付かないまま上限が消えている状態を作らない）。
  */
 export function isCareerDailyQuotaDisabled(): boolean {
   const v = process.env.CAREER_DAILY_QUOTA_DISABLED;
-  return v === '1' || v === 'true';
+  const disabled = v === '1' || v === 'true';
+  if (disabled && !warnedDisabledInProduction) {
+    const isProd =
+      process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
+    if (isProd) {
+      warnedDisabledInProduction = true;
+      console.warn(
+        'career daily quota: CAREER_DAILY_QUOTA_DISABLED が production で有効です。日次上限は適用されません。',
+      );
+    }
+  }
+  return disabled;
 }
+
+let warnedDisabledInProduction = false;
 
 /** 上限到達時の共通レスポンス（machine-readable + 既存 client 契約の `detail`）。 */
 export function careerDailyLimitReachedResponse(input: {
@@ -106,28 +130,46 @@ export function careerDailyLimitReachedResponse(input: {
   );
 }
 
-// store 障害 / DDL 未適用の警告は 1 プロセス 1 回だけ出す（ログ汚染を防ぐ）。
-let warnedNotProvisioned = false;
+/**
+ * quota を数えられなかった理由。**server ログでの切り分け用**であり、
+ * client には返さない（内部構成を推測させない / §7 no-leak）。
+ */
+export type CareerQuotaFailureReason =
+  | 'not-provisioned'      // career_daily_quota_apply.sql 未適用（table / RPC が無い）
+  | 'service-role-missing' // CAREER_SUPABASE_SERVICE_ROLE_KEY 未設定
+  | 'db-error'             // DB / RPC / ネットワークのエラー
+  | 'unexpected'           // repository が想定外に throw した
+  | 'identity-missing';    // member でない identity が quota まで来た（順序バグの保険）
 
-function warnOnce(message: string): void {
-  if (warnedNotProvisioned) return;
-  warnedNotProvisioned = true;
-  console.warn(message);
-}
+const QUOTA_UNAVAILABLE_DETAIL =
+  'ただいま一時的にご利用いただけません。時間をおいて再度お試しください。';
 
 /**
- * 日次利用回数の check + consume。上限到達なら 429 Response、続行してよければ null。
+ * quota infrastructure が使えないときの共通レスポンス（**fail-closed**）。
  *
- * fail-open（可用性優先）にしている経路と、その理由:
- *   - `CAREER_DAILY_QUOTA_DISABLED` … 明示的な無効化。
- *   - guest（user_id 無し）        … 有料ゲートで既に弾かれている（保険の no-op）。
- *   - DDL 未適用 / service_role 未設定 / DB エラー
- *       … 「上限が数えられない」を理由に有料ユーザーの機能を止めない。既存 rate limit の
- *         member 経路（fail-open）と同じ判断。濫用面（未認証・短時間連打）は burst rate limit
- *         が別レイヤーで塞いでおり、そちらは guest fail-closed のまま維持している。
- *     ★ 本番で quota を実効化するには `supabase/career_daily_quota_apply.sql` の適用が必要。
- *       未適用のあいだは警告ログが 1 度出る（silent no-op にしない）。
+ * ★ 429（上限到達）とは必ず別物にする。上限に達したのではなく「数えられない」ので、
+ *   再試行の意味も UI の出し方も違う。
+ * ★ 失敗理由は body に載せない。Supabase の error / table 名 / RPC 名 / secret も載せない。
  */
+export function careerQuotaUnavailableResponse(): Response {
+  return Response.json(
+    {
+      error: 'QUOTA_UNAVAILABLE',
+      code: 'QUOTA_UNAVAILABLE',
+      detail: QUOTA_UNAVAILABLE_DETAIL,
+      message: QUOTA_UNAVAILABLE_DETAIL,
+    },
+    { status: 503, headers: { 'Retry-After': '60' } },
+  );
+}
+
+/** 原因を切り分け可能な形で記録する（secret / user_id / operation は出さない）。 */
+function logQuotaFailure(feature: CareerDailyQuotaFeature, reason: CareerQuotaFailureReason): void {
+  console.error(
+    `career daily quota unavailable: feature=${feature} reason=${reason} (request BLOCKED / fail-closed)`,
+  );
+}
+
 /**
  * quota gate の戻り値。
  *
@@ -135,7 +177,7 @@ function warnOnce(message: string): void {
  * 通過した場合は、**成功して返す直前**に `settle()` を呼ぶ。
  */
 export type CareerQuotaGate = {
-  /** 上限到達時の 429 レスポンス。通過時は null。 */
+  /** 止めるべきときの Response（429 = 上限到達 / 503 = 数えられない）。通過時は null。 */
   blocked: Response | null;
   /** 実行成功の記録（冪等 / never throw）。失敗パスでは呼ばない。 */
   settle: () => Promise<void>;
@@ -143,18 +185,55 @@ export type CareerQuotaGate = {
 
 const NOOP_GATE: CareerQuotaGate = { blocked: null, settle: async () => {} };
 
+/** quota 評価の結果（I/O を含まない表現）。 */
+export type CareerQuotaEvaluation =
+  | { kind: 'ok'; outcome: 'CONSUMED' | 'DEDUPED' | 'LIMIT_REACHED'; used: number; limit: number; resetAtMs: number }
+  | { kind: 'failure'; reason: CareerQuotaFailureReason };
+
+/**
+ * 評価結果 → 「通す / 止める」の決定（**純関数**）。
+ *
+ * I/O を持たないので QA から全分岐を直接検証できる（失敗注入に mock が要らない）。
+ * ここが fail-closed の唯一の判断点であり、route 側は結果をそのまま返すだけ。
+ */
+export function decideCareerQuotaGate(input: {
+  feature: CareerDailyQuotaFeature;
+  evaluation: CareerQuotaEvaluation;
+  nowMs: number;
+}): { blocked: Response | null } {
+  const { feature, evaluation, nowMs } = input;
+
+  // quota を数えられない → AI を実行しない（503）。
+  if (evaluation.kind === 'failure') {
+    return { blocked: careerQuotaUnavailableResponse() };
+  }
+
+  // 上限に到達した → 429（数えられてはいる）。
+  if (evaluation.outcome === 'LIMIT_REACHED') {
+    return {
+      blocked: careerDailyLimitReachedResponse({
+        feature,
+        limit: evaluation.limit,
+        used: evaluation.used,
+        resetAtMs: Number.isFinite(evaluation.resetAtMs)
+          ? evaluation.resetAtMs
+          : careerQuotaJstResetAtMs(nowMs),
+        nowMs,
+      }),
+    };
+  }
+
+  // CONSUMED / DEDUPED はどちらも実行してよい。
+  return { blocked: null };
+}
+
 /**
  * 日次利用回数の check + consume。
  *
- * fail-open（可用性優先）にしている経路と、その理由:
- *   - `CAREER_DAILY_QUOTA_DISABLED` … 明示的な無効化。
- *   - guest（user_id 無し）        … 有料ゲートで既に弾かれている（保険の no-op）。
- *   - DDL 未適用 / service_role 未設定 / DB エラー
- *       … 「上限が数えられない」を理由に有料ユーザーの機能を止めない。既存 rate limit の
- *         member 経路（fail-open）と同じ判断。濫用面（未認証・短時間連打）は burst rate limit
- *         が別レイヤーで塞いでおり、そちらは guest fail-closed のまま維持している。
- *     ★ 本番で quota を実効化するには `supabase/career_daily_quota_apply.sql` の適用が必要。
- *       未適用のあいだは警告ログが 1 度出る（silent no-op にしない）。
+ * 戻り値の `blocked` が非 null なら **その Response をそのまま返す**（AI へ進まない）:
+ *   429 … 本日の上限に到達
+ *   503 … quota を数えられない（DDL 未適用 / service_role 未設定 / DB エラー / 想定外）
+ * 通過した場合は、成功して返す直前に `settle()` を呼ぶ。
  */
 export async function enforceCareerDailyQuota(params: {
   identity: CareerRequestIdentity;
@@ -163,62 +242,62 @@ export async function enforceCareerDailyQuota(params: {
   operationSource: unknown;
   nowMs?: number;
 }): Promise<CareerQuotaGate> {
+  // ★ 明示的な無効化のみ no-op（未設定なら必ず有効）。
   if (isCareerDailyQuotaDisabled()) return NOOP_GATE;
-  if (params.identity.kind !== 'member') return NOOP_GATE;
 
   const feature = params.feature;
+  const nowMs = params.nowMs ?? Date.now();
+
+  // 順序バグの保険。有料ゲートを通っていれば member 以外はここへ来ない。
+  //   来てしまった場合は「誰の分として数えるか決められない」ので fail-closed。
+  if (params.identity.kind !== 'member') {
+    logQuotaFailure(feature, 'identity-missing');
+    return { blocked: careerQuotaUnavailableResponse(), settle: async () => {} };
+  }
+
   const userId = params.identity.userId;
   const limit = getCareerDailyLimit(feature);
-  const nowMs = params.nowMs ?? Date.now();
   const operationId = buildCareerQuotaOperationId(feature, params.operationSource);
 
   let admin;
   try {
     admin = getCareerServiceRoleSupabaseClient();
   } catch {
-    warnOnce('career daily quota: service_role 未設定のため日次上限を適用できません（fail-open）。');
-    return NOOP_GATE;
+    logQuotaFailure(feature, 'service-role-missing');
+    return { blocked: careerQuotaUnavailableResponse(), settle: async () => {} };
   }
 
-  const result = await consumeCareerDailyQuota(admin, {
-    userId,
-    feature,
-    operationId,
-    limit,
-    leaseSeconds: CAREER_QUOTA_LEASE_SECONDS,
-    maxDedupeHits: CAREER_QUOTA_MAX_DEDUPE_HITS,
-  });
-
-  if (result.kind === 'not-provisioned') {
-    warnOnce(
-      'career daily quota: career_daily_quota_apply.sql が未適用のため日次上限を適用できません（fail-open）。',
-    );
-    return NOOP_GATE;
-  }
-  if (result.kind === 'db-error') {
-    // user_id / operation の実値は出さない。feature とメッセージのみ。
-    console.warn(
-      `career daily quota: consume failed feature=${feature} (request allowed / fail-open)`,
-    );
-    return NOOP_GATE;
+  // repository が想定外に throw しても AI へ進ませない。
+  let result;
+  try {
+    result = await consumeCareerDailyQuota(admin, {
+      userId,
+      feature,
+      operationId,
+      limit,
+      leaseSeconds: CAREER_QUOTA_LEASE_SECONDS,
+      maxDedupeHits: CAREER_QUOTA_MAX_DEDUPE_HITS,
+    });
+  } catch {
+    logQuotaFailure(feature, 'unexpected');
+    return { blocked: careerQuotaUnavailableResponse(), settle: async () => {} };
   }
 
-  if (result.outcome === 'LIMIT_REACHED') {
-    console.warn(
-      `career daily quota reached: feature=${feature} limit=${result.limit} used=${result.used}`,
-    );
-    return {
-      blocked: careerDailyLimitReachedResponse({
-        feature,
-        limit: result.limit,
-        used: result.used,
-        resetAtMs: Number.isFinite(result.resetAtMs)
-          ? result.resetAtMs
-          : careerQuotaJstResetAtMs(nowMs),
-        nowMs,
-      }),
-      settle: async () => {},
-    };
+  const evaluation: CareerQuotaEvaluation =
+    result.kind === 'ok'
+      ? { kind: 'ok', outcome: result.outcome, used: result.used, limit: result.limit, resetAtMs: result.resetAtMs }
+      : { kind: 'failure', reason: result.kind === 'not-provisioned' ? 'not-provisioned' : 'db-error' };
+
+  if (evaluation.kind === 'failure') logQuotaFailure(feature, evaluation.reason);
+
+  const decision = decideCareerQuotaGate({ feature, evaluation, nowMs });
+  if (decision.blocked) {
+    if (evaluation.kind === 'ok') {
+      console.warn(
+        `career daily quota reached: feature=${feature} limit=${evaluation.limit} used=${evaluation.used}`,
+      );
+    }
+    return { blocked: decision.blocked, settle: async () => {} };
   }
 
   // CONSUMED / DEDUPED はどちらも「実行してよい」。settle も同じ扱いでよい

@@ -987,16 +987,99 @@ console.log('[7] security / failure semantics');
     '429 body に userId / operation を含めない',
   );
 
-  // fail-open の明示（silent no-op にしない）。
+  // ★ fail-closed（2026-08-22 切替）: quota を数えられない状態で AI を実行しない。
   check(
-    /not-provisioned[\s\S]{0,300}console\.warn/.test(enforce),
-    'DDL 未適用時は警告を出す（黙って無効化しない）',
+    !/fail-open/.test(enforce),
+    'enforce に fail-open の経路が残っていない',
+  );
+  check(
+    !/return NOOP_GATE;[\s\S]{0,40}\}\s*$/m.test(enforce.slice(enforce.indexOf('logQuotaFailure'))),
+    '失敗分岐から NOOP_GATE（素通し）へ戻る経路が無い',
+  );
+  check(
+    (enforce.match(/careerQuotaUnavailableResponse\(\)/g) ?? []).length >= 4,
+    'service-role 欠落 / 想定外 throw / identity 不正 / 数えられない がすべて 503 を返す',
+  );
+  check(
+    /status: 503/.test(enforce),
+    'quota infrastructure 障害は 503',
   );
   check(
     /CAREER_DAILY_QUOTA_DISABLED/.test(enforce) &&
       /v === '1' \|\| v === 'true'/.test(enforce),
-    '無効化 flag は明示 opt-in（既定は有効）',
+    '無効化 flag は明示 opt-in（未設定 = 有効）',
   );
+  check(
+    /VERCEL_ENV === 'production'[\s\S]{0,240}console\.warn/.test(enforce),
+    'production で無効化 flag が立っていたら警告を出す',
+  );
+  check(
+    /reason=\$\{reason\}/.test(enforce),
+    '失敗理由が server ログで切り分けできる（reason= を出す）',
+  );
+  check(
+    !/console\.(warn|error)\([^)]*userId|console\.(warn|error)\([^)]*operationId/.test(enforce),
+    'ログに userId / operationId を出さない',
+  );
+}
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+console.log('[7b] fail-closed の全分岐（純関数 decideCareerQuotaGate を直接検証）');
+{
+  const { decideCareerQuotaGate, careerQuotaUnavailableResponse } = await import(
+    '../lib/careerQuota/enforce'
+  );
+  const NOW = Date.parse('2026-08-21T03:00:00.000Z');
+
+  // quota infrastructure の失敗はすべて BLOCK / 503（AI へ進ませない）。
+  const FAILURES = [
+    'not-provisioned',
+    'service-role-missing',
+    'db-error',
+    'unexpected',
+    'identity-missing',
+  ] as const;
+  for (const reason of FAILURES) {
+    const d = decideCareerQuotaGate({
+      feature: 'es',
+      evaluation: { kind: 'failure', reason },
+      nowMs: NOW,
+    });
+    check(d.blocked !== null, `${reason} → BLOCK（AI 未実行）`);
+    check(d.blocked?.status === 503, `${reason} → 503（実測 ${d.blocked?.status}）`);
+  }
+
+  // 上限到達は 429（「数えられない」と混同しない）。
+  const limitHit = decideCareerQuotaGate({
+    feature: 'es',
+    evaluation: { kind: 'ok', outcome: 'LIMIT_REACHED', used: 10, limit: 10, resetAtMs: NOW + 3600_000 },
+    nowMs: NOW,
+  });
+  check(limitHit.blocked?.status === 429, `上限到達 → 429（503 ではない / 実測 ${limitHit.blocked?.status}）`);
+
+  // 通常系は通す。
+  for (const outcome of ['CONSUMED', 'DEDUPED'] as const) {
+    const d = decideCareerQuotaGate({
+      feature: 'es',
+      evaluation: { kind: 'ok', outcome, used: 1, limit: 10, resetAtMs: NOW + 3600_000 },
+      nowMs: NOW,
+    });
+    check(d.blocked === null, `${outcome} → 通す（正常系は非退行）`);
+  }
+
+  // 503 body が内部情報を漏らさないこと。
+  const unavailable = careerQuotaUnavailableResponse();
+  const ub = (await unavailable.json()) as Record<string, unknown>;
+  check(unavailable.status === 503, '503 Service Unavailable');
+  check(ub.error === 'QUOTA_UNAVAILABLE', `error code = QUOTA_UNAVAILABLE（実測 ${String(ub.error)}）`);
+  check(typeof ub.detail === 'string' && (ub.detail as string).length > 0, 'detail に安全な日本語文言');
+  const ubs = JSON.stringify(ub);
+  check(
+    !/career_daily|supabase|service_role|rpc|PGRST|not-provisioned|db-error/i.test(ubs),
+    '503 body に table 名 / RPC 名 / 内部理由 / secret を含めない',
+  );
+  check(unavailable.headers.get('Retry-After') !== null, 'Retry-After を返す');
 }
 console.log('');
 
