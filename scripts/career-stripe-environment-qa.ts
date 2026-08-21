@@ -274,18 +274,16 @@ console.log('[5] env separation (CAREER vs exam app)');
   const careerStripe = stripComments(read('lib/careerBilling/stripe.ts'));
   const webhook = stripComments(read('app/api/career/billing/webhook/route.ts'));
 
-  // Price env は CAREER 専用名のまま（環境差は Vercel の environment scope で入れ分ける）。
-  // ★ 単一プラン化後も env 名は CAREER 専用名のまま（新しい名前を発明しない）。
-  //   先頭が canonical。2 つ目は旧 Price で作られた subscription を認識するための
-  //   legacy read compatibility であり、新規 Checkout には使わない。
+  // Price env は CAREER 専用名 **ただ 1 つ**（環境差は Vercel の environment scope で入れ分ける）。
+  const careerPlans = read('lib/careerBilling/plans.ts');
   check(
-    /STRIPE_PRICE_ID_CAREER_BASIC/.test(read('lib/careerBilling/plans.ts')),
-    'canonical Price env は STRIPE_PRICE_ID_CAREER_BASIC',
+    /STRIPE_CAREER_PRICE_ID/.test(careerPlans),
+    'CAREER の canonical Price env は STRIPE_CAREER_PRICE_ID',
   );
-  check(
-    /STRIPE_PRICE_ID_CAREER_PREMIUM/.test(read('lib/careerBilling/plans.ts')),
-    '旧 Price env（STRIPE_PRICE_ID_CAREER_PREMIUM）も読み取り互換として残す',
-  );
+  // ★ 旧 CAREER env は runtime から完全に消えていること（fallback 復活の防止）。
+  for (const legacy of ['STRIPE_PRICE_ID_CAREER_BASIC', 'STRIPE_PRICE_ID_CAREER_PREMIUM']) {
+    check(!careerPlans.includes(legacy), `旧 Price env（${legacy}）を参照していない`);
+  }
   // 環境別の新 env を増やしていないこと（_TEST / _LIVE / _PREVIEW 等）。
   const allBilling = [
     read('lib/careerBilling/plans.ts'),
@@ -294,17 +292,28 @@ console.log('[5] env separation (CAREER vs exam app)');
     read('app/api/career/billing/webhook/route.ts'),
   ].join('\n');
   for (const bad of [
-    'STRIPE_PRICE_ID_CAREER_BASIC_TEST',
-    'STRIPE_PRICE_ID_CAREER_BASIC_LIVE',
-    'STRIPE_PRICE_ID_CAREER_PREMIUM_TEST',
-    'STRIPE_PRICE_ID_CAREER_PREMIUM_LIVE',
+    'STRIPE_CAREER_PRICE_ID_TEST',
+    'STRIPE_CAREER_PRICE_ID_LIVE',
+    'STRIPE_PRICE_ID_CAREER_BASIC',
+    'STRIPE_PRICE_ID_CAREER_PREMIUM',
     'STRIPE_SECRET_KEY_TEST',
     'STRIPE_SECRET_KEY_LIVE',
     'CAREER_STRIPE_WEBHOOK_SECRET_TEST',
     'CAREER_STRIPE_WEBHOOK_SECRET_LIVE',
   ]) {
-    check(!allBilling.includes(bad), `環境別の重複 env ${bad} を作っていない`);
+    check(!allBilling.includes(bad), `環境別 / 旧名の重複 env ${bad} を作っていない`);
   }
+  // ★ 受験版 Price env は別プロダクト。CAREER の Price 解決に **使わない**
+  //   （誤設定検知として名前を参照するのは可 = EXAM_PRICE_ENV_NAMES）。
+  const careerStripeSrc = read('lib/careerBilling/stripe.ts');
+  check(
+    /EXAM_PRICE_ENV_NAMES/.test(careerStripeSrc),
+    '受験版 Price との衝突検知は維持されている',
+  );
+  check(
+    !/process\.env\.STRIPE_PRICE_ID_(BASIC|PREMIUM)\s*(\|\||\?\?)/.test(careerStripeSrc),
+    'CAREER が受験版 Price env へ fallback していない',
+  );
 
   // webhook secret は CAREER 専用。受験版と共有しない。
   check(

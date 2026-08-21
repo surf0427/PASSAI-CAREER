@@ -11,8 +11,9 @@
  *     CAREER が使うと別プロダクトを売ってしまう。
  *
  * ★ CAREER は **単一の有料プラン**。Checkout に使う Price は
- *   `CAREER_PRICE_ENV_NAMES` を先頭から探して最初に見つかった 1 本だけであり、
- *   client は Price も plan も選べない（Price authority は完全に server 側）。
+ *   `CAREER_PRICE_ENV_NAME`（= STRIPE_CAREER_PRICE_ID）ただ 1 つから解決する。
+ *   候補を順に探す fallback は持たない。client は Price も plan も選べない
+ *   （Price authority は完全に server 側）。
  *
  * 秘密の取り扱い:
  *   - `import 'server-only'` で client bundle への混入を build error にする。
@@ -31,10 +32,9 @@ import {
   currentStripeRuntimeEnv,
 } from '@/lib/stripe/environment';
 import {
-  CAREER_PRICE_ENV_NAMES,
-  CAREER_PRICE_ENV_TO_PLAN_VALUE,
+  CAREER_PRICE_ENV_NAME,
   CAREER_PLAN_LABEL,
-  type CareerPriceEnvName,
+  CAREER_SUBSCRIPTION_PLAN_WRITE_VALUE,
   type CareerSubscriptionPlanValue,
 } from './plans';
 
@@ -49,63 +49,50 @@ const EXAM_PRICE_ENV_NAMES = [
   'STRIPE_PRICE_ID_PREMIUM',
 ] as const;
 
-function readCareerPriceEnv(envName: CareerPriceEnvName): string | null {
-  const value = process.env[envName];
+/**
+ * CAREER の Price ID を env から読む（**唯一の入口**）。
+ *
+ * 未設定 / 形式不正 / 受験版 Price との衝突はすべて null（= 売らない）。
+ * ★ 他の env へ fallback しない。ここで null になったら課金導線ごと出さない。
+ */
+function readCareerPriceEnv(): string | null {
+  const value = process.env[CAREER_PRICE_ENV_NAME];
   if (!value) return null;
   if (!value.startsWith('price_')) {
-    throw new Error(`${envName} must be a Stripe Price ID (starts with "price_")`);
+    devWarn('[careerBilling/stripe] career price env is not a Stripe Price ID', {
+      envName: CAREER_PRICE_ENV_NAME,
+    });
+    return null;
   }
   // 受験版 Price との取り違え検知。実値は出さない。
   for (const examEnv of EXAM_PRICE_ENV_NAMES) {
     if (process.env[examEnv] && process.env[examEnv] === value) {
-      throw new Error(
-        `${envName} must not reuse the exam-app price configured in ${examEnv}. ` +
-          'CAREER requires its own Stripe Product/Price.',
-      );
+      devWarn('[careerBilling/stripe] career price reuses the exam-app price', {
+        envName: CAREER_PRICE_ENV_NAME,
+        collidesWith: examEnv,
+      });
+      return null;
     }
   }
   return value;
 }
 
 export type CareerConfiguredPrice = {
-  envName: CareerPriceEnvName;
+  envName: typeof CAREER_PRICE_ENV_NAME;
   priceId: string;
   /** career_subscriptions.plan に書く既存許容値（DDL CHECK を変えないため）。 */
   planValue: CareerSubscriptionPlanValue;
 };
 
-/**
- * 設定済みの CAREER Price をすべて返す（**優先順**）。
- *
- * 先頭が Checkout に使う canonical price。2 つ目以降は
- * 「旧 Price で作られた subscription を CAREER の契約として認識する」ための
- * legacy read compatibility にだけ使う（新規販売には使わない）。
- */
-export function listConfiguredCareerPrices(): CareerConfiguredPrice[] {
-  const out: CareerConfiguredPrice[] = [];
-  for (const envName of CAREER_PRICE_ENV_NAMES) {
-    let value: string | null = null;
-    try {
-      value = readCareerPriceEnv(envName);
-    } catch {
-      // 形式不正 / 受験版との衝突は「未設定」と同じ扱い（fail-closed）。
-      value = null;
-    }
-    if (!value) continue;
-    // 同じ Price を両方の env に入れてある場合は 1 本として扱う。
-    if (out.some((p) => p.priceId === value)) continue;
-    out.push({
-      envName,
-      priceId: value,
-      planValue: CAREER_PRICE_ENV_TO_PLAN_VALUE[envName],
-    });
-  }
-  return out;
-}
-
 /** 新規 Checkout に使う canonical price。未設定なら null（= 売らない）。 */
 export function getCareerCanonicalPrice(): CareerConfiguredPrice | null {
-  return listConfiguredCareerPrices()[0] ?? null;
+  const priceId = readCareerPriceEnv();
+  if (!priceId) return null;
+  return {
+    envName: CAREER_PRICE_ENV_NAME,
+    priceId,
+    planValue: CAREER_SUBSCRIPTION_PLAN_WRITE_VALUE,
+  };
 }
 
 /**
@@ -115,11 +102,16 @@ export function getCareerCanonicalPrice(): CareerConfiguredPrice | null {
  * 認識できるかを判定する。**CAREER の env にしかマッチしない**ため、同一 Stripe
  * アカウントの受験版 subscription が誤って CAREER webhook に届いても null
  * （= unknown-plan → permanent error, DB 書き込み無し）になる。
+ *
+ * ★ 既に DB にある過去 row（plan='basic' / 'premium'）の **読み取り**互換は
+ *   entitlementPolicy 側で担保されている（status だけで権利を判定する）。
+ *   本関数は「新しく届いた Stripe event を CAREER のものと認めるか」だけを見る。
  */
 export function resolveCareerPlanValueFromPriceId(
   priceId: string,
 ): CareerSubscriptionPlanValue | null {
-  return listConfiguredCareerPrices().find((p) => p.priceId === priceId)?.planValue ?? null;
+  const configured = getCareerCanonicalPrice();
+  return configured && configured.priceId === priceId ? configured.planValue : null;
 }
 
 /** CAREER 課金が販売可能に設定されているか。false なら課金 UI を出さない（fail-closed）。 */
@@ -147,7 +139,10 @@ export type CareerPriceCheck =
 export async function retrieveCareerPrice(): Promise<CareerPriceCheck> {
   const configured = getCareerCanonicalPrice();
   if (!configured) {
-    devWarn('[careerBilling/stripe] career price env unusable');
+    // env 名だけをログに出す（実値は出さない）。fallback はしない。
+    devWarn('[careerBilling/stripe] career price env unusable', {
+      envName: CAREER_PRICE_ENV_NAME,
+    });
     return { kind: 'unconfigured' };
   }
 

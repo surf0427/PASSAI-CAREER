@@ -24,9 +24,9 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import {
-  CAREER_PRICE_ENV_NAMES,
-  CAREER_PRICE_ENV_TO_PLAN_VALUE,
+  CAREER_PRICE_ENV_NAME,
   CAREER_SUBSCRIPTION_PLAN_VALUES,
+  CAREER_SUBSCRIPTION_PLAN_WRITE_VALUE,
   isCareerSubscriptionPlanValue,
 } from '../lib/careerBilling/plans';
 import {
@@ -174,14 +174,20 @@ console.log('[2] single plan catalog & Stripe Price env separation');
     !/CareerPaidPlanId|CareerEffectivePlan|CAREER_PAID_PLAN_IDS|CAREER_PLANS\b/.test(plansSrc),
     'plans.ts に 2 段階 tier の型 / catalog が残っていない',
   );
+  // ★ Price env は **ただ 1 つ**。候補リストや fallback を持たない。
   check(
-    CAREER_PRICE_ENV_NAMES.length >= 1,
-    `CAREER Price env の候補が定義されている（${CAREER_PRICE_ENV_NAMES.length}）`,
+    CAREER_PRICE_ENV_NAME === 'STRIPE_CAREER_PRICE_ID',
+    `CAREER の canonical Price env は STRIPE_CAREER_PRICE_ID（実際: ${CAREER_PRICE_ENV_NAME}）`,
   );
-  // ★ 受験版 Price env 名を CAREER の catalog に持ち込んでいないこと（AGENTS §10）。
-  for (const envName of CAREER_PRICE_ENV_NAMES) {
-    check(envName.startsWith('STRIPE_PRICE_ID_CAREER_'), `env 名が CAREER 専用（${envName}）`);
+  check(
+    !/CAREER_PRICE_ENV_NAMES|CAREER_PRICE_ENV_TO_PLAN_VALUE/.test(plansSrc),
+    'plans.ts に複数候補の Price env リストが残っていない',
+  );
+  // ★ 旧 CAREER env 名を runtime から参照しない（fallback 復活の防止）。
+  for (const legacy of ['STRIPE_PRICE_ID_CAREER_BASIC', 'STRIPE_PRICE_ID_CAREER_PREMIUM']) {
+    check(!plansSrc.includes(legacy), `plans.ts が旧 env（${legacy}）を参照していない`);
   }
+  // ★ 受験版 Price env 名を CAREER の catalog に持ち込んでいないこと（AGENTS §10）。
   check(
     !/STRIPE_PRICE_ID_BASIC\b/.test(plansSrc) && !/STRIPE_PRICE_ID_PREMIUM\b/.test(plansSrc),
     'plans.ts に受験版 Price env 名（STRIPE_PRICE_ID_BASIC/PREMIUM）が無い',
@@ -204,8 +210,8 @@ console.log('[2] single plan catalog & Stripe Price env separation');
     );
   }
   check(
-    Object.values(CAREER_PRICE_ENV_TO_PLAN_VALUE).every((v) => isCareerSubscriptionPlanValue(v)),
-    'env → plan 値の写像が DDL 許容値に閉じている',
+    isCareerSubscriptionPlanValue(CAREER_SUBSCRIPTION_PLAN_WRITE_VALUE),
+    '新規 subscription へ書く plan 値が DDL 許容値に閉じている',
   );
 
   // Price 解決は server-only。単一 Price / 逆引き / 受験版誤設定ガード。
@@ -214,6 +220,26 @@ console.log('[2] single plan catalog & Stripe Price env separation');
     /export function getCareerCanonicalPrice/.test(stripeSrc),
     'Checkout に使う canonical price は 1 本だけ解決する',
   );
+  // ★ env lookup は 1 箇所・1 変数だけ。候補を順に探す実装を復活させない。
+  const careerEnvReads = [...stripeSrc.matchAll(/process\.env\[?([A-Za-z_.]*)/g)].map((m) => m[1]);
+  check(
+    /process\.env\[CAREER_PRICE_ENV_NAME\]/.test(stripeSrc),
+    'Price env は CAREER_PRICE_ENV_NAME から 1 回だけ読む',
+  );
+  check(
+    !/for \(const envName of|listConfiguredCareerPrices/.test(stripeSrc),
+    'Price env の候補ループが残っていない（fallback なし）',
+  );
+  for (const legacy of ['STRIPE_PRICE_ID_CAREER_BASIC', 'STRIPE_PRICE_ID_CAREER_PREMIUM']) {
+    check(!stripeSrc.includes(legacy), `stripe.ts が旧 env（${legacy}）を参照していない`);
+  }
+  // ★ 受験版 env へ fallback しない（誤設定検知としてだけ参照する）。
+  check(
+    /EXAM_PRICE_ENV_NAMES/.test(stripeSrc) &&
+      !/process\.env\.STRIPE_PRICE_ID_(BASIC|PREMIUM)\s*(\|\||\?\?)/.test(stripeSrc),
+    '受験版 Price env へ fallback する経路が無い',
+  );
+  void careerEnvReads;
   check(
     /export function resolveCareerPlanValueFromPriceId/.test(stripeSrc),
     'CAREER 専用の Price → plan 値 逆引きが存在する（他商品の subscription を弾く）',
@@ -229,6 +255,15 @@ console.log('[2] single plan catalog & Stripe Price env separation');
   check(
     /kind: 'unconfigured'/.test(stripeSrc),
     'Price env 未設定は unconfigured（fail-closed。既定 price へ fallback しない）',
+  );
+  check(
+    /if \(!value\) return null;/.test(stripeSrc),
+    'env 未設定は null（他の env を探しに行かない）',
+  );
+  const checkoutSrc = stripComments(read(CHECKOUT));
+  check(
+    /BILLING_UNCONFIGURED/.test(checkoutSrc) && /503/.test(checkoutSrc),
+    'Price env 未設定なら checkout は 503 BILLING_UNCONFIGURED（fail-closed）',
   );
 }
 console.log('');

@@ -67,9 +67,9 @@ export async function syncCareerSubscriptionFromStripe(input: {
 
   // ★ CAREER の Price env にしかマッチしない。受験版 subscription が誤って
   //   CAREER webhook に届いた場合はここで null になり、DB を一切変更しない。
-  // ★ 単一プラン化後も plan 列には既存 CHECK が許す値（basic / premium）を書く。
-  //   どちらの値でも権利判定は同じ（entitlementPolicy は status だけを見る）。
-  //   DB migration を足さずに単一プランへ移行するための互換措置。
+  // ★ 単一プラン化後も plan 列には既存 CHECK が許す値を書く（DB migration を足さない）。
+  //   値そのものに意味は無く、権利判定は status だけで行う（entitlementPolicy）。
+  //   過去に basic / premium で作られた行もそのまま有効な契約として読める。
   const plan = resolveCareerPlanValueFromPriceId(priceId);
   if (!plan) return { kind: 'unknown-plan', subscriptionId, priceId };
 

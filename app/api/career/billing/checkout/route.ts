@@ -16,7 +16,7 @@
  * ── security 契約（AGENTS §14 / §30）────────────────────────────────────
  *   - **body を一切読まない**。plan / priceId / userId / customerId / email を
  *     client から受け取る経路は存在しない（送られても構造上使いようが無い）。
- *   - CAREER は単一の有料プラン。priceId は server が env（CAREER_PRICE_ENV_NAMES）
+ *   - CAREER は単一の有料プラン。priceId は server が env（STRIPE_CAREER_PRICE_ID）
  *     からのみ解決する。任意の Stripe Price ID も plan 選択も client に許さない。
  *   - identity は server session（Project B cookie）が唯一の正本。
  *   - Customer は career_billing_customers の 1:1 mapping から解決（重複契約防止）。

@@ -15,48 +15,39 @@
  */
 
 /**
- * CAREER 単一プランの Price ID env 名（**優先順**）。
+ * CAREER の Stripe Price ID env 名（**正本・ただ 1 つ**）。
  *
- * ★ 新しい env 名を発明しない。ここに並ぶ 2 つはいずれも本 repo が以前から使っている
- *   CAREER 専用の env 名であり、単一プラン化にあたって「運用側がどちらの変数名に
- *   単一 Price を入れたか」を repo からは断定できないため、**先頭から順に探して
- *   最初に見つかったものを canonical price として扱う**。
- *
- * ★ 副次効果として、旧 premium Price で作られた subscription も
- *   「CAREER の契約」として認識できる（legacy read compatibility）。
- *   ただし **新規 Checkout は常に先頭で解決した 1 本の Price しか使わない**ので、
- *   商品としては単一プランである。
+ * ★ 候補を複数持って順に探す実装にしない。単一プランなので Price も 1 本であり、
+ *   「どれかが入っていれば動く」は設定ミスを隠すだけで利点が無い。
+ * ★ 受験版（STRIPE_PRICE_ID_BASIC / _PREMIUM）は別プロダクトの env。
+ *   fallback も再利用も禁止（lib/careerBilling/stripe.ts が誤設定を検知する）。
  */
-export const CAREER_PRICE_ENV_NAMES = [
-  'STRIPE_PRICE_ID_CAREER_BASIC',
-  'STRIPE_PRICE_ID_CAREER_PREMIUM',
-] as const;
+export const CAREER_PRICE_ENV_NAME = 'STRIPE_CAREER_PRICE_ID' as const;
 
-export type CareerPriceEnvName = (typeof CAREER_PRICE_ENV_NAMES)[number];
+export type CareerPriceEnvName = typeof CAREER_PRICE_ENV_NAME;
 
 /** UI 表示名（Stripe Product.name が取れないときの代替）。 */
 export const CAREER_PLAN_LABEL = 'PASSAI CAREER';
 
 /**
- * `career_subscriptions.plan` に書き込む値。
+ * `career_subscriptions.plan` として **読める**値（historical compatibility）。
  *
  * ★ DB の CHECK 制約（`plan IN ('basic','premium')`）は **変更しない**。
- *   単一プラン化のために migration を足すのは割に合わないため、どの env で解決した
- *   Price かに応じて既存の許容値をそのまま書く。runtime の権利判定はこの値を
- *   一切見ない（entitlementPolicy.ts は status だけで判断する）。
- *   過去行（plan='basic' / 'premium'）もそのまま有効な CAREER 契約として読める。
+ *   単一プラン化のために migration を足すのは割に合わない。過去に basic / premium
+ *   プランで作られた行はそのまま有効な CAREER 契約として読める。
+ * ★ runtime の権利判定はこの値を一切見ない（entitlementPolicy.ts は status だけで判断）。
  */
 export const CAREER_SUBSCRIPTION_PLAN_VALUES = ['basic', 'premium'] as const;
 export type CareerSubscriptionPlanValue =
   (typeof CAREER_SUBSCRIPTION_PLAN_VALUES)[number];
 
-/** env 名 → DB へ書く plan 値。 */
-export const CAREER_PRICE_ENV_TO_PLAN_VALUE: Readonly<
-  Record<CareerPriceEnvName, CareerSubscriptionPlanValue>
-> = {
-  STRIPE_PRICE_ID_CAREER_BASIC: 'basic',
-  STRIPE_PRICE_ID_CAREER_PREMIUM: 'premium',
-};
+/**
+ * 新しい subscription を **書き込む**ときの plan 値。
+ *
+ * 単一プランなので tier の概念は無く、この値に意味は無い。DDL の CHECK が
+ * 許す既存値を 1 つ固定で使い、DB migration を不要にするためだけの定数。
+ */
+export const CAREER_SUBSCRIPTION_PLAN_WRITE_VALUE: CareerSubscriptionPlanValue = 'basic';
 
 /** career_subscriptions に入りうる既知の plan 値か（未知の値は権利に数えない）。 */
 export function isCareerSubscriptionPlanValue(
