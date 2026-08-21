@@ -40,6 +40,7 @@ import {
 
 import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 import { enforceRateLimit, CAREER_GD_RATE_LIMITS } from '@/lib/rateLimit';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 import { reportGdFailure } from '../../../gdObservability';
 import { resolveGdContextInputs } from '../../../resolveContextInputs';
 import { resolveGdCompanyOfficial } from '../../../resolveCompanyOfficial';
@@ -166,6 +167,19 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
       return Response.json({ result: toResultView(roomId, { ...existing, display_name: currentRow.display_name }) });
     }
   }
+
+  // 日次利用回数（PASSAI Career BASIC / GD = 1 セッション 1 回・ソロと共通 bucket）。
+  //   ★ operation identity は **room 単位**。room 作成 / 参加 / 発言 / AI 発言 / heartbeat は
+  //     消費せず、その room の評価が初めて生成されるときにだけ 1 消費する。
+  //   ★ 上の冪等 return（評価済み room の再取得）より**後ろ**に置く＝ AI を呼ばない経路は
+  //     消費しない。評価が途中で失敗して再実行しても room が同じなら +0。
+  //   ★ roomId は参加者検証済みの server 側の値（client が名乗った id ではない）。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: { kind: 'member', userId: auth.userId },
+    feature: 'gd',
+    operationSource: { roomId },
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   // messages。
   let messageRows: Row[];

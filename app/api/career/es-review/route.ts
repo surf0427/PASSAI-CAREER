@@ -44,6 +44,7 @@ import { resolveEsReviewContextInputs } from './resolveContextInputs';
 import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
 // P0（HARDENING）: 認証 identity / rate limit / body・入力サイズ上限の共通ガード（ES 4 route 共有）。
 import { guardEsRequest } from '../es/requestGuard';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 // Company Data Spine A 層（公式情報）。未取得 / flag OFF / 企業未解決なら null（添削は成立）。
 import { resolveEsReviewCompanyOfficial } from './resolveCompanyOfficial';
 // T1 trigger: 企業名が server まで来ている地点で prefetch を起動しておく（after() 登録のみ）。
@@ -192,6 +193,20 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // 日次利用回数（PASSAI Career BASIC / ES = 1 本 1 回）。
+  //   ★ anchor は添削だけ。同一 ES ワークフローの materials / deep×N / organize は
+  //     内部 call なので消費しない（ES 1 本 ＝ 最大 10 AI call でも利用回数は 1）。
+  //   ★ ユーザーが明示的に行う「再添削 / 改善版の添削」は本文が変わるため別 operation ＝
+  //     ES bucket の +1（商品仕様どおり新規作成と再添削を合わせて 10 回/日）。
+  //   ★ 同一本文の再送（retry / 二重送信）は operation dedupe で +0。
+  //   ★ 必須入力の検証**後** / AI 到達**前**に置く。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'es',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   // 保存済み企業研究を使う場合の評価指示（断定を避けた添削者の文体を維持）。
   const researchInstruction = researchBlock

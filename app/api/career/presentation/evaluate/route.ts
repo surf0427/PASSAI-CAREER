@@ -41,6 +41,7 @@ import {
 } from '@/lib/careerMemory/renderers/presentationCrossFeature';
 // P0（HARDENING）: 認証 identity / rate limit / body サイズ上限の共通ガード。
 import { guardPresentationRequest } from '../requestGuard';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 // Company Data Spine A 層（公式情報）。企業未指定 / 未取得 / flag OFF なら null（評価は成立）。
 import { resolvePresentationCompanyOfficial } from '../resolveCompanyOfficial';
 
@@ -187,6 +188,17 @@ export async function POST(req: Request) {
   if (transcript.length > MAX_TRANSCRIPT_CHARS) {
     return Response.json({ error: '発表内容が長すぎます。' }, { status: 413 });
   }
+
+  // 日次利用回数（PASSAI Career BASIC / プレゼン = 1 セッション 1 回）。
+  //   ★ anchor は評価だけ。同一セッションの theme / Q&A は消費しない。
+  //   ★ 同一 transcript の再送（retry / 二重送信）は operation dedupe で +0。
+  //   ★ 入力検証（空 / 長すぎ）の**後**、AI 到達**前**に置く。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'presentation',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   const config = b.config ?? null;
   const theme = str(b.theme);

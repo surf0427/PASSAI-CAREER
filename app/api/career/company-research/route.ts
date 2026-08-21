@@ -58,6 +58,7 @@ import { triggerCompanyPrefetch } from '@/lib/careerCompanyPrefetch/trigger.serv
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 
 const FEATURE_KEY = 'career-company-research' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -302,6 +303,18 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // 日次利用回数（PASSAI Career BASIC / 企業分析 = 1 実行 1 回）。
+  //   ★ 必須入力（企業名 / 確認済みテキスト）の検証**後**に置く＝ 400 は消費しない。
+  //   ★ Company Data Spine（prefetch / identity / official facts）はユーザーが直接
+  //     「使った」機能ではないので消費しない。本 anchor より前で prefetch も起動しない。
+  //   ★ 同一 request の retry は operation dedupe で +0。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'company_research',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   const industry = str(b.industry);
   const interest = interestLabel(b.interestLevel);

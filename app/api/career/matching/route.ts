@@ -57,6 +57,7 @@ import { renderMatchingEsSummary, type MatchingEsSummary } from '@/lib/careerMem
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 
 const FEATURE_KEY = 'career-company-matching' as const;
 const MODEL = 'claude-sonnet-4-6';
@@ -295,6 +296,16 @@ export async function POST(req: Request) {
     gdRoomSignals?: unknown;
     userInput?: string;
   };
+
+  // 日次利用回数（PASSAI Career BASIC / マッチング = 1 実行 1 回）。
+  //   ★ flag OFF の 404 と guard（400 / 413 / 429）の**後ろ**に置く＝ 消費しない経路を作らない。
+  //   ★ 同一 request の retry は operation dedupe で +0。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'matching',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   // Closure Batch（`D-S9`）: base + cross-feature を kind 単位で server / bridge から選ぶ。
   //   solo gd（gdSnapshot）は server-readable representation が無いため bridge のまま。

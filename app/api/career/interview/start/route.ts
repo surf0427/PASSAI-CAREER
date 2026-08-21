@@ -36,6 +36,7 @@ import { resolveInterviewCompanyOfficial } from '../resolveCompanyOfficial';
 import { resolveInterviewPersonalMemory } from '../resolvePersonalMemory';
 // P0-1（HARDENING）: 認証 identity / rate limit / body・turns サイズ上限の共通ガード。
 import { guardInterviewRequest } from '../requestGuard';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 
 export const maxDuration = 80;
 
@@ -98,6 +99,20 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+
+  // 日次利用回数（PASSAI Career BASIC / 面接 = 1 セッション 1 回）。
+  //   ★ anchor は start だけ。同一セッションの turn×N / complete は消費しない。
+  //   ★ start の body には「そのセッション固有の値」が無い（設定と context のみ）ため、
+  //     operation identity には 30 分の時間 bucket を混ぜている
+  //     （lib/careerQuota/limits.ts の CAREER_DAILY_QUOTA_DEDUPE_WINDOW_SECONDS）。
+  //     連打 / 再読込による再開始は +0、時間をおいた新しい面接は +1 になる。
+  //   ★ 必須入力（企業名 / 業界 / 職種 / 選考種別）の検証**後**に置く＝ 400 は消費しない。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'interview',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
   // Company Data Spine A 層（公式情報）。既存 read 経路を読むだけで、fetch / crawl は起動しない。
   //   自己分析モードでは要求しない（企業情報を主 context にしないため）。
   // ★ 面接 runtime からは prefetch / fetch / crawl を **起動しない**（read のみ）。

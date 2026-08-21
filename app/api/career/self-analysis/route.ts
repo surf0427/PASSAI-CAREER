@@ -60,6 +60,7 @@ import { resolveSelfAnalysisContextInputs } from './resolveContextInputs';
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 
 import {
   anthropicSelfAnalysisProvider,
@@ -300,6 +301,19 @@ export async function POST(req: Request) {
     // conversation / userInput と同じく **その request 固有の入力**（Layer 1 source ではない）。
     revisionOf: parsed.revisionOf,
   };
+
+  // 日次利用回数（PASSAI Career BASIC / 自己分析 = 1 セッション 1 回）。
+  //   ★ anchor は「まとめ生成」だけ。深掘り（/self-analysis/question の seed / followup）は
+  //     同一セッションの内部 call なので消費しない。
+  //   ★ 同一入力の再送（retry / 二重送信 / reload 後の再開）は operation dedupe で +0。
+  //     job pilot が cached result を返す再送も、body が同一なら消費しない。
+  //   ★ AI 到達前・入力の正規化後に置く（validation で落ちる request は消費しない）。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'self_analysis',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   return handleSelfAnalysisJobPost(
     {

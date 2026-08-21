@@ -34,6 +34,7 @@ import { buildGdSpinePrompt, appendGdSpineBlock } from '../gdSpinePrompt';
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
+import { enforceCareerDailyQuota } from '@/lib/careerQuota/enforce';
 
 export const maxDuration = 80;
 
@@ -180,6 +181,18 @@ export async function POST(req: Request) {
   }
   const participationMode: GdParticipationMode =
     b.participationMode === 'multi' ? 'multi' : 'solo';
+
+  // 日次利用回数（PASSAI Career BASIC / GD = 1 セッション 1 回）。
+  //   ★ anchor は評価だけ。同一セッションの theme / turn×N は消費しない。
+  //   ★ GD bucket はソロ / マルチ共通。マルチ側は room 単位で
+  //     /api/career/gd/room/[roomId]/result が消費する（room 作成・参加・発言は消費しない）。
+  //   ★ 入力検証（テーマ / 本人 / 発言 0 件）の**後**、AI 到達**前**に置く。
+  const quotaBlocked = await enforceCareerDailyQuota({
+    identity: guard.identity,
+    feature: 'gd',
+    operationSource: body,
+  });
+  if (quotaBlocked) return quotaBlocked;
 
   // ── STEP-GD-31: User Data Spine（ソロ GD 評価）──
   //    ソロは client が transcript を送る stateless route だが、評価の宛先合わせのために
