@@ -2,10 +2,14 @@
 -- career_billing — PASSAI CAREER の Stripe 課金状態（Supabase **Project B**）
 -- ============================================================================
 --
--- ❗ 適用状態: **未適用**。operator が Supabase SQL Editor（Project B / CAREER 専用 =
---    career_accounts / career_profiles などがある側）で手動実行する。
---    適用後、本ヘッダの「適用状態」を更新すること。
---    ★ Claude Code からは本番 DB へ適用しない（AGENTS §38）。
+-- ✅ 適用状態: **適用済み**（Project B / CAREER 専用 = career_accounts / career_profiles
+--    などがある側。2026-08-21 に read-only probe で確認）。
+--    確認済みの内容: 3 表とも存在・列契約一致・status/plan CHECK・user_id FK・
+--    stripe_subscription_id UNIQUE・customer 1:1 制約・anon から SELECT/INSERT/UPDATE 不可。
+--    本 DDL は再実行安全（実 Postgres エンジンで 2 回適用して検証済み）なので、
+--    下の COMMENT を DB 側へ反映したい場合は再実行してよい（データは変化しない）。
+--    ★ Claude Code からは本番 DB へ適用しない（AGENTS §38）。適用は operator が
+--      Supabase SQL Editor で手動実行する。
 --
 -- ── なぜ受験版 subscriptions を使わないのか ────────────────────────────────
 --
@@ -102,8 +106,8 @@ END $$;
 --       よって user_id は UNIQUE にしない。
 --     - stripe_subscription_id を UNIQUE にし、webhook の upsert conflict target
 --       にする。これが **同一 event の再配送で行が増えない**ことの保証。
---     - 「今有効なプラン」の判定は本表を読んで
---       lib/careerBilling/entitlementPolicy.ts の deriveCareerEffectivePlan で導出する。
+--     - 「今有効な契約があるか」の判定は本表を読んで
+--       lib/careerBilling/entitlementPolicy.ts の deriveCareerPaidAccess で導出する。
 --       SQL 側では判定しない（policy を 1 箇所に閉じるため）。
 --
 --   status CHECK について:
@@ -138,8 +142,10 @@ COMMENT ON COLUMN career_subscriptions.user_id IS
 COMMENT ON COLUMN career_subscriptions.stripe_subscription_id IS
   'Stripe Subscription ID (sub_...)。UNIQUE。webhook 冪等化の upsert conflict target。';
 COMMENT ON COLUMN career_subscriptions.plan IS
-  'basic | premium。webhook が STRIPE_PRICE_ID_CAREER_* から逆引きして書く。'
-  '受験版 Price は一致しないため CAREER の行にはならない。';
+  '歴史的な列。PASSAI CAREER は単一の有料プランで tier を持たないため、この値は'
+  '権利判定に使われない（判定は status のみ / lib/careerBilling/entitlementPolicy.ts）。'
+  'webhook は STRIPE_CAREER_PRICE_ID と一致した Price のときだけ既存 CHECK 許容値を書く。'
+  '過去の basic / premium 行もそのまま有効な契約として読める。';
 COMMENT ON COLUMN career_subscriptions.cancel_at_period_end IS
   '解約予約フラグ。true でも current_period_end までは権利を維持する。';
 

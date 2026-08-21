@@ -622,8 +622,18 @@ console.log('[9] DDL: RLS + GRANT least privilege');
     'user 削除で課金行も追随する FK がある',
   );
 
-  // ★ 未適用であることを明示している（AGENTS §38）。
-  check(/適用状態:\s*\*\*未適用\*\*/.test(ddl), 'DDL ヘッダに「未適用」と明記されている');
+  // ★ provisioning 状態を必ず明示していること（AGENTS §38）。
+  //   「未適用」「適用済み」のどちらかを書く。状態が変わったらヘッダも更新する運用なので、
+  //   ここでは「どちらか一方が明記されている」ことと、適用主体が operator であることを固定する。
+  //   （2026-08-21 の read-only probe で Project B に適用済みであることを確認）。
+  check(
+    /適用状態:\s*\*\*(未適用|適用済み)\*\*/.test(ddl),
+    'DDL ヘッダに provisioning 状態（未適用 / 適用済み）が明記されている',
+  );
+  check(
+    /Claude Code からは本番 DB へ適用しない/.test(ddl),
+    'DDL の適用主体が operator であることを明記している',
+  );
 
   // ★ career_accounts に plan 列を足していない（client から改竄可能な cache を作らない）。
   const accountsDdl = stripSqlComments(read('supabase/career_accounts_apply.sql'));
