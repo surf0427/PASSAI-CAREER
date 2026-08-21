@@ -344,7 +344,7 @@ export function buildEvaluateUserPrompt(params: {
 // 評価レポートの出力スキーマ・採点基準。
 export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): string {
   const axisList = CAREER_PRESENTATION_AXES.map(
-    (a) => `    { "key": "${a.key}", "label": "${a.label}", "score": 0〜100の整数, "comment": "${a.hint}に関する具体的な所見" }`,
+    (a) => `    { "key": "${a.key}", "label": "${a.label}", "score": 0〜100の整数, "comment": "${a.hint}に関する具体的な所見（1文・60字以内）" }`,
   ).join(',\n');
   const jobEmphasis = buildJobTypeEmphasisLine(ctx.config?.jobType);
   return [
@@ -356,16 +356,20 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
       : '',
     '評価軸（axes）は以下の8軸すべてを、それぞれ 0〜100 の整数で採点し、key/label は指定どおりにしてください。',
     'totalScore は8軸を踏まえた総合点（0〜100の整数）。rank は totalScore に応じて S(90+)/A(80-89)/B(65-79)/C(50-64)/D(0-49) とする。',
-    'structureFeedback は構成（話す順番・骨子）への、persuasionFeedback は説得力への、deliveryFeedback は話し方・伝え方への、それぞれ2〜3文の個別フィードバック。',
+    'structureFeedback は構成（話す順番・骨子）への、persuasionFeedback は説得力への、deliveryFeedback は話し方・伝え方への、それぞれ2文の個別フィードバック。',
+    // 出力長の契約（P1: runtime budget 内に収めるための上限）。
+    //   ★ 評価項目そのものは 1 つも削っていない（8 軸・全 field を維持）。
+    //     1 項目あたりの冗長さだけを縛る。実測で自然長 4144 tok / 73s → budget 超過だったため。
+    'overallComment は2文。各文は簡潔に書き、同じ内容を言い換えて繰り返さない。前置き・要約の再掲をしない。',
     'improvedStructure は「改善版の構成例（話す順番のアウトライン）」であり、発表の完成原稿を代筆してはいけません（箇条書きの構成のみ）。',
-    'passLikelihood は選考通過可能性についての所見を、断定せず根拠とともに2〜4文で述べる（「合格可能性」という受験表現は使わない）。',
+    'passLikelihood は選考通過可能性についての所見を、断定せず根拠とともに2文で述べる（「合格可能性」という受験表現は使わない）。',
     ctx.hasCompanyOfficial
-      ? 'companyFit は志望業界・職種・志望企業との相性・接続を2〜4文で述べる。企業側の事実は【公式情報】ブロックにある内容だけを根拠にし、発表がその実像と噛み合っているかで評価する。'
-      : 'companyFit は志望業界・職種（あれば志望企業）との相性・接続を2〜4文で述べる。企業条件が未設定なら一般的なビジネス視点で述べる。',
+      ? 'companyFit は志望業界・職種・志望企業との相性・接続を2文で述べる。企業側の事実は【公式情報】ブロックにある内容だけを根拠にし、発表がその実像と噛み合っているかで評価する。'
+      : 'companyFit は志望業界・職種（あれば志望企業）との相性・接続を2文で述べる。企業条件が未設定なら一般的なビジネス視点で述べる。',
     'expectedQuestions と interviewerConcerns では、この発表に対して想定される追加質問・深掘り質問・突っ込まれそうな点を挙げる。',
     ctx.hasCompanyOfficial
-      ? '各配列は2〜4個入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。【公式情報】に無い企業情報は断定しない。'
-      : '各配列は2〜4個入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。事実確認が必要な企業情報は断定しない。',
+      ? '各配列は2〜3個・1 要素 1 文（40字以内）で入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。【公式情報】に無い企業情報は断定しない。'
+      : '各配列は2〜3個・1 要素 1 文（40字以内）で入れ、空配列にしない。発表内容に即した具体的な指摘にし、テンプレ文を避ける。事実確認が必要な企業情報は断定しない。',
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '',
     '{',

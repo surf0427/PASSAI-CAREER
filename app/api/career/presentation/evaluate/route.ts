@@ -55,6 +55,28 @@ const TOTAL_BUDGET_MS = 74_000; // 1回目+2回目の合計 AI 時間の上限�
 const PER_CALL_TIMEOUT_MS = 60_000; // 1回あたりの AI timeout（旧 75s から短縮）
 const MIN_RETRY_BUDGET_MS = 30_000; // 2回目 retry を発火するのに必要な最低残予算
 
+// 出力上限（P1 実測ベース）。
+//
+// ★ 背景（この route が構造的に成功不能だった理由・2026-08-21 実測）:
+//     旧 max_tokens=4000 に対し、出力の自然長は **4144 tok**（stop_reason=end_turn）。
+//     つまり時間内に終わっても必ず truncate（502）する設定だった。
+//     さらに 4144 tok の生成には ~73s かかり、PER_CALL_TIMEOUT_MS=60s を先に超えて
+//     abort（500）していた。max_tokens は「小さすぎて truncate」かつ
+//     「到達不能なほど大きい」という両立不能な値だった。
+//
+// ★ 対処:
+//     1. 出力契約を締める（presentationPrompt の buildEvaluateInstruction。評価項目は 1 つも
+//        削らず、1 項目あたりの冗長さだけを縛る）→ 自然長 4144 → **2566 tok / 47s** に短縮。
+//     2. 上限を「per-call timeout 内に必ず収まる長さ」に合わせる（下記）。
+//        実測 throughput は **最低 52.6 tok/s**、ttfb 約 1.8s。
+//        最悪ケースでも per-call 60s に収めるには (60 - 1.8) x 52.6 ≒ 3060 tok が上限なので
+//        **3000** とする。これにより「上限まで生成しても時間内に終わる」ことが保証され、
+//        時間 abort（500）は構造的に起きなくなる。
+//        修正後の実測自然長は 2596〜2660 tok（46.5〜50.6s / stop_reason=end_turn）で、
+//        上限まで約 340 tok の余白がある。
+//     3. streaming で受ける（長い出力での HTTP timeout 回避。Anthropic の推奨既定）。
+const MAX_OUTPUT_TOKENS = 3000;
+
 const MAX_TRANSCRIPT_CHARS = 20000;
 
 function str(value: unknown): string {
@@ -245,16 +267,20 @@ export async function POST(req: Request) {
         );
       }
       const callTimeoutMs = Math.min(PER_CALL_TIMEOUT_MS, Math.max(0, remainingMs));
-      const message = await anthropic.messages.create(
-        {
-          model: CAREER_PRESENTATION_MODEL,
-          max_tokens: 4000,
-          temperature: attempt === 2 ? 0 : 0.4,
-          system,
-          messages: [{ role: 'user', content: userPrompt }],
-        },
-        { signal: createTimeoutSignal(callTimeoutMs) },
-      );
+      // ★ streaming で受ける（非 streaming の長い出力は HTTP timeout に当たりやすい）。
+      //   受け取り方が変わるだけで、prompt・model・temperature・schema は不変。
+      const message = await anthropic.messages
+        .stream(
+          {
+            model: CAREER_PRESENTATION_MODEL,
+            max_tokens: MAX_OUTPUT_TOKENS,
+            temperature: attempt === 2 ? 0 : 0.4,
+            system,
+            messages: [{ role: 'user', content: userPrompt }],
+          },
+          { signal: createTimeoutSignal(callTimeoutMs) },
+        )
+        .finalMessage();
 
       const rawText = message.content[0]?.type === 'text' ? message.content[0].text : '';
 
