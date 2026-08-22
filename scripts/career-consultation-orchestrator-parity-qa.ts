@@ -20,6 +20,13 @@
  *   - consultation prompt builder が Event Signal 関連 module を import しない。
  *   - ConsultationCrossFeatureInput 型に Event Signal を渡す口が無い（型に eventSignal 系フィールド無し）。
  *
+ * ★ golden 再固定の履歴（企業情報 global grounding boundary・2026-08-22）:
+ *   公式情報 block が無い turn でも企業固有事実の出典境界が prompt から消えないよう、
+ *   consultation の dynamicSuffix へ無条件の GLOBAL_COMPANY_GROUNDING を追加した。
+ *   これも builder への入力定数と同じ扱いで、本 harness が検証しているのは assembly の byte parity。
+ *   LEGACY_GLOBAL_COMPANY_GROUNDING を逐語同期し golden を --update で再固定した
+ *   （legacy==prod EXACT_MATCH は維持＝構造不変。golden 差分は prompt 文言の意図的更新）。
+ *
  * ★ golden 再固定の履歴（相談AI思想統一・2026-08-22）:
  *   COMMANDER_PERSONA / OUTPUT_FORMAT_INSTRUCTION を「受験版チューターの相談思想を就活へ移植した版」へ
  *   意図的に書き換えた。本 harness が検証しているのは **assembly の byte parity**（legacy 組み立て順序 ==
@@ -247,6 +254,19 @@ const LEGACY_COMMANDER_PERSONA = [
   '  良い例:「ここまで決まってるなら、面接機能でこの志望動機を実際に聞かれる形まで試した方がいい。」',
 ].join('\n');
 
+const LEGACY_GLOBAL_COMPANY_GROUNDING = [
+  '【企業情報の扱い（この相談全体に適用）】',
+  '- 特定の企業についての事実は、この prompt に含まれる情報だけを根拠にしてください。使えるのは',
+  '  公式情報ブロック（あるとき）/ 本人が保存した企業研究メモ / この会話で本人が話した内容 の 3 つだけです。',
+  '  本人のメモは「あなたのメモでは」と扱い、企業の公式情報に格上げしないでください。',
+  '- あなた自身が知っている企業情報で補わないでください。断定だけでなく「〜として知られています」',
+  '  「一般的に」「おそらく」「〜の傾向があります」「〜のような企業では」と弱めても同じく禁止です。',
+  '  根拠が無いときは「手元の情報では確認できない」と言い、何を誰に確認すべきかへ繋げてください。',
+  '- 一方、就活一般の知識（選考の一般的な観点・志望動機の作り方・比較すべき論点など）は自由に使えます。',
+  '  提供された企業事実と本人の価値観・経験を突き合わせた解釈も歓迎します。',
+  '  ただしその解釈から新しい企業事実を作らないでください（海外で事業展開している → 海外配属が多い、は不可）。',
+].join('\n');
+
 const LEGACY_OUTPUT_FORMAT_INSTRUCTION = [
   '# 出力形式（厳守）',
   '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
@@ -417,6 +437,7 @@ function legacyBuildSystem(
   return [
     LEGACY_COMMANDER_PERSONA,
     orchestrated.systemPrompt,
+    LEGACY_GLOBAL_COMPANY_GROUNDING,
     selfAnalysisBlock,
     esBlock,
     interviewBlock,

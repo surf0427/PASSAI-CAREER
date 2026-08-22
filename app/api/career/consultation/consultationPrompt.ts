@@ -276,6 +276,34 @@ export type ConsultationSystemPromptInput = {
   personalMemory?: readonly CareerPersonalMemorySection[];
 };
 
+// ── 企業情報の扱い（consultation 全 turn へ無条件で入る global boundary）─────────
+//
+// ★ なぜ Company Official Context の中ではなく **ここ**に置くのか:
+//   企業固有の grounding 規約は従来 USAGE_NOTE_CONSULTATION（＝ 公式情報 block の中）に
+//   しか無かった。そのため「今回の発話に企業名が出ていない turn」では block ごと注入されず、
+//   規約も prompt から消えていた。実 AI probe では、その状態で User Data Spine（本人の
+//   企業研究メモ）に載っている社名を拾い、モデル内部知識で企業固有の事実を補完していた
+//   （例:「大手とベンチャーどっちがいい？」→「○○社は異動が多い会社として知られている」）。
+//   よって **block の有無に依存しない場所**へ最小の boundary を置く。
+//
+// ★ cachedPrefix には入れない（Prompt Cache の静的 prefix を byte 不変に保つ）。
+//   本 block は dynamicSuffix の一部として、企業情報 block の直前に無条件で結合される。
+//
+// ★ 詳細版（出典の列挙・領域の名指し・確認行動の指定）は公式情報 block の
+//   USAGE_NOTE_CONSULTATION が持つ。ここは全 turn 共通の最小不変条件だけに絞る。
+const GLOBAL_COMPANY_GROUNDING = [
+  '【企業情報の扱い（この相談全体に適用）】',
+  '- 特定の企業についての事実は、この prompt に含まれる情報だけを根拠にしてください。使えるのは',
+  '  公式情報ブロック（あるとき）/ 本人が保存した企業研究メモ / この会話で本人が話した内容 の 3 つだけです。',
+  '  本人のメモは「あなたのメモでは」と扱い、企業の公式情報に格上げしないでください。',
+  '- あなた自身が知っている企業情報で補わないでください。断定だけでなく「〜として知られています」',
+  '  「一般的に」「おそらく」「〜の傾向があります」「〜のような企業では」と弱めても同じく禁止です。',
+  '  根拠が無いときは「手元の情報では確認できない」と言い、何を誰に確認すべきかへ繋げてください。',
+  '- 一方、就活一般の知識（選考の一般的な観点・志望動機の作り方・比較すべき論点など）は自由に使えます。',
+  '  提供された企業事実と本人の価値観・経験を突き合わせた解釈も歓迎します。',
+  '  ただしその解釈から新しい企業事実を作らないでください（海外で事業展開している → 海外配属が多い、は不可）。',
+].join('\n');
+
 // ── Prompt Cache 境界（P2 / prompt caching only） ────────────────────────────
 //
 // Anthropic Prompt Caching は「レンダリング後の byte prefix 一致」でしか効かないため、
@@ -353,6 +381,9 @@ function assembleConsultationSystemParts(
 
   const dynamicSuffix = [
     dynamicBaseTail,
+    // 企業情報の扱い（global boundary）。★ **無条件**で入る。公式情報 block が無い turn でも
+    //   企業固有事実の出典境界が prompt から消えないようにするのが目的（上の docstring 参照）。
+    GLOBAL_COMPANY_GROUNDING,
     // Company Data Spine A 層（公式情報）。★ B 層（下の crossFeatureContext 内の企業研究メモ）とは
     //   **別ブロック**として並べる。公式事実 / 本人の解釈 / AI 派生を混ぜないのが Spine の中核契約。
     //   位置は面接 / プレゼンと同じ「base の直後・crossFeature の前」に揃える。
@@ -375,8 +406,9 @@ function assembleConsultationSystemParts(
 }
 
 // 相談AIの完成 system prompt を組み立てる純関数（flat 版・byte 仕様は従来どおり）。
-//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ Company Data Spine A 層（公式情報・
-//   route resolve 済み / 無ければ ''）→ Personal Memory 横断（crossFeatureContext）
+//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ 企業情報の扱い（global boundary・無条件）
+//   → Company Data Spine A 層（公式情報・route resolve 済み / 無ければ ''）
+//   → Personal Memory 横断（crossFeatureContext）
 //   → Event Signal block（route resolve 済み・現行位置）→ 出力形式。
 export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInput): string {
   const { cachedPrefix, dynamicSuffix } = assembleConsultationSystemParts(input);

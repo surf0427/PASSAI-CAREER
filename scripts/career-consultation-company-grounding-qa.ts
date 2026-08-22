@@ -10,6 +10,14 @@
  *   本 QA は「表現の強さではなく出典の有無で線を引く」規約が prompt に入り続けることを固定する。
  *
  * 検証項目:
+ *   [G1] Company block が **無くても** global grounding boundary が prompt に必ず入る
+ *   [G2] Company block が有るときも入る（詳細版 note と併存する）
+ *   [G3] 許可される出典が 3 つに限定されている（公式 block / 本人メモ / 会話）
+ *   [G4] 本人メモを公式情報へ格上げしない規約がある
+ *   [G5] モデル内部知識からの補完を、ヘッジ込みで明示禁止
+ *   [G6] general career knowledge は禁止していない
+ *   [G7] interpretation は許可、そこからの new fact 生成は禁止
+ *   [G8] global boundary は cachedPrefix に入らない（dynamicSuffix 側）
  *   [A] consultation の注意書きが「断定のみ禁止」で終わっていない
  *   [B] ヘッジ付き補完（〜として知られています / 一般的に / おそらく / 〜のような企業では）を明示禁止
  *   [C] 未提供の事実は「手元の情報では確認できない」+ 不足情報 + 確認行動へ回す規約がある
@@ -78,6 +86,38 @@ function main(): void {
   const block = renderCompanyOfficialForPurpose('consultation', READY);
   check(block.used && block.text !== '', 'consultation block が生成される');
   const note = block.text;
+
+  // ── [G1]〜[G8] global boundary（Company block の有無に依存しない） ─────────
+  console.log('[G1]〜[G8] 全 turn 共通の企業情報 boundary');
+  {
+    const withCompanyBlocks = buildConsultationSystemBlocks(baseInput(block.text));
+    const withoutBlocks = buildConsultationSystemBlocks(baseInput(''));
+    const GLOBAL_HEADER = '【企業情報の扱い（この相談全体に適用）】';
+
+    check(withoutBlocks.dynamicSuffix.includes(GLOBAL_HEADER), '[G1] Company block 非注入 turn でも boundary が入る');
+    check(withCompanyBlocks.dynamicSuffix.includes(GLOBAL_HEADER), '[G2] Company block 注入 turn にも入る');
+    check(
+      withCompanyBlocks.dynamicSuffix.includes(GLOBAL_HEADER) && withCompanyBlocks.dynamicSuffix.includes('※ ★ 企業固有の事実は'),
+      '[G2] 詳細版 note と併存する（どちらか一方に置き換わらない）',
+    );
+
+    const g = withoutBlocks.dynamicSuffix;
+    check(/公式情報ブロック（あるとき）\/ 本人が保存した企業研究メモ \/ この会話で本人が話した内容 の 3 つだけ/.test(g), '[G3] 出典を 3 つに限定している');
+    check(/企業の公式情報に格上げしないでください/.test(g), '[G4] 本人メモを公式情報へ格上げしない');
+    check(/あなた自身が知っている企業情報で補わないでください/.test(g), '[G5] モデル内部知識からの補完を禁止');
+    for (const hedge of ['として知られています', '一般的に', 'おそらく', 'の傾向があります', 'のような企業では']) {
+      check(g.includes(hedge), `[G5] ヘッジ表現を名指しで禁止（global） | ${hedge}`);
+    }
+    check(/弱めても同じく禁止/.test(g), '[G5] 「弱めても同じく禁止」と明記');
+    check(/手元の情報では確認できない/.test(g) && /何を誰に確認すべきか/.test(g), '[G5] 未提供は unknown 扱い + 確認行動へ');
+    check(/就活一般の知識/.test(g) && /自由に使えます/.test(g), '[G6] 一般就活知識は自由に使える と明記');
+    check(/解釈も歓迎します/.test(g), '[G7] 事実 × 本人の価値観の解釈は許可');
+    check(/新しい企業事実を作らないでください/.test(g), '[G7] 解釈から新事実を作るのは禁止');
+    check(/海外配属が多い、は不可/.test(g), '[G7] 境界を具体例で示している');
+    check(!withCompanyBlocks.cachedPrefix.includes(GLOBAL_HEADER), '[G8] boundary は cachedPrefix に入らない');
+    check(withCompanyBlocks.cachedPrefix === withoutBlocks.cachedPrefix, '[G8] cachedPrefix は Company block の有無で byte 不変');
+  }
+  console.log('');
 
   // ── [A][B] 断定だけで終わらない / ヘッジ付き補完も禁止 ────────────────
   console.log('[A][B] 断定のみ禁止で終わらせず、ヘッジ付き補完も禁止している');
