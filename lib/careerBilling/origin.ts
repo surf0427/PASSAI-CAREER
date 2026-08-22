@@ -1,37 +1,44 @@
 /**
- * PASSAI CAREER — Checkout / Portal の戻り先 origin 解決（server-only）。
+ * PASSAI CAREER — Checkout / Portal の戻り先 origin 解決（server-only の薄いラッパ）。
  *
  * Stripe に渡す success_url / cancel_url / return_url の基点。
  *
- * 方針（受験版は `NEXT_PUBLIC_APP_URL ?? req.headers.get('origin')` をそのまま使うが、
- * CAREER では fallback 側を検証してから使う）:
- *   1. NEXT_PUBLIC_APP_URL が設定されていればそれを最優先（運用者が明示した正本）。
- *   2. 無ければ request の Origin header。ただし **http(s) スキームの妥当な URL の場合のみ**。
- *      `javascript:` 等のスキームや壊れた値は採用しない。
- *   3. どちらも駄目なら null（呼び出し側が 503 にする = fail-closed）。
+ * ★★ ここは「認証セッションの継続性」を決める箇所である ★★
  *
- * 戻り値は必ず末尾スラッシュ無しの origin 文字列（例: https://example.com）。
- * path は呼び出し側が組み立てる。ここで外部 URL が混ざっても、遷移先は Stripe の
- * 決済完了後 redirect のみで、自サイトの認証・権限判定には一切使わない。
+ *   Supabase の auth cookie は **host 単位**で保存される（Domain 属性を付けていないため
+ *   `passai-career.vercel.app` の cookie は `passai-career-xxxx.vercel.app` へは送られない）。
+ *   したがって Stripe の戻り先 host が「決済を始めた host」と違うと、
+ *
+ *       決済前: authenticated（cookie あり）
+ *       決済後: 別 host に着地 → cookie が付かない → 401 → 再ログイン要求
+ *
+ *   という事故になる。以前は `NEXT_PUBLIC_APP_URL` を **最優先**していたため、
+ *   preview host で認証したユーザーが決済後に canonical host へ飛ばされ得た。
+ *
+ * ── 解決方針 ────────────────────────────────────────────────────────────
+ *   **ユーザーが今いる host に必ず返す**。判定材料は platform（Vercel edge）が付ける
+ *   `x-forwarded-host` / `host`。この値はこの request を実際に配信した host そのもので、
+ *   「その browser が cookie を持っている host」と定義上一致する。
+ *   client が自由に付けられる `Origin` header は採用しない（偽装可能なため）。
+ *   `NEXT_PUBLIC_APP_URL` は forwarded host が読めない実行環境のための **fallback**。
+ *
+ * ── 安全性 ──────────────────────────────────────────────────────────────
+ *   戻り先 URL は「決済完了後にその browser 自身をどこへ返すか」だけを決める。
+ *   認証・権限判定には一切使わない（権利の正本は署名付き webhook → Project B →
+ *   entitlement resolver）。scheme は http(s) に限定し、壊れた値は採用しない。
+ *
+ * 判定ロジック本体は lib/careerBilling/originPolicy.ts（純関数・unit test 可能）。
  */
 
 import 'server-only';
 
-function normalizeOrigin(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-  return url.origin;
-}
+import { resolveCareerOriginFromHeaders } from './originPolicy';
 
 export function resolveCareerAppOrigin(req: Request): string | null {
-  return (
-    normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL) ??
-    normalizeOrigin(req.headers.get('origin'))
-  );
+  return resolveCareerOriginFromHeaders({
+    forwardedHost: req.headers.get('x-forwarded-host'),
+    host: req.headers.get('host'),
+    forwardedProto: req.headers.get('x-forwarded-proto'),
+    configuredAppUrl: process.env.NEXT_PUBLIC_APP_URL ?? null,
+  });
 }

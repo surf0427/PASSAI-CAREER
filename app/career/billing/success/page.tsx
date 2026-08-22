@@ -48,6 +48,17 @@ type Phase = 'checking' | 'active' | 'pending' | 'unauthenticated' | 'error';
 const POLL_INTERVAL_MS = 2000;
 const MAX_ATTEMPTS = 15;
 
+/**
+ * 401/403 を「未ログイン確定」と見なすまでの猶予回数。
+ *
+ * Stripe から戻った直後は、browser 側の Supabase client が session を読み直している
+ * 最中だったり、access token の refresh が middleware 側で進行中だったりする。
+ * その一瞬の 401 で「ログインし直してください」を出すと、決済に成功したユーザーへ
+ * OTP 再入力を要求することになる（実際に本番で発生した事故の再発防止）。
+ * 数回リトライしてもなお 401 のときだけ、復旧用 UI へ落とす。
+ */
+const AUTH_RETRY_BEFORE_GIVING_UP = 3;
+
 // 反映確認できてから自動遷移するまでの間（完了メッセージを読める程度の短い待ち）。
 const ADVANCE_DELAY_MS = 1200;
 
@@ -59,16 +70,26 @@ export default function CareerBillingSuccessPage() {
   const [nextPath, setNextPath] = useState<string>(CAREER_ROUTES.basicInfo);
   const attemptsRef = useRef(0);
   const cancelledRef = useRef(false);
+  // 連続した 401/403 の回数（session 復元待ちと本当の未ログインを区別する）。
+  const authFailuresRef = useRef(0);
 
   const poll = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch('/api/career/billing/status', {
         cache: 'no-store',
+        // 同一 origin への fetch。cookie は既定で送られるが、Stripe からの復帰直後で
+        // あることを踏まえ明示しておく（戻り先 host は決済を始めた host と同一）。
+        credentials: 'same-origin',
       });
       if (res.status === 401 || res.status === 403) {
+        // ★ 即断しない。session 復元 / token refresh 中の一過性 401 を吸収する。
+        authFailuresRef.current += 1;
+        if (authFailuresRef.current <= AUTH_RETRY_BEFORE_GIVING_UP) return false;
         setPhase('unauthenticated');
         return true; // 停止（ログインし直しが必要）
       }
+      // 認証が通ったら失敗カウンタを戻す（後続の一過性失敗に猶予を残す）。
+      authFailuresRef.current = 0;
       if (!res.ok) return false; // 503 等は一時的とみなして再試行
       // status API の schema は { paid, subscription: { plan, ... } | null }。
       // plan は subscription の中にあり、top-level には無い。
@@ -201,11 +222,12 @@ export default function CareerBillingSuccessPage() {
       {phase === 'unauthenticated' && (
         <Card padding="md">
           <p className="text-base font-semibold text-slate-900">
-            ログイン状態を確認できませんでした
+            決済は確認できていますが、ログイン状態の復元が必要です
           </p>
           <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-            お支払いは完了しています。同じメールアドレスでログインし直すと、ご契約状態を
-            確認できます。
+            お支払いは完了しています。ご契約は決済時のアカウントに紐づいているため、
+            <span className="font-medium">お支払いに使ったのと同じメールアドレス</span>
+            でログインし直すと、そのままご利用いただけます。
           </p>
           <div className="mt-4">
             <Link

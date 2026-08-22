@@ -38,6 +38,7 @@ import {
   resolveCareerStartDestination,
   type CareerAccessState,
 } from '../lib/careerRouting/destination';
+import { resolveCareerOriginFromHeaders } from '../lib/careerBilling/originPolicy';
 import type { CareerProfile } from '../types/careerProfile';
 
 const ROOT = process.cwd();
@@ -430,6 +431,208 @@ console.log('[8] Project A 非依存');
     ),
   );
   check(bad.length === 0, `Project A client factory 参照 0（残 ${bad.map((f) => relative(ROOT, f)).join(', ')}）`);
+}
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+// [9] Auth session continuity（Stripe 往復で session を失わない）
+// ═══════════════════════════════════════════════════════════════
+//
+// 本番 LIVE 決済で「決済は成功したのに戻ってきたら再度 OTP を要求された」事故が起きた。
+// Supabase の auth cookie は host 単位なので、決済を始めた host と戻り先 host が
+// ズレると cookie が付かず 401 になる。ここではその再発を構造的に防ぐ。
+//
+// ★ 決済の成功そのものを認証の代わりにしない（Auth bypass 禁止）ことも同時に固定する。
+console.log('[9] session continuity across Stripe checkout');
+{
+  const origin = codeOf(read('lib/careerBilling/origin.ts'));
+  const checkout = codeOf(read(CHECKOUT));
+  const success = codeOf(read(SUCCESS));
+
+  // --- 10/25: 戻り先は「今ユーザーがいる host」。Preview / Production の取り違えを起こさない ---
+  //   ★ 静的検査ではなく **実入力の unit test** で固定する（ここがズレると session を失う）。
+  const CANONICAL = 'https://passai-career.vercel.app';
+  const PREVIEW_HOST = 'passai-career-abc123-projects.vercel.app';
+
+  // 本番 canonical host からの決済 → 同じ canonical host へ返る。
+  check(
+    resolveCareerOriginFromHeaders({
+      forwardedHost: 'passai-career.vercel.app',
+      forwardedProto: 'https',
+      configuredAppUrl: CANONICAL,
+    }) === CANONICAL,
+    '本番 host からの決済は同じ本番 host へ戻る',
+  );
+  // ★ 回帰の本体: preview host で認証したユーザーを canonical host へ飛ばさない。
+  check(
+    resolveCareerOriginFromHeaders({
+      forwardedHost: PREVIEW_HOST,
+      forwardedProto: 'https',
+      configuredAppUrl: CANONICAL,
+    }) === `https://${PREVIEW_HOST}`,
+    'preview host からの決済は同じ preview host へ戻る（cookie を失わない）',
+  );
+  // forwarded host が無い実行環境では素の Host header → それも無ければ設定値。
+  check(
+    resolveCareerOriginFromHeaders({
+      host: 'localhost:3000',
+      configuredAppUrl: CANONICAL,
+    }) === 'http://localhost:3000',
+    'forwarded host が無ければ Host header を使う（localhost は http）',
+  );
+  check(
+    resolveCareerOriginFromHeaders({ configuredAppUrl: CANONICAL }) === CANONICAL,
+    'host が一切読めない環境では NEXT_PUBLIC_APP_URL へ fallback',
+  );
+  check(
+    resolveCareerOriginFromHeaders({}) === null,
+    '何も解決できなければ null（呼び出し側が 503 = fail-closed）',
+  );
+  // 壊れた値 / 危険な scheme を採用しない。
+  check(
+    resolveCareerOriginFromHeaders({ configuredAppUrl: 'javascript:alert(1)' }) === null,
+    'javascript: スキームは採用しない',
+  );
+  check(
+    resolveCareerOriginFromHeaders({
+      forwardedHost: 'a.example.com, b.example.com',
+      forwardedProto: 'https, http',
+    }) === 'https://a.example.com',
+    '多段プロキシのカンマ区切りは client に最も近い先頭値を使う',
+  );
+  // 構造: client 申告の Origin header を入力にしない。
+  check(
+    !/headers\.get\('origin'\)/.test(origin),
+    'client が偽装できる Origin header は採用しない',
+  );
+  check(
+    /x-forwarded-host/.test(origin),
+    '戻り先 origin は platform の forwarded host から決める（= cookie を持つ host）',
+  );
+  check(
+    /configuredAppUrl: process\.env\.NEXT_PUBLIC_APP_URL/.test(origin),
+    'NEXT_PUBLIC_APP_URL は fallback として渡すだけ（優先しない）',
+  );
+  // success_url と cancel_url は同一 request の同一 origin から組む（片方だけ別 host にしない）。
+  check(
+    /success_url: `\$\{origin\}/.test(checkout) && /cancel_url: `\$\{origin\}/.test(checkout),
+    'success_url / cancel_url は同じ origin 変数から組む',
+  );
+  check(
+    /const origin = resolveCareerAppOrigin\(req\)/.test(checkout),
+    'checkout の origin は共通 resolver 経由（直書きしない）',
+  );
+  check(
+    !/https?:\/\/[a-z0-9.-]*vercel\.app/.test(checkout) && !/https?:\/\/[a-z0-9.-]*vercel\.app/.test(origin),
+    'deployment host を hard-code していない',
+  );
+
+  // --- 1/7: Checkout を作る時点で server が authenticated user を取れることを要求する ---
+  const authAt = checkout.indexOf('authenticateCareerMember()');
+  const sessionAt = checkout.indexOf('checkout.sessions.create');
+  check(authAt >= 0 && sessionAt > authAt, 'Checkout 生成より前に server 認証を行う');
+  check(
+    /LOGIN_REQUIRED/.test(codeOf(read('lib/careerBilling/entitlement.ts'))),
+    '未認証は 401 LOGIN_REQUIRED（fail-closed。既存 security を維持）',
+  );
+
+  // --- 16/17: proxy（旧 middleware）が SSR session を更新し、cookie を書き戻す ---
+  //   ★ この Next.js では middleware file convention は deprecated。proxy.ts が正。
+  const mwPath = 'proxy.ts';
+  check(existsSync(join(ROOT, mwPath)), 'Supabase SSR の session 更新 proxy がある');
+  check(
+    !existsSync(join(ROOT, 'middleware.ts')),
+    'deprecated な middleware.ts を残していない（proxy へ移行済み）',
+  );
+  const mw = codeOf(read(mwPath));
+  check(/export async function proxy\(/.test(mw), '規約どおり proxy という名前で export する');
+  check(/createServerClient\(/.test(mw), 'proxy は Supabase server client で session を触る');
+  check(/auth\.getUser\(\)/.test(mw), 'proxy は getUser() を呼んで必要なら refresh させる');
+  check(
+    /request\.cookies\.set\(/.test(mw) && /response\.cookies\.set\(/.test(mw),
+    '更新後 cookie を request / response の両方へ書き戻す（公式パターン）',
+  );
+  // ★ proxy で認可判定をしない（判定は server guard に一本化）。docs も禁じている。
+  check(
+    !/NextResponse\.redirect|status: 401|\/career\/login/.test(mw),
+    'proxy は redirect / 401 を返さない（認可判定を二重化しない）',
+  );
+  check(/catch/.test(mw), 'proxy は fail-open（CAREER 全体を落とさない）');
+  check(
+    /matcher: \['\/career\/:path\*', '\/api\/career\/:path\*'\]/.test(mw),
+    'matcher は CAREER 名前空間だけ（受験版の認証に触れない）',
+  );
+  check(/WEBHOOK_PATH/.test(mw), '署名付き webhook では何もしない（raw body に触れない）');
+  check(
+    /careerSupabase\/env/.test(mw) && !/lib\/supabase\//.test(mw),
+    'proxy は Project B の env / client のみを使う',
+  );
+
+  // --- 3/4/22: 決済直後の一過性 401 で OTP をやり直させない ---
+  check(
+    /AUTH_RETRY_BEFORE_GIVING_UP/.test(success),
+    '401 は数回リトライしてから未ログインと判定する（session 復元待ちを吸収）',
+  );
+  check(
+    /authFailuresRef\.current = 0/.test(success),
+    '認証が通ったら失敗カウンタを戻す',
+  );
+  // paid=false（webhook 待ち）と 401（未認証）を混同しない。
+  check(
+    /res\.status === 401 \|\| res\.status === 403/.test(success) && /data\.paid === true/.test(success),
+    'paid=false と 401 を別々に扱う（webhook 待ちでログアウト扱いしない）',
+  );
+  // 正常系で login / register へ自動遷移しない（リンク提示のみ）。
+  check(
+    !/router\.(push|replace)\((['"`])\/career\/(login|register)/.test(success),
+    'success ページが login / register へ自動遷移しない',
+  );
+
+  // --- 2/15/21: 決済を認証の代わりにしない（Auth bypass 禁止）---
+  const authBypassTokens = [
+    'signInWithOtp',
+    'signInWithPassword',
+    'verifyOtp',
+    'admin.createUser',
+    'setSession',
+    'createSession',
+    'generateLink',
+  ];
+  for (const rel of [CHECKOUT, STATUS, WEBHOOK, SUCCESS]) {
+    const src = codeOf(read(rel));
+    const hits = authBypassTokens.filter((t) => src.includes(t));
+    check(hits.length === 0, `${rel}: session を発行する API を呼ばない${hits.length ? ' — ' + hits.join(', ') : ''}`);
+  }
+  // Stripe 側の email / customer を identity の代わりに使わない。
+  check(
+    !/customer_email/.test(checkout),
+    'checkout は customer_email で Stripe に user を作らせない（canonical Customer を使う）',
+  );
+  check(
+    !/session_id/.test(success) && !/searchParams/.test(success),
+    'success は session_id / query を identity にも権利にも使わない',
+  );
+  // webhook は entitlement を動かすが、認証 session は一切作らない。
+  const webhook = codeOf(read(WEBHOOK));
+  check(
+    !/cookies\(\)|Set-Cookie|auth\.getUser/.test(webhook),
+    'webhook は cookie / auth session に触れない（billing 同期だけ）',
+  );
+
+  // --- 19/20: identity continuity（同一 auth user のまま状態だけ変わる）---
+  check(
+    /client_reference_id: userId/.test(checkout) &&
+      /\[CAREER_METADATA_USER_ID_KEY\]: userId/.test(checkout),
+    'Checkout には server session の userId を紐づける（reconciliation 用）',
+  );
+  check(
+    /getOrCreateCareerStripeCustomer\(\{ admin, userId, email \}\)/.test(checkout),
+    'Stripe Customer は server session の userId / email から 1:1 で解決する',
+  );
+  check(
+    /const \{ userId \} = auth;/.test(checkout),
+    'userId は server 認証の戻り値のみ（client 申告を使わない）',
+  );
 }
 console.log('');
 
