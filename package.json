@@ -82,6 +82,7 @@
     "qa:careerConsultationPromptCache": "npx tsx scripts/career-consultation-prompt-cache-qa.ts",
     "qa:careerConsultationCompanyContext": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-consultation-company-context-qa.ts",
     "qa:careerConsultationCompanyMention": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-consultation-company-mention-qa.ts",
+    "qa:careerConsultationCompanyGrounding": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-consultation-company-grounding-qa.ts",
     "qa:careerPersonalMemorySchema": "npx tsx scripts/career-personal-memory-schema-qa.ts",
     "qa:careerPersonalMemoryRepository": "npx tsx scripts/career-personal-memory-repository-qa.ts",
     "qa:careerPersonalMemoryWriter": "npx tsx scripts/career-personal-memory-writer-qa.ts",

@@ -48,12 +48,12 @@ export const CONSULTATION_COMPANY_MAX = 3;
 /**
  * 企業 block 全体の byte 上限（社数 × 1 社あたり budget の上に被せる総枠）。
  *
- * 1 社あたりは renderer の purpose budget（consultation: 2600B）で抑えているが、
+ * 1 社あたりは renderer の purpose budget（consultation: 3400B）で抑えているが、
  * 3 社載ると合計が User Data Spine / Personal Memory / 出力形式を押し出しうる。
  * 2 社（比較・内定比較）までは全量、3 社目は総枠に収まるときだけ載る。
  * 総枠を超える社は **載せない**（要約せず落とす。renderer と同じ思想）。
  */
-export const CONSULTATION_COMPANY_TOTAL_MAX_BYTES = 5600;
+export const CONSULTATION_COMPANY_TOTAL_MAX_BYTES = 6800;
 
 /**
  * 企業文脈が「判断の質を変える」相談かを判定するキーワード。
@@ -77,12 +77,20 @@ const COMPANY_CONTEXT_KEYWORDS: readonly string[] = [
  * 「今回の発話で企業そのものを相談している」ことを示す最小マーカー。
  *
  * ★ COMPANY_CONTEXT_KEYWORDS を広げるのではなく **別集合**にしている理由:
- *   これらは単体では一般語すぎる（「どう」「教えて」）。**今回の発話に辞書一致した企業名がある**
+ *   これらは単体では一般語すぎる（「どう」「教えて」「？」）。**今回の発話に辞書一致した企業名がある**
  *   ときにだけ併用することで、「任天堂ってどう？」「味の素について教えて」を拾いつつ、
  *   企業名を含まない一般相談には一切影響させない。
+ *
+ * ★ 疑問符を含めている理由（grounding 上とても重要）:
+ *   企業名を挙げた質問（「A 社って転勤多い？」）で Company block を **注入しない**と、
+ *   grounding 規約（USAGE_NOTE_CONSULTATION）ごと prompt から消えるため、
+ *   モデルが一般知識で企業固有の事実を語り出す（実 AI probe で再現）。
+ *   多少の空振り（「A 社のゲーム面白い？」で block が載る）を許容してでも、
+ *   **企業名を挙げた質問には必ず出典と扱い規約を添える**方が安全側に倒れる。
  */
 const COMPANY_MENTION_INTENT_MARKERS: readonly string[] = [
   'どう', 'どんな', 'どれ', '教えて', 'おしえて', 'について', 'ってあり', '合いそう', '合うかな',
+  '？', '?',
 ];
 
 function normalize(text: string): string {

@@ -277,10 +277,15 @@ check(
   renderCompanyOfficialForPurpose('consultation', READY).used,
 );
 check(
-  'C-3o1e2 就活相談の注意書きは企業優劣の断定と選考事実の創作を禁じている',
+  'C-3o1e2 就活相談の注意書きは企業優劣の断定と、未提供の企業固有事実の補完（ヘッジ付きを含む）を禁じている',
   (() => {
     const t = renderCompanyOfficialForPurpose('consultation', READY).text;
-    return t.includes('企業そのものの優劣') && t.includes('選考フロー');
+    return (
+      t.includes('企業そのものの優劣') &&
+      t.includes('選考の進み方') &&
+      t.includes('として知られています') &&
+      t.includes('弱めても同じく禁止')
+    );
   })(),
 );
 check(

@@ -179,9 +179,6 @@ export default function CareerMypagePage() {
 
           {/* 最近のアウトプット */}
           <RecentSection recent={summary.recent} />
-
-          {/* 相談CTA */}
-          <ConsultationCta />
         </div>
       )}
 
@@ -390,28 +387,6 @@ function RecentSection({ recent }: { recent: RecentOutput[] }) {
         </ul>
       </Card>
     </section>
-  );
-}
-
-// ── セクション: 相談CTA ─────────────────────────────────────────────
-
-function ConsultationCta() {
-  return (
-    <Card variant="soft" padding="md" className="ring-1 ring-blue-100">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex-1">
-          <h3 className="text-base font-bold text-gray-800 mb-1">迷ったら就活相談AIへ</h3>
-          <p className="text-sm text-gray-600 leading-relaxed">
-            ここまでの整理をもとに、今の現在地と次にやることを横断で相談できます。
-          </p>
-        </div>
-        <div className="shrink-0 sm:self-center">
-          <LinkButton href="/career/consultation" variant="primary" size="md">
-            相談する →
-          </LinkButton>
-        </div>
-      </div>
-    </Card>
   );
 }
 

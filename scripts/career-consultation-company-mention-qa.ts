@@ -42,6 +42,7 @@ import {
   resolveConsultationCompanyMentions,
   resolveConsultationCompanyOfficial,
   CONSULTATION_COMPANY_MAX,
+  CONSULTATION_COMPANY_TOTAL_MAX_BYTES,
 } from '@/app/api/career/consultation/resolveCompanyOfficial';
 import {
   buildConsultationSystemBlocks,
@@ -270,7 +271,7 @@ async function main(): Promise<void> {
     check(withCompany.dynamicSuffix.includes(resolved.block), '[K] Company block は dynamicSuffix に到達');
     check(!withCompany.cachedPrefix.includes('任天堂') && !withCompany.cachedPrefix.includes('味の素'), '[K] cachedPrefix に企業名が入らない');
     check(withCompany.cachedPrefix === without.cachedPrefix, '[L] cachedPrefix は Company block の有無で byte 不変');
-    check(Buffer.byteLength(resolved.block, 'utf-8') <= 5600, '[budget] 総枠 5600B 以内', String(Buffer.byteLength(resolved.block, 'utf-8')));
+    check(Buffer.byteLength(resolved.block, 'utf-8') <= CONSULTATION_COMPANY_TOTAL_MAX_BYTES, `[budget] 総枠 ${CONSULTATION_COMPANY_TOTAL_MAX_BYTES}B 以内`, String(Buffer.byteLength(resolved.block, 'utf-8')));
   }
   {
     // Master にいるが facts 0 の企業（DOMAIN_UNVERIFIED 等）は prompt へ入れない。

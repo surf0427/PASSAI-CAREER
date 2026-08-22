@@ -269,7 +269,7 @@ console.log('[K] token budget');
 {
   const one = await resolveConsultationCompanyOfficial([{ companyName: A, companyId: null }], NOW, makeLoader({ [A]: READY_A }).load);
   const bytes = Buffer.byteLength(one.block, 'utf-8');
-  check(bytes > 0 && bytes <= 2600, `1 社の block は purpose budget 内（実測 ${bytes}B <= 2600B）`);
+  check(bytes > 0 && bytes <= 3400, `1 社の block は purpose budget 内（実測 ${bytes}B <= 3400B）`);
   check(one.block.split('【公式情報').length - 1 === 1, '1 社なら公式情報 block は 1 つ');
 }
 {

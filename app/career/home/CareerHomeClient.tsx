@@ -206,6 +206,30 @@ export default function CareerHomeClient() {
         </ol>
       </Card>
 
+      {/* 就活相談AI — 個別機能の前に置く総合入口。
+          「何をすればいいかわからない」「企業について相談したい」ときの受け皿なので、
+          番号付きの個別機能グリッドではなく、その直前に単独カードとして置く。
+          遷移先は既存の /career/consultation（新規 route は作らない）。
+          文言は既存の app/career/consultation/page.tsx の PageHeader をそのまま再利用する。 */}
+      <section className="mb-8">
+        <Card variant="soft" padding="md" className="ring-1 ring-blue-100">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-bold text-gray-800 mb-1.5">就活相談AI</h2>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                就活全体の司令塔として、今やるべきことを一緒に整理します。
+                悩みや企業選び、ES・面接など、何でも相談できます。
+              </p>
+            </div>
+            <div className="shrink-0 sm:self-center">
+              <LinkButton href="/career/consultation" variant="primary" size="md">
+                相談する →
+              </LinkButton>
+            </div>
+          </div>
+        </Card>
+      </section>
+
       {/* 機能カード一覧（受験版のメイン機能をそのまま並べる。Phase2 では全て準備中） */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {VISIBLE_FEATURES.map((feature) => {
