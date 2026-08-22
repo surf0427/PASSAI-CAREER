@@ -29,6 +29,7 @@ import {
 } from '../gdPrompt';
 import { requireCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 import { resolveGdContextInputs } from '../resolveContextInputs';
+import { resolveGdCompanyOfficial } from '../resolveCompanyOfficial';
 import { buildGdSpinePrompt, appendGdSpineBlock } from '../gdSpinePrompt';
 
 // P0（HARDENING）: 認証 identity / rate limit / 入力サイズ上限の共通ガード。
@@ -165,7 +166,7 @@ export async function POST(req: Request) {
   const body = guard.body;
 
   const b = (body && typeof body === 'object' ? body : {}) as {
-    theme?: { title?: unknown; description?: unknown };
+    theme?: { title?: unknown; description?: unknown; companyName?: unknown; companyId?: unknown };
     participants?: unknown;
     transcript?: unknown;
     participationMode?: unknown;
@@ -205,9 +206,20 @@ export async function POST(req: Request) {
   //    ソロは client が transcript を送る stateless route だが、評価の宛先合わせのために
   //    本人 context を server 側で解決して別ブロックとして足す。
   //    ★ 解決できなければ block は '' となり、prompt は従来と byte 完全一致。
-  //    ★ 企業指定はソロ GD にも無いため Company Spine は載せない（null）。
-  const spineCtx = await resolveGdContextInputs(req);
-  const spine = buildGdSpinePrompt(spineCtx, null);
+  //
+  //    Company Data Spine（A 層）:
+  //      GD は既定で **企業未指定の一般練習**。theme に企業ターゲットが載っているときだけ
+  //      公式情報を読む（gd/theme route と同じ「呼び出し側が明示的に渡した場合のみ」契約）。
+  //      現行 UI は企業を送らないため通常は null ＝ 従来と byte 完全一致の generic path。
+  //      ★ 以前はここが `null` 固定で、企業を渡しても絶対に到達しなかった。
+  const [spineCtx, companyOfficial] = await Promise.all([
+    resolveGdContextInputs(req),
+    resolveGdCompanyOfficial({
+      companyName: str(b.theme?.companyName) || null,
+      companyId: str(b.theme?.companyId) || null,
+    }),
+  ]);
+  const spine = buildGdSpinePrompt(spineCtx, companyOfficial);
   const system = appendGdSpineBlock(buildFeedbackSystem(), spine.block);
   const user = buildFeedbackUser({
     theme,

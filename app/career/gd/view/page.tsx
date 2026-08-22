@@ -12,6 +12,8 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { GD_FORMAT_LABELS } from '../gdRoles';
 import { loadGdResults, updateGdResult } from '../gdStorage';
+import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
+import { upsertCareerGdSoloResultsToSupabase } from '@/lib/supabase/careerGdSolo';
 import { MultiGdHistorySection } from '../MultiGdHistorySection';
 import { GdSoloResultDetail, formatDate } from '../GdSoloResultDetail';
 import type { CareerGdResult } from '@/types/careerGd';
@@ -30,6 +32,8 @@ function CareerGdViewInner() {
     getMountedServerSnapshot,
   );
 
+  const userId = useCurrentUserId();
+
   // favorite トグルなどで再読込するためのバージョン。version 変化で loadGdResults を読み直す。
   const [version, setVersion] = useState(0);
   const results = useMemo<CareerGdResult[] | null>(
@@ -45,7 +49,11 @@ function CareerGdViewInner() {
   }, [results, selectedId, queryId]);
 
   function toggleFavorite(r: CareerGdResult) {
-    updateGdResult(r.id, { favorite: !r.favorite });
+    const next = { ...r, favorite: !r.favorite };
+    updateGdResult(r.id, { favorite: next.favorite });
+    // localStorage canonical と同じ内容を mirror へも送る（member のみ・best-effort）。
+    // ここを送らないと favorite が mirror 側だけ古いままになり、restore で巻き戻る。
+    if (userId) void upsertCareerGdSoloResultsToSupabase(userId, [next]);
     setVersion((v) => v + 1);
   }
 

@@ -78,6 +78,24 @@ export type GdTheme = {
   description: string;
   format: GdFormat;
   constraints?: string[]; // ケース型の与件など
+
+  // ── 企業ターゲット（任意）────────────────────────────────────────────
+  // ★ GD は既定で **企業未指定の一般練習**（app/api/career/gd/theme/route.ts の
+  //   「現行 UI は送らないため通常は未設定＝一般 GD のまま」を正とする）。
+  //   本 field は「呼び出し側が明示的に企業を渡した場合はそれを使う」という
+  //   resolveGdCompanyOfficial の既存契約に対応する **受け口**であり、必須化しない。
+  //
+  // 経緯（この field が無かったことによる欠陥）:
+  //   room result 側の gdCompanyTarget() は `room.theme.companyName / companyId` を
+  //   読む実装になっていたのに、GdTheme に該当 field が無く、かつ唯一の書き込み口である
+  //   parseRoomThemeInput() が未知 key を落としていたため、Company Data Spine へ
+  //   到達する経路が **構造的に存在しなかった**（値を渡しても正規化で消えていた）。
+  //   ここを optional field として通すことで、受け口が実際に機能するようにする。
+  //
+  // 欠損（一般 GD）が正常。値があるときだけ Company Data Spine A 層を読む。
+  companyName?: string;
+  // Company Data Spine の canonical key（登録済み企業を選んだときだけ入る）。
+  companyId?: string;
 };
 
 // 個別フィードバックの評価軸（AI は各 0〜100 の小スコア + 根拠を返す。合計はサーバ計算）。

@@ -167,7 +167,14 @@ function normalizeFeedback(raw: unknown): GdParticipantFeedback | null {
   };
 }
 
-function normalizeResult(raw: unknown): CareerGdResult | null {
+/**
+ * 任意の unknown を CareerGdResult へ防御的に正規化する（never-throw / 形が壊れていれば null）。
+ *
+ * ★ localStorage 読み取りと Supabase mirror 読み取り（lib/supabase/careerGdSolo.ts）の
+ *   **共通 read boundary**。read normalizer を 2 つ作らないため export する
+ *   （競合する normalizer を作らない、という既存 resultShape.ts の方針と同じ）。
+ */
+export function normalizeCareerGdResult(raw: unknown): CareerGdResult | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== 'string') return null;
@@ -280,7 +287,7 @@ export function getInProgressGdSession(): CareerGdSession | null {
 
 export function loadGdResults(): CareerGdResult[] {
   const raw = safeGetStorage<unknown[]>(RESULTS_KEY, []);
-  return raw.map(normalizeResult).filter((r): r is CareerGdResult => r !== null);
+  return raw.map(normalizeCareerGdResult).filter((r): r is CareerGdResult => r !== null);
 }
 
 export function saveGdResults(results: CareerGdResult[]): void {

@@ -87,7 +87,12 @@ export type BackfillFeature =
   | 'careerInterviewResultsRestore'
   | 'careerPresentationResultsRestore'
   | 'careerCompanyResearchRestore'
-  | 'careerConsultationRestore';
+  | 'careerConsultationRestore'
+  // ソロ GD（key='careerGdResults'）の下り restore。ES / 面接 / プレゼンと同じ
+  // 「localStorage canonical + Supabase mirror + restore」を揃えるために追加。
+  // ★ マルチ GD（careerGdRoomLogs / career_gd_room_results）は専用の hydrate API を
+  //   既に持つため、ここには含めない（2 系統を混ぜない）。
+  | 'careerGdSoloResultsRestore';
 
 // backfill ロジックの世代。ロジックを変えて再 backfill させたいときに +1 する。
 export const BACKFILL_VERSION = 1;

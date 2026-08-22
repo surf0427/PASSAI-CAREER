@@ -64,6 +64,8 @@ import { listCareerInterviewResultsFromSupabase } from "@/lib/supabase/careerInt
 import { listCareerPresentationResultsFromSupabase } from "@/lib/supabase/careerPresentation";
 import { listCareerCompanyResearchLogsFromSupabase } from "@/lib/supabase/careerCompanyResearch";
 import { listCareerConsultationThreadsFromSupabase } from "@/lib/supabase/careerConsultation";
+import { listCareerGdSoloResultsFromSupabase } from "@/lib/supabase/careerGdSolo";
+import { loadGdResults, saveGdResults } from "@/app/career/gd/gdStorage";
 
 // 1 feature の restore を flag gate 付きで実行する。run() は never throw（best-effort）想定。
 async function once(
@@ -148,6 +150,12 @@ export async function restoreCareerOnce({ userId }: { userId: string }): Promise
     once(userId, "careerPresentationResultsRestore", async () => {
       const remote = await listCareerPresentationResultsFromSupabase(userId);
       savePresentationResults(sortByCreatedDesc(mergeById(loadPresentationResults(), remote)));
+    }),
+    once(userId, "careerGdSoloResultsRestore", async () => {
+      // ソロ GD 評価履歴。他の履歴系と同じ id merge（local 優先）。
+      // ★ マルチ GD（careerGdRoomLogs）はここでは扱わない。専用 hydrate API が担当する。
+      const remote = await listCareerGdSoloResultsFromSupabase(userId);
+      saveGdResults(sortByCreatedDesc(mergeById(loadGdResults(), remote)));
     }),
     once(userId, "careerCompanyResearchRestore", async () => {
       const remote = await listCareerCompanyResearchLogsFromSupabase(userId);

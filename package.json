@@ -74,6 +74,8 @@
     "qa:careerInterviewOrchestratorParity": "npx tsx scripts/career-interview-orchestrator-parity-qa.ts",
     "qa:careerInterviewTargetOperative": "npx tsx scripts/career-interview-target-operative-qa.ts",
     "qa:careerInterviewModeDifferentiation": "npx tsx scripts/career-interview-mode-differentiation-qa.ts",
+    "qa:careerResultScoreAuthority": "npx tsx scripts/career-result-score-authority-qa.ts",
+    "qa:careerGdCompanyAndSoloPersistence": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-gd-company-and-solo-persistence-qa.ts",
     "qa:careerInterviewRequestGuard": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-interview-request-guard-qa.ts",
     "qa:careerInterviewVoiceResilience": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-interview-voice-resilience-qa.ts",
     "qa:careerInterviewHardening": "npm run qa:careerInterviewRequestGuard && npm run qa:careerInterviewVoiceResilience",

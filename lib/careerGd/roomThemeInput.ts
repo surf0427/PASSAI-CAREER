@@ -13,6 +13,9 @@ export const GD_THEME_TITLE_MAX = 120;
 export const GD_THEME_DESCRIPTION_MAX = 2000;
 export const GD_THEME_CONSTRAINT_MAX = 300;
 export const GD_THEME_CONSTRAINTS_MAX_COUNT = 8;
+// 企業ターゲット（任意）の長さ上限。Company Data Spine の解決 hint として運ぶだけなので短くてよい。
+export const GD_THEME_COMPANY_NAME_MAX = 120;
+export const GD_THEME_COMPANY_ID_MAX = 64;
 
 // マルチGD（公開GD部屋 / 合言葉）では GD形式をユーザーに選ばせない（お題の文面で表現する）。
 // 既存の format 列・prompt・役割割当を壊さないため、値としてはこの既定値を使い続ける。
@@ -44,6 +47,8 @@ export function parseRoomThemeInput(value: unknown): ParseRoomThemeResult {
     description?: unknown;
     format?: unknown;
     constraints?: unknown;
+    companyName?: unknown;
+    companyId?: unknown;
   };
 
   const title = typeof v.title === 'string' ? v.title.trim() : '';
@@ -66,11 +71,26 @@ export function parseRoomThemeInput(value: unknown): ParseRoomThemeResult {
         .map((c) => c.slice(0, GD_THEME_CONSTRAINT_MAX))
     : [];
 
+  // 企業ターゲット（任意）。GD は既定で企業未指定の一般練習なので、
+  //   欠損・空文字はそのまま「企業指定なし」として通す（必須化しない）。
+  //   ★ ここで拾わないと room.theme（jsonb）へ保存されず、room result 側の
+  //     gdCompanyTarget() が永久に null になる（Company Data Spine が到達不能になる）。
+  const companyName =
+    typeof v.companyName === 'string'
+      ? v.companyName.trim().slice(0, GD_THEME_COMPANY_NAME_MAX)
+      : '';
+  const companyId =
+    typeof v.companyId === 'string' ? v.companyId.trim().slice(0, GD_THEME_COMPANY_ID_MAX) : '';
+
   const theme: GdTheme = {
     title,
     description,
     format: normalizeFormat(v.format),
     ...(constraints.length > 0 ? { constraints } : {}),
+    // ★ companyId 単独は持たせない（企業名が無い ID は表示・照合に使えないため）。
+    //   interview の normalizeInterviewTarget と同じ不変条件に揃える。
+    ...(companyName ? { companyName } : {}),
+    ...(companyName && companyId ? { companyId } : {}),
   };
   return { ok: true, theme };
 }

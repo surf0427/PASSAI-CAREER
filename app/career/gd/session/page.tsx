@@ -21,6 +21,7 @@ import {
   appendGdResult,
 } from '../gdStorage';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
+import { upsertCareerGdSoloResultsToSupabase } from '@/lib/supabase/careerGdSolo';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import type {
   CareerGdSession,
@@ -238,6 +239,13 @@ export default function CareerGdSessionPage() {
         ...(data.ranking ? { ranking: data.ranking } : {}),
       };
       appendGdResult(result);
+      // Supabase durable mirror（best-effort / member のみ）。
+      //   ES / 面接 / プレゼンと同じ「localStorage canonical + mirror + restore」パターン。
+      //   ソロ GD だけ mirror が無く、端末変更で履歴が消えていたため揃える。
+      //   DDL 未適用でも never-throw で no-op（既存 mirror と同じ fail-open 契約）。
+      if (userIdRef.current) {
+        void upsertCareerGdSoloResultsToSupabase(userIdRef.current, [result]);
+      }
       // Event Log（本文なし・fire-and-forget / member のみ）。GD topic/発言/評価/改善本文・
       // 参加者名・ranking コメントは渡さない。selfCompanyGrade は既に S/A/B/C/D の band。
       void recordCareerEvent(userIdRef.current, {
