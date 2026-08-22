@@ -52,6 +52,7 @@
     "qa:careerCompanyPrefetch": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-prefetch-qa.ts",
     "qa:careerCompanyOfficialContext": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-official-context-qa.ts",
     "qa:careerCompanyPrefetchE2E": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-prefetch-e2e-qa.ts",
+    "qa:careerCompanyIngestCoverage": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-ingest-coverage-qa.ts",
     "qa:careerCompanyPrefetchTtl": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-prefetch-ttl-qa.ts",
     "qa:careerCompanySpineExpansion": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-spine-expansion-qa.ts",
     "qa:careerCompanySpineCoverage": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-company-spine-coverage-smoke.ts",

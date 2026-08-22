@@ -122,15 +122,21 @@ async function loadRecordsByIds(
  *   既存 `resolveCompany(rawName, candidates)` に委ねる。
  *
  * 戻り値 null = 利用不可（env 未設定 / 取得失敗）→ 呼び出し側は free-text へ倒す。
+ *
+ * @param clientOverride 明示的に使う Supabase client（**request 文脈の外**から呼ぶ operator script 用）。
+ *   既定（未指定）は従来どおり cookie ベースの user-scoped client で、app 側 caller の挙動は不変。
+ *   `cookies()` は request 文脈が無いと throw するため、script からは service role client を渡す。
  */
 export async function findCompanyCandidates(
   rawName: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  clientOverride?: any,
 ): Promise<CompanyMasterRecord[] | null> {
   const normalized = normalizeCompanyName(rawName);
   if (normalized === '') return [];
 
   try {
-    const client = await getCareerServerSupabaseClient();
+    const client = clientOverride ?? (await getCareerServerSupabaseClient());
     if (!client) return null;
 
     const pattern = `%${escapeLike(normalized)}%`;
