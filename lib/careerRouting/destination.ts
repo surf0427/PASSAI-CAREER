@@ -23,8 +23,18 @@ export const CAREER_ROUTES = {
   login: '/career/login',
   /** 新規ユーザー向けメールアドレス登録（同じ OTP 基盤・UI 文言だけ新規向け）。 */
   register: '/career/register',
-  /** 料金・プラン確認（Stripe Price が正本）。 */
-  pricing: '/career/billing',
+  /**
+   * 新規ユーザー向けの **公開 Pricing**（買う前）。
+   * 受験版 `/pricing` と同じ位置づけ: public・未契約者の着地先・購入 CTA を持つ。
+   */
+  pricing: '/career/pricing',
+  /**
+   * 既存ユーザー向けの **契約状態確認 / 契約管理**（買った後）。
+   * 受験版のマイページ内 BillingCard 相当。Stripe を正本に現契約を表示し、
+   * 取得できなければ fail-closed（＝申し込みを受け付けない）で正しい。
+   * 新規獲得導線をここへ着地させない。
+   */
+  billing: '/career/billing',
   /** 基本情報入力（既存機能。onboarding 画面を新設しない）。 */
   basicInfo: '/career/profile',
   /** 機能入口ランチャー。 */
@@ -51,9 +61,9 @@ export type CareerAccessState =
 /**
  * 「始める」CTA / ログイン直後の着地先。
  *
- * 優先順位（仕様どおり）:
- *   1. 未認証            → 料金（新規は必ず料金を先に見る。いきなりログイン画面へ送らない）
- *   2. 未契約 / 判定不能 → 料金
+ * 優先順位（受験版の「未課金は必ず /pricing」と同じ思想）:
+ *   1. 未認証            → Pricing（新規は必ず料金を先に見る。いきなりログイン画面へ送らない）
+ *   2. 未契約 / 判定不能 → Pricing（契約管理ページ /career/billing ではない）
  *   3. 契約あり + 基本情報未完 → 基本情報
  *   4. 契約あり + 基本情報完了 → Home
  */
@@ -61,8 +71,9 @@ export function resolveCareerStartDestination(state: CareerAccessState): string 
   if (state.kind === 'paid') {
     return state.basicInfoComplete ? CAREER_ROUTES.home : CAREER_ROUTES.basicInfo;
   }
-  // guest / unpaid / unavailable はいずれも料金画面。
+  // guest / unpaid / unavailable はいずれも公開 Pricing。
   // guest をログイン画面へ送らないのが新規導線の要（料金 → 登録 の順を守る）。
+  // 契約管理ページ（billing）へは送らない: 未契約者に見せるべき画面ではない。
   return CAREER_ROUTES.pricing;
 }
 
@@ -80,7 +91,7 @@ export function resolveCareerGuardRedirect(
   if (state.kind === 'guest') {
     return `${CAREER_ROUTES.login}?redirect=${encodeURIComponent(selfPath)}`;
   }
-  // unpaid / unavailable → 料金（fail-closed。判定不能を「通す」に倒さない）。
+  // unpaid / unavailable → 公開 Pricing（fail-closed。判定不能を「通す」に倒さない）。
   return CAREER_ROUTES.pricing;
 }
 

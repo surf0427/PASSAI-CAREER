@@ -1,33 +1,20 @@
 /**
- * PASSAI CAREER — 料金・プラン確認ページ（server component）= 新規ユーザー導線の 1 枚目。
+ * PASSAI CAREER — ご契約状態の確認 / 契約管理ページ（server component）。
  *
- * LP の「始める」→ /career/start（状態解決）→ **このページ**。
- * 新規ユーザーはまずここで金額とプラン内容を確認し、「このプランで始める」から
- * メールアドレス登録 → Stripe Checkout へ進む。
+ * ★ 役割分離（重要）:
+ *     /career/pricing  … 買う **前**。新規獲得用の公開 Pricing（¥3,000 / 月・「決済する」）。
+ *     /career/billing  … 買った **後**。既存ユーザーが自分の契約状態を確認し、
+ *                        マイページの「契約を管理」（Stripe Customer Portal）へ進む場所。
+ *   受験版でいう「LP/#pricing・/pricing（購入前）」と「マイページの契約カード（購入後）」の
+ *   分離に相当する。新規ユーザー獲得導線をこのページへ着地させないこと
+ *   （未契約者に「現在お申し込みを受け付けているプランはありません」を見せてしまう）。
  *
- * ── なぜ「料金表をコードに書いていない」のか ──────────────────────────────
+ * ★ 契約状態の正本は server の entitlement resolver だけ（AGENTS §17）。
+ *   Stripe → signed webhook → career_subscriptions → resolveCareerEntitlement の連鎖以外を
+ *   根拠にしない。ここに書き込み処理は無い。
  *
- *   CAREER の課金仕様は Stripe を **単一の正本**として読む:
- *     金額 / 通貨 / 請求間隔 → Stripe Price（STRIPE_CAREER_PRICE_ID）
- *     商品名 / 提供内容の説明 → Stripe Product（運用者が Dashboard で記述）
- *   client 側 hard-code を billing の権威にしない。Price env が未設定・取得失敗なら
- *   申し込み導線ごと出さない（fail-closed。「とりあえず売る」は起こらない）。
- *
- *   下の「利用できる主要機能」は **価格でも feature matrix でもない**。単一の有料プランで
- *   到達できる既存ページ（app/career/home の FEATURES と同一）の名前を並べているだけで、
- *   金額・提供条件は一切主張しない。flag で既定 OFF の機能（企業マッチング / GD）は
- *   出さない（存在しない機能を売らない）。
- *
- * ★ CAREER は **単一の有料プラン**。プラン比較・upgrade/downgrade の UI は持たない。
- *
- * ── 認証・契約との関係 ──────────────────────────────────────────────────
- *   本ページ自体はログイン不要で閲覧できる（価格を見るのにログインは要らない）。
- *     - guest が申し込むと CareerCheckoutButton が /career/register へ送り、
- *       認証後 `?checkout=1` で戻って checkout を再開する。
- *     - **既に有効な契約があるユーザーには申し込み CTA を出さない**（二重契約の防止）。
- *       契約の有無は server の entitlement resolver だけを根拠にする（AGENTS §17）。
- *       CTA を出さないのは UI 上の一次防御で、最終防御は checkout API の 409
- *       ALREADY_SUBSCRIBED（client を信用しない server 側判定）。
+ * ★ Stripe Price / Product が読めない場合はご契約内容を偽らず「表示できない」と出す。
+ *   このページでの fail-closed は正しい（購入前 UI ではないので、商品説明を作らない）。
  */
 
 import Link from 'next/link';
@@ -35,7 +22,6 @@ import Link from 'next/link';
 import { AlertBox } from '@/components/ui/AlertBox';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { CareerCheckoutButton } from '@/app/career/components/CareerCheckoutButton';
 import {
   getCareerPlanOffer,
   isCareerBillingConfigured,
@@ -49,18 +35,6 @@ import { resolveCareerAccessState } from '@/lib/careerRouting/serverState';
 
 // Stripe / server session から実データを読むため、静的化・キャッシュを一切しない。
 export const dynamic = 'force-dynamic';
-
-// 単一の有料プランで使える既存機能（app/career/home の FEATURES と一致させる）。
-// flag 既定 OFF の企業マッチング / GD は含めない。
-const PLAN_FEATURES = [
-  '活動整理',
-  '自己分析',
-  '就活軸整理',
-  '企業研究',
-  'ES作成',
-  '面接練習',
-  'プレゼン対策',
-] as const;
 
 function formatAmount(offer: CareerPlanOffer): string | null {
   if (offer.unitAmount == null) return null;
@@ -94,20 +68,6 @@ function formatInterval(offer: CareerPlanOffer): string | null {
 }
 
 export default async function CareerBillingPage() {
-  // env 未設定なら Stripe を呼ばずに終了（getStripeClient は throw し得る）。
-  let offer: CareerPlanOffer | null = null;
-  let loadFailed = false;
-  if (isCareerBillingConfigured()) {
-    try {
-      offer = await getCareerPlanOffer();
-    } catch {
-      // Stripe 障害 / key 不正。価格を偽らず「一時的に表示できない」を出す。
-      loadFailed = true;
-    }
-  }
-  const amount = offer ? formatAmount(offer) : null;
-  const interval = offer ? formatInterval(offer) : null;
-
   // 契約状態（server 権威）。guest / 判定不能はいずれも「契約なし」として扱う。
   const access = await resolveCareerAccessState();
   const subscribed = access.kind === 'paid';
@@ -115,11 +75,25 @@ export default async function CareerBillingPage() {
   const subscriberNext = resolveCareerStartDestination(access);
   const subscriberNextIsHome = subscriberNext === CAREER_ROUTES.home;
 
+  // 契約中のときだけ Stripe から契約内容を引く（未契約者に商品説明を出す場所ではない）。
+  let offer: CareerPlanOffer | null = null;
+  let loadFailed = false;
+  if (subscribed && isCareerBillingConfigured()) {
+    try {
+      offer = await getCareerPlanOffer();
+    } catch {
+      // Stripe 障害 / key 不正。契約内容を偽らず「一時的に表示できない」を出す。
+      loadFailed = true;
+    }
+  }
+  const amount = offer ? formatAmount(offer) : null;
+  const interval = offer ? formatInterval(offer) : null;
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
       <PageHeader
-        title="プラン"
-        description="ご契約内容の確認とお申し込みができます。"
+        title="ご契約"
+        description="現在のご契約状態を確認できます。"
         right={
           <Link
             href="/career/mypage"
@@ -130,89 +104,79 @@ export default async function CareerBillingPage() {
         }
       />
 
-      {loadFailed && (
-        <AlertBox variant="error" className="mb-6">
-          プラン情報を取得できませんでした。時間をおいて再度お試しください。
-        </AlertBox>
-      )}
+      {subscribed ? (
+        <>
+          <AlertBox variant="success" className="mb-6">
+            ご契約は有効です。
+          </AlertBox>
 
-      {!loadFailed && !offer && (
-        <AlertBox variant="info" className="mb-6">
-          現在お申し込みを受け付けているプランはありません。
-        </AlertBox>
-      )}
-
-      {subscribed && (
-        <AlertBox variant="success" className="mb-6">
-          このプランをご利用中です。追加のお申し込みは必要ありません。
-        </AlertBox>
-      )}
-
-      {offer && (
-        <Card padding="md" className="flex flex-col max-w-md">
-          <div className="flex items-start justify-between gap-3">
+          <Card padding="md" className="flex flex-col max-w-md">
             <h2 className="text-xl font-bold text-slate-900">
               {/* 商品名は Stripe Product が正本。未設定なら既定ラベルで代替。 */}
-              {offer.productName ?? offer.label}
+              {offer?.productName ?? offer?.label ?? 'PASSAI CAREER'}
             </h2>
-            {subscribed && (
-              <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                利用中
-              </span>
-            )}
-          </div>
 
-          {amount && (
-            <p className="mt-3 text-2xl font-bold text-slate-900">
-              {amount}
-              {interval && (
-                <span className="ml-1 text-sm font-medium text-slate-500">
-                  {interval}
-                </span>
-              )}
-            </p>
-          )}
-
-          {offer.productDescription && (
-            <p className="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-line">
-              {offer.productDescription}
-            </p>
-          )}
-
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-slate-800">利用できる主要機能</p>
-            <ul className="mt-2 space-y-1.5">
-              {PLAN_FEATURES.map((feature) => (
-                <li key={feature} className="flex items-start gap-2 text-sm text-slate-700">
-                  <span aria-hidden="true" className="mt-0.5 text-brand-600">
-                    ✓
+            {amount && (
+              <p className="mt-3 text-2xl font-bold text-slate-900">
+                {amount}
+                {interval && (
+                  <span className="ml-1 text-sm font-medium text-slate-500">
+                    {interval}
                   </span>
-                  <span>{feature}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+                )}
+              </p>
+            )}
 
-          <div className="mt-6">
-            {subscribed ? (
-              // 既契約者に申し込み CTA を出さない（二重 Subscription の防止）。
+            {loadFailed && (
+              <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+                ご契約内容を取得できませんでした。時間をおいて再度お試しください。
+              </p>
+            )}
+
+            <div className="mt-6 flex flex-col gap-3">
               <Link
                 href={subscriberNext}
                 className="inline-flex w-full justify-center items-center rounded-xl bg-brand-600 px-6 py-3 text-sm sm:text-base font-bold text-white shadow-sm hover:bg-brand-700 transition-colors"
               >
                 {subscriberNextIsHome ? 'PASSAI CAREER を使う →' : '基本情報を入力する →'}
               </Link>
-            ) : (
-              <CareerCheckoutButton label="このプランで始める" highlight />
-            )}
-          </div>
-        </Card>
+              <Link
+                href="/career/mypage"
+                className="inline-flex w-full justify-center items-center rounded-xl border border-slate-300 px-6 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                契約を管理する
+              </Link>
+            </div>
+          </Card>
+        </>
+      ) : (
+        <>
+          <AlertBox variant="info" className="mb-6">
+            現在ご契約はありません。
+          </AlertBox>
+
+          <Card padding="md" className="max-w-md">
+            <p className="text-sm text-slate-600 leading-relaxed">
+              PASSAI CAREER のすべての機能は、ご契約後にご利用いただけます。
+              料金とご利用いただける機能は料金プランのページでご確認ください。
+            </p>
+            <div className="mt-5">
+              {/* 購入導線は公開 Pricing に一本化する（このページには置かない）。 */}
+              <Link
+                href={CAREER_ROUTES.pricing}
+                className="inline-flex w-full justify-center items-center rounded-xl bg-brand-600 px-6 py-3 text-sm sm:text-base font-bold text-white shadow-sm hover:bg-brand-700 transition-colors"
+              >
+                料金プランを見る →
+              </Link>
+            </div>
+          </Card>
+        </>
       )}
 
       <p className="mt-8 text-xs text-slate-500 leading-relaxed">
         お支払いは Stripe を通じて処理されます。カード情報が PASSAI CAREER
         のサーバに保存されることはありません。解約・お支払い方法の変更・領収書の取得は、
-        ご契約後にマイページの「契約を管理」から行えます。
+        マイページの「契約を管理」から行えます。
       </p>
     </div>
   );

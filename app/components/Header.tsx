@@ -59,7 +59,18 @@ export function Header() {
     pathname === '/login' ||
     pathname === CAREER_ROUTES.login ||
     pathname === CAREER_ROUTES.register;
-  const isPricingPage = pathname === '/pricing' || pathname === CAREER_ROUTES.pricing;
+  // 受験版 /pricing と、CAREER の購入フロー配下（契約確認 /career/billing と
+  // Checkout の success / cancel 着地）。いずれも Home / 基本情報 のナビを出さない
+  // ——これらは契約済み限定の server guard 付きページなので、購入前・購入直後の
+  // ユーザーには「押しても料金ページに戻るだけ」の空リンクになるため。
+  const isPricingPage =
+    pathname === '/pricing' ||
+    pathname === CAREER_ROUTES.billing ||
+    pathname.startsWith(CAREER_ROUTES.billing + '/');
+  // 公開 Pricing（新規獲得ページ）は「ロゴ + ログイン」だけにする。
+  // 新規 guest に「マイページ」「Home」「基本情報」などの会員向け導線を見せない一方、
+  // 既にアカウントを持つ人がここに来たときの復帰口としてログインだけは残す。
+  const isCareerPricingPage = pathname === CAREER_ROUTES.pricing;
   // 公開の法務 / 事業者情報ページ。受験版・就活版どちらの footer からも到達するため、
   // 片方のアプリのナビ（Home / 基本情報）を出さない。
   //   ※ ここを出していると、就活版 LP → footer → /terms → 「Home」→ /home →
@@ -129,6 +140,15 @@ export function Header() {
               </Link>
             </div>
           </>
+        ) : isCareerPricingPage ? (
+          <div className="ml-auto flex items-center gap-2">
+            <Link
+              href={CAREER_ROUTES.login}
+              className="px-2.5 sm:px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-700 hover:text-brand-600 hover:bg-gray-100 transition-colors whitespace-nowrap"
+            >
+              ログイン
+            </Link>
+          </div>
         ) : isLogoOnly ? null : (
           <nav className="flex items-center gap-1">
             {navItems.map((item) => (

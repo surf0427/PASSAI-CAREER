@@ -550,9 +550,19 @@ console.log('[7] client bundle safety (no secrets, no server-only imports)');
     /CAREER_ROUTES\.register/.test(btn) && !/'\/career\/login'/.test(btn),
     '未ログインの申し込みは登録画面（canonical 定数）へ送る',
   );
+  // 戻り先（購入 intent）は allowlist の 2 値だけから組み立てる。
+  // 呼び出し側は 'pricing' | 'billing' を選ぶだけで任意 path を渡せない。
   check(
-    /const next = `\/career\/billing\?\$\{CHECKOUT_RESUME_PARAM\}=1`/.test(btn),
-    '戻り先はリテラル構築（外部 URL が入り込む経路が無い）',
+    /const RESUME_PATHS: Record<CareerCheckoutResumeOn, string> = \{/.test(btn),
+    '戻り先は allowlist テーブルから組む（外部 URL が入り込む経路が無い）',
+  );
+  check(
+    /const next = `\$\{resumePath\}\?\$\{CHECKOUT_RESUME_PARAM\}=1`/.test(btn),
+    '戻り先はリテラル構築（allowlist 値 + 固定 query）',
+  );
+  check(
+    /pricing: CAREER_ROUTES\.pricing/.test(btn) && /billing: CAREER_ROUTES\.billing/.test(btn),
+    'allowlist は canonical 定数のみ（literal 直書きなし）',
   );
 }
 console.log('');

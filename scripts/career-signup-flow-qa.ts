@@ -42,6 +42,18 @@ const check = (ok: boolean, name: string) => {
 };
 
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
+/** dir 配下の .ts/.tsx を再帰収集する（複数ブロックで使う）。 */
+const walkTs = (dir: string): string[] => {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.next') continue;
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) out.push(...walkTs(p));
+    else if (/\.(ts|tsx)$/.test(entry)) out.push(p);
+  }
+  return out;
+};
 /** 行コメント / ブロックコメントを除いた実コードだけを検査対象にする。 */
 const codeOf = (src: string) =>
   src
@@ -65,9 +77,18 @@ console.log('[1] state resolver（優先順位: 未認証 → 未契約 → 基�
   const PAID_DONE: CareerAccessState = { kind: 'paid', basicInfoComplete: true };
 
   // 「始める」/ ログイン直後の着地。
-  check(resolveCareerStartDestination(GUEST) === CAREER_ROUTES.pricing, '未認証 → 料金');
-  check(resolveCareerStartDestination(UNPAID) === CAREER_ROUTES.pricing, '未契約 → 料金');
-  check(resolveCareerStartDestination(UNAVAILABLE) === CAREER_ROUTES.pricing, '判定不能 → 料金（fail-closed）');
+  check(resolveCareerStartDestination(GUEST) === CAREER_ROUTES.pricing, '未認証 → 公開 Pricing');
+  check(resolveCareerStartDestination(UNPAID) === CAREER_ROUTES.pricing, '未契約 → 公開 Pricing');
+  check(resolveCareerStartDestination(UNAVAILABLE) === CAREER_ROUTES.pricing, '判定不能 → 公開 Pricing（fail-closed）');
+  // ★ 受験版が「未課金は必ず /pricing」なのと同じ。契約管理ページへは送らない。
+  check(CAREER_ROUTES.pricing === '/career/pricing', 'Pricing は /career/pricing');
+  check(CAREER_ROUTES.billing === '/career/billing', 'Billing 管理は /career/billing（別 route）');
+  for (const state of [GUEST, UNPAID, UNAVAILABLE]) {
+    check(
+      resolveCareerStartDestination(state) !== CAREER_ROUTES.billing,
+      `${state.kind} を契約管理ページへ送らない`,
+    );
+  }
   check(resolveCareerStartDestination(PAID_NEW) === CAREER_ROUTES.basicInfo, '契約あり + 基本情報未完 → 基本情報');
   check(resolveCareerStartDestination(PAID_DONE) === CAREER_ROUTES.home, '契約あり + 基本情報完了 → Home');
   // 新規ユーザーをいきなりログイン画面へ送らない（料金が先）。
@@ -82,10 +103,10 @@ console.log('[1] state resolver（優先順位: 未認証 → 未契約 → 基�
       `${CAREER_ROUTES.login}?redirect=${encodeURIComponent(CAREER_ROUTES.basicInfo)}`,
     'guard: 未認証 → login（戻り先を encodeURIComponent 済みで引き継ぐ）',
   );
-  check(resolveCareerGuardRedirect(UNPAID, CAREER_ROUTES.basicInfo) === CAREER_ROUTES.pricing, 'guard: 未契約 → 料金');
+  check(resolveCareerGuardRedirect(UNPAID, CAREER_ROUTES.basicInfo) === CAREER_ROUTES.pricing, 'guard: 未契約 → Pricing');
   check(
     resolveCareerGuardRedirect(UNAVAILABLE, CAREER_ROUTES.basicInfo) === CAREER_ROUTES.pricing,
-    'guard: 判定不能 → 料金（fail-closed。通さない）',
+    'guard: 判定不能 → Pricing（fail-closed。通さない）',
   );
   check(resolveCareerGuardRedirect(PAID_NEW, CAREER_ROUTES.basicInfo) === null, 'guard: 契約あり → 基本情報を許可');
   check(resolveCareerGuardRedirect(PAID_DONE, CAREER_ROUTES.home) === null, 'guard: 契約あり → Home を許可');
@@ -127,7 +148,8 @@ console.log('[2] 「始める」= 新規獲得 / 「ログイン」= 既存復�
   const startPath: string = CAREER_START_PATH;
   const loginPath: string = CAREER_LOGIN_PATH;
   check(startPath !== loginPath, 'LP の 2 ボタンが同じ画面へ飛ばない');
-  check(CAREER_START_PATH === CAREER_ROUTES.start, '「始める」は状態解決 dispatcher');
+  check(CAREER_START_PATH === CAREER_ROUTES.pricing, '「始める」は公開 Pricing（新規獲得）');
+  check(startPath !== CAREER_ROUTES.billing, '「始める」は契約管理ページではない');
   check(CAREER_LOGIN_PATH === CAREER_ROUTES.login, '「ログイン」は既存ログイン画面');
   check(DEFAULT_CAREER_REDIRECT === CAREER_ROUTES.start, 'ログイン既定着地も dispatcher（状態で分岐）');
 
@@ -136,10 +158,12 @@ console.log('[2] 「始める」= 新規獲得 / 「ログイン」= 既存復�
     check(sanitizeCareerRedirect(p) === DEFAULT_CAREER_REDIRECT, `${p} は redirect 先にならない`);
   }
   // 新規導線で使う戻り先は素通しされる（checkout 自動再開）。
-  check(
-    sanitizeCareerRedirect('/career/billing?checkout=1') === '/career/billing?checkout=1',
-    'checkout 再開の戻り先は CAREER 相対 path として通る',
-  );
+  for (const resume of ['/career/pricing?checkout=1', '/career/billing?checkout=1']) {
+    check(
+      sanitizeCareerRedirect(resume) === resume,
+      `checkout 再開の戻り先 ${resume} は CAREER 相対 path として通る`,
+    );
+  }
   // 外部 URL は構造上入り込めない。
   check(
     sanitizeCareerRedirect('https://evil.example/career/billing') === DEFAULT_CAREER_REDIRECT,
@@ -160,23 +184,69 @@ console.log('');
 // ═══════════════════════════════════════════════════════════════
 // [3] 料金画面（Stripe が価格の正本 / fail-closed）
 // ═══════════════════════════════════════════════════════════════
-console.log('[3] pricing page: Stripe が価格の正本・失敗時は売らない');
+console.log('[3] 公開 Pricing（買う前）と契約管理（買った後）の分離');
 {
-  const src = codeOf(read('app/career/billing/page.tsx'));
-  check(/getCareerPlanOffer\(\)/.test(src), '金額は Stripe Price から取得する');
-  check(/isCareerBillingConfigured\(\)/.test(src), 'Price env 未設定なら Stripe を呼ばない（fail-closed）');
-  // 価格を実装側で創作しない（金額リテラルを持たない）。
-  check(!/[¥￥]\s*\d/.test(src) && !/\b3000\b|\b3,000\b/.test(src), '金額の hard-code が無い');
-  check(!/STRIPE_CAREER_PRICE_ID|price_[A-Za-z0-9]/.test(src), 'Price ID を client 描画側に持たない');
-  // offer が取れない場合、CTA そのものが描画されない構造であること。
-  check(/\{offer &&/.test(src), 'offer が無ければプランカード（CTA 含む）ごと描画しない');
-  check(/このプランで始める/.test(src), 'CTA 文言「このプランで始める」');
-  check(/利用できる主要機能/.test(src), '主要機能の提示がある');
+  const pricing = codeOf(read('app/career/pricing/page.tsx'));
+  const display = codeOf(read('app/career/pricing/pricingDisplay.ts'));
 
-  // 既契約者に申し込み CTA を出さない（二重 Subscription 防止の一次防御）。
-  check(/resolveCareerAccessState\(\)/.test(src), '契約状態を server resolver で判定する');
-  check(/subscribed \?/.test(src), '契約中は申し込み CTA を出さず別導線にする');
-  check(/利用中/.test(src), '契約中は「利用中」を表示する');
+  // --- 新規ユーザーに必ず見せるもの（受験版 /pricing と同じ「購入前 UI」）---
+  check(/料金プラン/.test(pricing), 'Pricing に見出し「料金プラン」がある');
+  check(/CAREER_PRICING_PRODUCT_NAME/.test(pricing), '商品名を表示する');
+  check(display.includes('PASSAI CAREER'), '商品名は PASSAI CAREER');
+  check(display.includes("'¥3,000'"), '表示価格 ¥3,000 の定数がある');
+  check(display.includes("'/ 月'"), '請求間隔「/ 月」の定数がある');
+  check(/決済する/.test(pricing), 'CTA 文言は「決済する」');
+  check(!/このプランで始める/.test(pricing), '旧 CTA 文言が残っていない');
+  for (const feature of ['自己分析', '企業分析', 'ES', '面接', 'プレゼン', 'GD', '企業マッチング']) {
+    check(display.includes(`'${feature}'`), `主要機能「${feature}」を表示する`);
+  }
+
+  // --- Pricing に出してはいけないもの（契約者向け UI）---
+  check(!/マイページ/.test(pricing), 'Pricing に「マイページ」を出さない');
+  // 契約者向けの「操作 UI / 導線」を出さないことを見る。
+  // （「いつでも解約できます」のような購入前の安心材料は文言であって管理 UI ではない）
+  check(
+    !/契約を管理|請求履歴|お支払い方法の変更|career\/mypage/.test(pricing),
+    'Pricing に契約管理 UI（Portal / 請求履歴 / マイページ導線）を出さない',
+  );
+  check(
+    !/お申し込みを受け付けているプランはありません/.test(pricing),
+    'Pricing に「お申し込みを受け付けているプランはありません」を出さない',
+  );
+
+  // --- Stripe env が無い環境でも Pricing UI を消さない（受験版と同じ挙動）---
+  //   Stripe から読めればその実値、読めなければ表示用定数へフォールバックする構造。
+  check(
+    /CAREER_PRICING_DISPLAY_AMOUNT/.test(pricing) && /\?\?/.test(pricing),
+    'Stripe Price が読めないときは表示用定数にフォールバックする',
+  );
+  check(
+    !/\{offer &&/.test(pricing),
+    'offer の有無で Pricing カードごと消す構造になっていない',
+  );
+
+  // --- 表示 ≠ 課金権威 ---
+  //   表示用定数が server billing / checkout から参照されていないこと。
+  const billingLibFiles = walkTs(join(ROOT, 'lib/careerBilling'));
+  const checkoutRouteSrc = read('app/api/career/billing/checkout/route.ts');
+  const displayImporters = [...billingLibFiles.map((f) => readFileSync(f, 'utf8')), checkoutRouteSrc]
+    .filter((src) => /pricingDisplay|CAREER_PRICING_DISPLAY_AMOUNT/.test(src));
+  check(displayImporters.length === 0, '表示用の価格定数が課金 server 側から参照されていない');
+  check(
+    !/[¥￥]\s*\d|\b3000\b/.test(codeOf(checkoutRouteSrc)),
+    'checkout route に金額の hard-code が無い（Stripe Price が唯一の権威）',
+  );
+
+  // --- 契約中ユーザー（二重 Subscription の一次防御）---
+  check(/resolveCareerAccessState\(\)/.test(pricing), 'Pricing は契約状態を server resolver で判定する');
+  check(/subscribed \?/.test(pricing), '契約中は購入 CTA を出さず別導線にする');
+  check(/すでにご利用中です/.test(pricing), '契約中は「すでにご利用中です」を表示する');
+
+  // --- /career/billing は契約管理に徹する（購入 CTA を持たない）---
+  const billing = codeOf(read('app/career/billing/page.tsx'));
+  check(!/CareerCheckoutButton/.test(billing), '契約管理ページに購入 CTA を置かない');
+  check(/CAREER_ROUTES\.pricing/.test(billing), '未契約者は公開 Pricing へ案内する');
+  check(/契約を管理する/.test(billing), '契約管理ページは Portal 導線を持つ');
 }
 console.log('');
 
@@ -334,6 +404,147 @@ console.log('[7] 重複作成が無い（料金 / checkout / 基本情報 / prof
   // profile の保存先は既存 Data Spine のまま（新しい table を作らない）。
   const spine = read('lib/careerSourceData/types.ts');
   check(/profile: 'career_profiles'/.test(spine), '基本情報の mirror は既存 career_profiles のまま');
+}
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+// [8] PASSAI 受験版（Project A）との architecture parity
+// ═══════════════════════════════════════════════════════════════
+//
+// CAREER のログイン・課金導線は独自発明ではなく、既に本番運用されている受験版の
+// 成功パターンを移植したものである。ここでは **両者が同じ構造を保っていること**と、
+// **CAREER が Project A へ依存していないこと**の両方を固定する。
+//   ★ 受験版のファイルは読み取り専用の参照。QA から書き換えない。
+console.log('[8] 受験版（Project A）との parity と境界');
+{
+  const EXAM = {
+    pricingPage: 'app/pricing/page.tsx',
+    pricingSection: 'app/components/landing/PricingSection.tsx',
+    pricingCta: 'app/components/landing/PricingCheckoutButton.tsx',
+    login: 'app/login/page.tsx',
+    checkout: 'app/api/billing/checkout/route.ts',
+    webhook: 'app/api/billing/webhook/route.ts',
+    success: 'app/billing/success/page.tsx',
+  };
+  for (const [label, rel] of Object.entries(EXAM)) {
+    check(existsSync(join(ROOT, rel)), `受験版 ${label} を参照できる（${rel}）`);
+  }
+
+  const examPricing = codeOf(read(EXAM.pricingSection));
+  const examCta = codeOf(read(EXAM.pricingCta));
+  const examLogin = codeOf(read(EXAM.login));
+  const examCheckout = codeOf(read(EXAM.checkout));
+  const careerPricing = codeOf(read('app/career/pricing/page.tsx'));
+  const careerCta = codeOf(read('app/career/components/CareerCheckoutButton.tsx'));
+  const careerCheckout = codeOf(read('app/api/career/billing/checkout/route.ts'));
+  const careerSuccess = codeOf(read('app/career/billing/success/page.tsx'));
+
+  // (a) 購入前 UI は Stripe 設定に依存せず必ず描画される（受験版は pure constant を描画）。
+  check(
+    !/isCareerBillingConfigured\(\) \?/.test(careerPricing) && /CAREER_PRICING_DISPLAY_AMOUNT/.test(careerPricing),
+    'parity: 購入前 UI は Stripe 設定の有無で消えない（受験版 PricingSection と同じ）',
+  );
+  check(
+    !/process\.env/.test(examPricing) && !/process\.env/.test(careerPricing),
+    'parity: 購入前 UI は client/server とも env を直接読まない',
+  );
+
+  // (b) guest は checkout を叩かず認証へ送り、認証後に **購入 intent** で自動再開する。
+  check(/router\.push\(`\/login\?next=/.test(examCta), '受験版: guest は /login?next=… へ');
+  check(/CAREER_ROUTES\.register/.test(careerCta), 'CAREER: guest は /career/register?redirect=… へ');
+  for (const [label, src, marker] of [
+    ['受験版', examCta, "params.get('plan')"],
+    ['CAREER', careerCta, 'CHECKOUT_RESUME_PARAM'],
+  ] as const) {
+    check(src.includes(marker), `parity: ${label} は URL の購入 intent を読んで auto-resume する`);
+  }
+  for (const [label, src] of [['受験版', examCta], ['CAREER', careerCta]] as const) {
+    check(
+      /autoResume/i.test(src),
+      `parity: ${label} は auto-resume を module スコープで 1 回に制限する（連打防止）`,
+    );
+  }
+
+  // (c) 認証後の戻り先は同一 origin の相対 path のみ（open redirect 防止）。
+  check(/function sanitizeNext/.test(examLogin), '受験版: next を sanitize する');
+  check(
+    /sanitizeCareerRedirect/.test(codeOf(read('app/career/components/CareerEmailOtpForm.tsx'))),
+    'CAREER: redirect を sanitize する（namespace を /career に限定）',
+  );
+
+  // (d) Checkout の Price は必ず server 側 env から解決する（client は選べない）。
+  check(/getStripePriceId\(plan\)/.test(examCheckout), '受験版: priceId は server が env から解決');
+  check(/retrieveCareerPrice\(\)/.test(careerCheckout), 'CAREER: priceId は server が env から解決');
+  // 受験版は plan enum だけを受け取る。CAREER は単一プランなので body 自体を読まない（より厳格）。
+  check(/isPlanId\(planRaw\)/.test(examCheckout), '受験版: client からは plan enum のみ（price ではない）');
+  check(
+    !/req\.json\(\)/.test(careerCheckout),
+    'CAREER: client からは何も受け取らない（単一プランのため body を読まない＝意図的にさらに厳格）',
+  );
+  for (const [label, src] of [['受験版', examCheckout], ['CAREER', careerCheckout]] as const) {
+    check(
+      /success_url/.test(src) && /cancel_url/.test(src) && /client_reference_id/.test(src),
+      `parity: ${label} checkout は success/cancel/client_reference_id を server 側で組む`,
+    );
+    check(
+      /subscription_data/.test(src) && /metadata/.test(src),
+      `parity: ${label} は webhook が読む metadata を subscription へ載せる`,
+    );
+  }
+
+  // (e) success 到達では権利を与えない。DB 反映を polling してから次画面へ。
+  check(
+    /POLL_INTERVAL_MS/.test(codeOf(read(EXAM.success))) && /POLL_INTERVAL_MS/.test(careerSuccess),
+    'parity: 決済後は webhook 反映を polling してから遷移する',
+  );
+  check(
+    /window\.location\.assign\('\/home'\)/.test(codeOf(read(EXAM.success))),
+    '受験版: 反映確認後に /home へ（未入力なら /input/basic へ既存 guard が送る）',
+  );
+  check(
+    /router\.replace\(nextPath\)/.test(careerSuccess),
+    'CAREER: 反映確認後に基本情報 / Home へ（同じ「決済 → 初期入力 → Home」構造）',
+  );
+
+  // (f) webhook は署名検証を経てから DB を触る。
+  for (const [label, rel] of [['受験版', EXAM.webhook], ['CAREER', 'app/api/career/billing/webhook/route.ts']] as const) {
+    const src = codeOf(read(rel));
+    check(/constructEvent\(/.test(src), `parity: ${label} webhook は署名検証する`);
+    check(/stripe-signature/.test(src), `parity: ${label} webhook は署名ヘッダを要求する`);
+  }
+
+  // (g) ★ Project 境界。受験版を参考にしても Project A へは触らない。
+  const careerFlowFiles = [
+    'app/career/pricing/page.tsx',
+    'app/career/pricing/pricingDisplay.ts',
+    'app/career/billing/page.tsx',
+    'app/career/components/CareerCheckoutButton.tsx',
+    'app/career/components/CareerEmailOtpForm.tsx',
+    'app/career/start/page.tsx',
+    'lib/careerRouting/destination.ts',
+    'lib/careerRouting/serverState.ts',
+  ];
+  const FORBIDDEN_A = [
+    'lib/billing/plans',
+    'lib/stripe/server',
+    'lib/supabase/browserClient',
+    'lib/supabase/serverClient',
+    'app/components/AuthProvider',
+    'components/landing/PricingSection',
+    'STRIPE_PRICE_ID_BASIC',
+    'STRIPE_PRICE_ID_PREMIUM',
+    'subscriptions',
+  ];
+  for (const rel of careerFlowFiles) {
+    const src = codeOf(read(rel));
+    const hits = FORBIDDEN_A.filter((m) => src.includes(m));
+    check(hits.length === 0, `境界: ${rel} が Project A 資産を参照しない${hits.length ? ' — ' + hits.join(', ') : ''}`);
+  }
+  // 受験版の Price / Product / secret を CAREER 側へ持ち込んでいない。
+  check(
+    !/price_[A-Za-z0-9]/.test(codeOf(read('app/career/pricing/pricingDisplay.ts'))),
+    '境界: 表示用コピーに Stripe ID を書いていない',
+  );
 }
 console.log('');
 

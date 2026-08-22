@@ -26,15 +26,15 @@ export const CAREER_LOGIN_PATH = CAREER_ROUTES.login;
 /**
  * 開始系 CTA（「始める」「PASSAI CAREERを始める」）の遷移先。
  *
- * ★ 新規ユーザー獲得導線の入口。**いきなりログイン画面にも基本情報入力にも送らない**。
+ * ★ 新規ユーザー獲得導線の入口 = **公開 Pricing**（/career/pricing）。
+ *   受験版が LP の #pricing / `/pricing` で「まず料金を見せてから購入」に統一している
+ *   のと同じ思想。契約管理ページ（/career/billing）へは絶対に着地させない
+ *   （新規ユーザーに「現在お申し込みを受け付けているプランはありません」を見せない）。
  *
- * 実体は状態解決 dispatcher（app/career/start/page.tsx）で、server session と
- * Project B の実データだけを見て次の場所へ redirect する:
- *   - 未ログイン / 未契約 / 判定不能 → /career/billing（まず料金・プランを見せる）
- *   - 契約あり + 基本情報 未完了     → /career/profile
- *   - 契約あり + 基本情報 完了       → /career/home
- * これにより「ログイン済みユーザーが 始める を押して再登録を求められる」ことが起きない。
+ * ★ ログイン済みユーザーが押した場合も Pricing で状態を提示する（契約中なら
+ *   「すでにご利用中です」＋次の一歩）。再登録・再決済を要求しない。
+ *   ログイン直後の宛先解決は別途 dispatcher（CAREER_ROUTES.start）が担当する。
  *
  * 判定ロジックの本体は lib/careerRouting/destination.ts（純関数・単一の出所）。
  */
-export const CAREER_START_PATH = CAREER_ROUTES.start;
+export const CAREER_START_PATH = CAREER_ROUTES.pricing;

@@ -12,8 +12,9 @@
  *      料金を見た人がここで押す = まだアカウントが無い前提なので、既存ユーザー向けの
  *      ログイン画面ではなく「メールアドレスを登録」へ送る（既にアカウントがある人は
  *      登録画面からログインへ渡るリンクがある。認証基盤は同じ email OTP で 1 つだけ）。
- *      戻り先は `/career/billing?checkout=1`（sanitizeCareerRedirect が許可する
- *      CAREER 名前空間内の相対 path。外部 URL は構造上入り込めない）。
+ *      戻り先（購入 intent）は **allowlist の 2 値だけ**（RESUME_PATHS）。呼び出し側は
+ *      `resumeOn` で 'pricing' | 'billing' を選ぶだけで、任意の文字列を渡せない。
+ *      外部 URL・ユーザー入力が redirect に入り込む経路が構造上存在しない。
  *   2. member → POST /api/career/billing/checkout → 200 { url } で Stripe へ遷移。
  *   3. ログイン後に `?checkout=1` を付けて戻ってきたら checkout を 1 回だけ自動再開する
  *      （module スコープのガードで soft-nav の再マウントをまたぐ）。
@@ -30,8 +31,16 @@ import { useRouter } from 'next/navigation';
 import { useCareerAuth } from '@/app/career/components/CareerAuthProvider';
 import { CAREER_ROUTES } from '@/lib/careerRouting/destination';
 
+/**
+ * 認証を挟んだときに戻ってくるページ（購入 intent の保持先）。
+ * ★ allowlist。呼び出し側は任意 path を渡せない（open redirect の構造的封じ込め）。
+ */
+export type CareerCheckoutResumeOn = 'pricing' | 'billing';
+
 type Props = {
   label: string;
+  /** 既定は契約管理ページ（従来の呼び出し互換）。公開 Pricing からは 'pricing'。 */
+  resumeOn?: CareerCheckoutResumeOn;
   highlight?: boolean;
 };
 
@@ -40,12 +49,23 @@ type CheckoutResponse = { url?: string; error?: string; detail?: string };
 /** 認証後の checkout 自動再開を示す query key（値は '1' 固定）。 */
 const CHECKOUT_RESUME_PARAM = 'checkout';
 
+/**
+ * 購入 intent の戻り先 allowlist（canonical 定数からのみ組む）。
+ * 受験版が `next=/pricing?plan=<plan>` を組み立てているのと同じ思想だが、
+ * CAREER は plan を持たないので「戻り先ページ」だけを 2 値で固定する。
+ */
+const RESUME_PATHS: Record<CareerCheckoutResumeOn, string> = {
+  pricing: CAREER_ROUTES.pricing,
+  billing: CAREER_ROUTES.billing,
+};
+
 // checkout の auto-resume を 1 回に制限する module スコープのガード。
 // useRef はマウント単位なので、soft-nav の再マウントで再発火して checkout を
 // 連打してしまう（受験版で実際に起きた事象）。module スコープなら跨いで保持される。
 let autoResumeAttempted = false;
 
-export function CareerCheckoutButton({ label, highlight }: Props) {
+export function CareerCheckoutButton({ label, resumeOn = 'billing', highlight }: Props) {
+  const resumePath = RESUME_PATHS[resumeOn];
   const { status } = useCareerAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -57,16 +77,16 @@ export function CareerCheckoutButton({ label, highlight }: Props) {
   const disabled = loading || status === 'loading';
 
   const redirectToRegister = useCallback(() => {
-    const next = `/career/billing?${CHECKOUT_RESUME_PARAM}=1`;
+    const next = `${resumePath}?${CHECKOUT_RESUME_PARAM}=1`;
     router.push(`${CAREER_ROUTES.register}?redirect=${encodeURIComponent(next)}`);
-  }, [router]);
+  }, [router, resumePath]);
 
   const clearResumeQuery = useCallback(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     if (!params.has(CHECKOUT_RESUME_PARAM)) return;
-    router.replace('/career/billing', { scroll: false });
-  }, [router]);
+    router.replace(resumePath, { scroll: false });
+  }, [router, resumePath]);
 
   const startCheckout = useCallback(async () => {
     setLoading(true);
@@ -139,11 +159,10 @@ export function CareerCheckoutButton({ label, highlight }: Props) {
             : 'bg-brand-600 hover:bg-brand-700 text-white'
         }`}
       >
-        {loading
-          ? '読み込み中…'
-          : status === 'loading'
-            ? 'ログイン状態を確認中…'
-            : label}
+        {/* ラベルは常に本来の CTA 文言を出す（SSR / hydration 前も同じ）。
+            料金ページの第一印象が「ログイン状態を確認中…」になると、購入 CTA が
+            何のボタンか分からなくなるため。auth 未確定の間は disabled で押下を止める。 */}
+        {loading ? '読み込み中…' : label}
       </button>
       {alreadySubscribed && (
         <p className="mt-2 text-xs text-slate-600 leading-relaxed">

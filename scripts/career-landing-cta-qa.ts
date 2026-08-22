@@ -51,7 +51,7 @@ const closingCode = codeOf(CLOSING);
 
 console.log('[1] canonical 定数と CTA の役割分離');
 check(CAREER_LOGIN_PATH === '/career/login', `CAREER_LOGIN_PATH = /career/login（実際: ${CAREER_LOGIN_PATH}）`);
-check(CAREER_START_PATH === '/career/start', `CAREER_START_PATH = /career/start（実際: ${CAREER_START_PATH}）`);
+check(CAREER_START_PATH === '/career/pricing', `CAREER_START_PATH = /career/pricing（実際: ${CAREER_START_PATH}）`);
 // 2 つの CTA は役割が違う（既存復帰 / 新規獲得）。同じ画面へ飛ばさない。
 // literal 型どうしの比較を型レベルで潰さないよう string へ widen して見る。
 const loginHref: string = CAREER_LOGIN_PATH;
@@ -62,6 +62,8 @@ check(
   startHref !== '/career/login' && startHref !== '/career/profile',
   '「始める」がログイン画面 / 基本情報入力へ直行しない',
 );
+// 「始める」を既存ユーザー向けの契約管理ページへ着地させない（新規に不適切な画面）。
+check(startHref !== '/career/billing', '「始める」が契約管理ページ（/career/billing）へ行かない');
 // login CTA は redirect を付けない → 既存 sanitize の既定先（状態解決 dispatcher）が効く。
 check(!CAREER_LOGIN_PATH.includes('?'), 'login CTA に redirect クエリを付けない（canonical 既定先に委ねる）');
 check(
@@ -69,7 +71,7 @@ check(
   'redirect 無しの login 着地は /career/start（状態解決 dispatcher）',
 );
 
-// dispatcher は server で状態を解決し、必ず既存 route へ redirect する（UI を持たない）。
+// ログイン後の着地に使う dispatcher は server で状態を解決し、必ず redirect する（UI を持たない）。
 const START_PAGE = codeOf(read('app/career/start/page.tsx'));
 check(/resolveCareerAccessState\(\)/.test(START_PAGE), '/career/start は server の状態 resolver を使う');
 check(/resolveCareerStartDestination\(/.test(START_PAGE), '/career/start は共通の純関数で遷移先を決める');
@@ -81,12 +83,12 @@ check(
 
 // 未契約 / 未ログインの「始める」は料金画面（既存 /career/billing）に着く。新設していない。
 check(
-  resolveCareerStartDestination({ kind: 'guest' }) === '/career/billing',
-  '未ログインの「始める」→ 料金画面（既存 /career/billing）',
+  resolveCareerStartDestination({ kind: 'guest' }) === '/career/pricing',
+  '未ログインの「始める」→ 公開 Pricing（/career/pricing）',
 );
 check(
-  resolveCareerStartDestination({ kind: 'unpaid' }) === '/career/billing',
-  '未契約の「始める」→ 料金画面',
+  resolveCareerStartDestination({ kind: 'unpaid' }) === '/career/pricing',
+  '未契約 → 公開 Pricing（契約管理ページへ送らない）',
 );
 check(
   resolveCareerStartDestination({ kind: 'paid', basicInfoComplete: false }) === '/career/profile',
@@ -142,7 +144,9 @@ for (const p of [
   CAREER_START_PATH,
   DEFAULT_CAREER_REDIRECT,
   '/career/register',
+  '/career/pricing',
   '/career/billing',
+  '/career/start',
   '/career/profile',
   '/career/home',
 ]) {
