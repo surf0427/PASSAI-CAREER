@@ -305,13 +305,14 @@ console.log('[5] payment security: canonical price は server 決定');
     '未ログインの申し込みは登録画面へ（canonical 定数経由）',
   );
 
-  // E2E 割引ロジックを今回の変更で壊していない（削除禁止領域）。
-  check(/resolveCareerE2eDiscountFromEnv/.test(route), 'E2E discount の適用判定が残っている');
-  check(/checkCareerE2eCoupon/.test(route), 'E2E coupon の検証が残っている');
-  const e2e = codeOf(read('lib/careerBilling/e2eDiscount.ts'));
-  for (const env of ['CAREER_E2E_USER_ID', 'CAREER_E2E_USER_EMAIL', 'CAREER_E2E_COUPON_ID']) {
-    check(e2e.includes(env), `${env} を参照する経路が残っている`);
-  }
+  // LIVE E2E 用の一時割引機構は撤去済み。server が割引を付ける経路は存在しない。
+  // （詳細な不在検査は scripts/career-billing-qa.ts の [11] が担当する）
+  check(!/discounts:/.test(route), 'server が discounts を付ける分岐が無い');
+  check(!/coupon/i.test(route), 'checkout に coupon の概念が無い');
+  check(
+    /allow_promotion_codes: true/.test(route),
+    '一般顧客の Promotion Code は従来どおり（Stripe の通常機能）',
+  );
 }
 console.log('');
 

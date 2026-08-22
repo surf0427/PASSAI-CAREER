@@ -70,12 +70,14 @@ export default function CareerBillingSuccessPage() {
         return true; // 停止（ログインし直しが必要）
       }
       if (!res.ok) return false; // 503 等は一時的とみなして再試行
+      // status API の schema は { paid, subscription: { plan, ... } | null }。
+      // plan は subscription の中にあり、top-level には無い。
       const data = (await res.json().catch(() => ({}))) as {
-        plan?: string;
         paid?: boolean;
+        subscription?: { plan?: string } | null;
       };
       if (data.paid === true) {
-        setPlanLabel(data.plan ?? null);
+        setPlanLabel(data.subscription?.plan ?? null);
         // server が paid と認めた **後** に限り、次の入力ステップを決める。
         setNextPath(
           resolveCareerStartDestination({

@@ -43,6 +43,19 @@ const check = (ok: boolean, name: string) => {
 };
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
 
+/** dir 配下の .ts/.tsx を再帰収集する。 */
+function walkTsFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.next') continue;
+    const p = join(dir, entry);
+    if (statSync(p).isDirectory()) out.push(...walkTsFiles(p));
+    else if (/\.(ts|tsx)$/.test(entry)) out.push(p);
+  }
+  return out;
+}
+
 // コメントを潰して「実コードだけ」を検査する（説明文の語で誤判定しないため）。
 function stripComments(src: string): string {
   return src
@@ -768,6 +781,131 @@ console.log('[10] every cost-bearing CAREER AI route is behind the paid gate');
       `${rel}: 有料ゲートが後段にあることを明記している`,
     );
   }
+}
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+// [11] 通常課金だけが残っている（LIVE E2E 用の一時割引機構は撤去済み）
+// ═══════════════════════════════════════════════════════════════
+//
+// 経緯: LIVE 決済導線を実課金で検証するため、**専用ユーザー 1 名の初回請求だけ**を
+//   Stripe Coupon で引き下げる一時機構（lib/careerBilling/e2eDiscount.ts +
+//   CAREER_E2E_* env）を入れていた。検証完了に伴い撤去済み。
+//   本セクションはそれが**戻ってこないこと**と、撤去で通常課金が壊れていないことを固定する。
+//   ここにあるのは削除された専用 QA から移送した「通常 Production の security 契約」。
+console.log('[11] no server-side discount path (E2E cleanup)');
+{
+  const checkoutSrc = stripComments(read(CHECKOUT));
+  const statusSrc = stripComments(read(STATUS));
+
+  // --- 一時機構そのものが存在しない ---
+  check(
+    !existsSync(join(ROOT, 'lib/careerBilling/e2eDiscount.ts')),
+    'E2E 割引 helper が存在しない',
+  );
+  check(
+    !existsSync(join(ROOT, 'scripts/career-e2e-discount-qa.ts')),
+    'E2E 専用 QA が存在しない',
+  );
+  const pkg = read('package.json');
+  check(!/qa:careerE2eDiscount/.test(pkg), 'package.json に E2E 専用 QA script が無い');
+
+  // --- runtime code から E2E env / helper を一切参照しない ---
+  const E2E_TOKENS = [
+    'CAREER_E2E_USER_ID',
+    'CAREER_E2E_USER_EMAIL',
+    'CAREER_E2E_COUPON_ID',
+    'e2eDiscount',
+    'resolveCareerE2eDiscount',
+    'checkCareerE2eCoupon',
+    'expectedInitialAmount',
+  ];
+  const runtimeFiles = [
+    ...walkTsFiles(join(ROOT, 'app')),
+    ...walkTsFiles(join(ROOT, 'lib')),
+    ...walkTsFiles(join(ROOT, 'components')),
+  ];
+  const leaks: string[] = [];
+  for (const file of runtimeFiles) {
+    const src = readFileSync(file, 'utf8');
+    for (const t of E2E_TOKENS) {
+      if (src.includes(t)) leaks.push(`${relative(ROOT, file)}:${t}`);
+    }
+  }
+  check(
+    leaks.length === 0,
+    `runtime code に E2E 割引の参照が 0（残 ${leaks.length}${leaks.length ? ': ' + leaks.slice(0, 5).join(', ') : ''}）`,
+  );
+
+  // --- checkout: server が割引を付ける経路が無い ---
+  check(!/discounts:/.test(checkoutSrc), 'checkout は discounts を指定しない');
+  check(
+    !/coupons\.retrieve|coupon:/.test(checkoutSrc),
+    'checkout は Coupon を取得・適用しない',
+  );
+  // 金額リテラルの検査。HTTP status（200 / 400 / 503 …）と衝突しないよう、
+  // 通貨記号付きの金額と Stripe の Price/Coupon ID 形式だけを見る。
+  check(
+    !/price_[A-Za-z0-9]{6}/.test(checkoutSrc) && !/[¥￥]\s*\d/.test(checkoutSrc),
+    'checkout に Price ID / 通貨付き金額の hard-code が無い',
+  );
+  // 一般顧客向けの Promotion Code は Stripe の通常機能。E2E cleanup で消さない。
+  check(
+    /allow_promotion_codes: true/.test(checkoutSrc),
+    '一般顧客の Promotion Code 入力は従来どおり有効（E2E とは別機能）',
+  );
+  // 金額は canonical Price だけで決まる。
+  check(
+    /retrieveCareerPrice\(\)/.test(checkoutSrc) &&
+      /line_items: \[\{ price: priceId, quantity: 1 \}\]/.test(checkoutSrc),
+    'line_items は server 解決の canonical Price 1 本だけ',
+  );
+
+  // --- client 入力を一切受け取らない（削除した E2E QA [4] から移送）---
+  check(
+    !/req\.json\(\)|await req\.text\(\)/.test(checkoutSrc),
+    'checkout は body を読まない（coupon / price / plan / amount を client から受け取れない）',
+  );
+  for (const forbidden of [
+    'coupon',
+    'couponId',
+    'discount',
+    'price',
+    'priceId',
+    'plan',
+    'amount',
+    'currency',
+  ]) {
+    check(
+      !new RegExp(`body[^\\n]*\\b${forbidden}\\b`, 'i').test(checkoutSrc),
+      `checkout は body.${forbidden} を参照しない`,
+    );
+  }
+
+  // --- status: 診断フィールドを返さない（通常 schema へ戻っている）---
+  check(!/e2eDiscount/.test(statusSrc), 'status に E2E 診断フィールドが無い');
+  check(
+    /paid: entitlement\.paid/.test(statusSrc) && /subscription: latest/.test(statusSrc),
+    'status は通常フィールド（paid / subscription）を返す',
+  );
+  check(
+    !/couponId|amountOff|CAREER_E2E/.test(statusSrc),
+    'status に coupon / 金額 / E2E identity を出さない',
+  );
+
+  // --- observability: 使わなくなった operation を残さない ---
+  const logSrc = stripComments(read('lib/careerBilling/stripeLog.ts'));
+  check(
+    !/'coupons\.retrieve'/.test(logSrc),
+    'Stripe 診断ログの operation から coupons.retrieve を落とした（呼び出し元なし）',
+  );
+
+  // --- 通常ユーザーの非退行（削除した E2E QA [5] から移送）---
+  const limits = read('lib/careerQuota/limits.ts');
+  check(
+    /self_analysis: 10/.test(limits) && /interview: 8/.test(limits),
+    'quota 上限は不変（E2E cleanup で触っていない）',
+  );
 }
 console.log('');
 

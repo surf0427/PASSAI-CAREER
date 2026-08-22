@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CareerProfile } from '@/types/careerProfile';
 import { saveBasicInfo, loadBasicInfo } from './profileStorage';
+import { isCareerBasicInfoComplete } from '@/lib/careerRouting/destination';
 import { useCurrentUserId } from '@/app/career/components/CareerAuthProvider';
 import {
   loadCareerProfileFromSupabase,
@@ -136,6 +137,8 @@ export default function ProfileClient() {
   );
   const [form, setForm] = useState<ProfileForm>(() => toForm(loadBasicInfo()));
   const [errors, setErrors] = useState<FormErrors>({});
+  // canonical storage への保存自体が失敗したときのメッセージ（項目単位の validation ではない）。
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const userId = useCurrentUserId();
   // 初期表示時点で localStorage が空だったか（down-sync を 1 回だけ許可する条件）。
@@ -201,6 +204,22 @@ export default function ProfileClient() {
     // 保存直前に canonical を読み直してマージする（別タブ / マイページでの志望条件更新を温存）。
     const profile = toProfile(form, loadBasicInfo());
     saveBasicInfo(profile);
+
+    // ★ 保存できたことを **読み直して**確認してから次へ進む。
+    //   safeSetStorage は例外を握り潰して void を返すため（storage 無効 / 容量超過 /
+    //   プライベートモード）、保存失敗に気づかないまま /career/home へ push すると
+    //   Home 側の guard が「基本情報が無い」と判定して /career/profile へ送り返し、
+    //   ユーザーから見ると「保存を押しても何も起きない」状態になる。
+    //   ここで完了判定（Home の guard と同一の純関数）まで確認しておけば、
+    //   進めないときに理由を提示できる。
+    if (!isCareerBasicInfoComplete(loadBasicInfo())) {
+      setSaveError(
+        '基本情報を保存できませんでした。ブラウザの設定（プライベートモード・保存容量）をご確認のうえ、もう一度お試しください。',
+      );
+      return;
+    }
+    setSaveError(null);
+
     // Supabase durable mirror（best-effort / member のみ）。失敗しても遷移は止めない。
     if (userId) void saveCareerProfileToSupabase(userId, profile);
     // P16-D: Personal Memory base shadow write（flag OFF 既定＝no-op / best-effort / prompt 非利用）。
@@ -343,6 +362,10 @@ export default function ProfileClient() {
 
           </div>
         </section>
+
+        {saveError && (
+          <p className="mb-4 text-sm text-red-600 leading-relaxed">{saveError}</p>
+        )}
 
         <Button type="submit" variant="primary" size="lg" className="w-full">
           保存してHomeへ進む
