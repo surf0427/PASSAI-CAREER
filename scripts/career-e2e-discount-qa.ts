@@ -165,6 +165,19 @@ console.log('[5] 通常ユーザーの非退行');
 }
 console.log('');
 
+console.log('[5b] 診断フィールド（Session を作らず env 有効性を確認）');
+{
+  const status = stripComments(read('app/api/career/billing/status/route.ts'));
+  check(/resolveCareerE2eDiscountFromEnv\(/.test(status), 'status は E2E 判定の種別を返す');
+  check(/\)\.kind,/.test(status), '返すのは kind のみ');
+  check(
+    !/couponId|amountOff|expectedInitialAmount|CAREER_E2E_COUPON_ID/.test(status),
+    'coupon ID / 金額など値は返さない',
+  );
+  check(/entitlement\.userId/.test(status) && /entitlement\.email/.test(status), '判定材料は server 解決の identity');
+}
+console.log('');
+
 console.log('[6] server-only / client 露出なし');
 {
   const mod = read('lib/careerBilling/e2eDiscount.ts');
