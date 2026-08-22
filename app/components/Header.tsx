@@ -37,7 +37,7 @@ const LP_NAV_LINKS = [
 //               既定先 /career/start が server 側で状態を解決し、未契約なら料金、
 //               基本情報未完なら基本情報、完了なら Home へ送る）
 //   - 始める  : 新規ユーザー獲得入口。/career/start（状態解決 dispatcher）。
-//               未ログイン / 未契約はまず料金ページ /career/billing に着き、
+//               未ログイン / 未契約はまず公開 Pricing /career/pricing に着き、
 //               そこから メール登録 → Stripe Checkout → 基本情報 → Home と進む。
 //               ログイン済み契約者を再登録・再入力に戻さない。
 const LP_LOGIN_HREF = CAREER_LOGIN_PATH;

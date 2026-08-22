@@ -5,7 +5,7 @@
  *
  * ★ 有料 entitlement を持つ member だけが到達できる（AGENTS §16 / §24）。
  *     未認証           → /career/login?redirect=/career/home
- *     未契約 / 判定不能 → /career/billing（fail-closed）
+ *     未契約 / 判定不能 → /career/pricing（fail-closed。登録済み・未決済もここ）
  *     契約あり         → 描画（基本情報が未完了なら client 側が /career/profile へ送る）
  *   URL 直打ちや Stripe success への到達では突破できない。権利の正本は
  *   Stripe → signed webhook → career_subscriptions → entitlement resolver のみ。

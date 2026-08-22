@@ -15,7 +15,7 @@ import { CAREER_ROUTES } from '@/lib/careerRouting/destination';
  *
  * redirect クエリは **付けない**。付けない場合、ログイン成功後は状態解決 dispatcher
  * （/career/start）へフル遷移し、server がその人の状態に応じた画面を決める:
- *   未契約 → /career/billing ／ 契約あり+基本情報未完 → /career/profile ／ 完了 → /career/home
+ *   未契約 → /career/pricing ／ 契約あり+基本情報未完 → /career/profile ／ 完了 → /career/home
  * 明示的な redirect が付いている場合（checkout 再開など）は従来どおり
  * `sanitizeCareerRedirect` が許可した CAREER 内部 path をそのまま優先する。
  *

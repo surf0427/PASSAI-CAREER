@@ -12,6 +12,9 @@
  *   [6] Checkout の入力は server だけが決める（price / plan / coupon / amount を client から取らない）。
  *   [7] success_url への到達・session_id・localStorage は権利の根拠にならない（webhook race 含む）。
  *   [8] 既存資産を重複させていない（料金ページ / checkout API / 基本情報 / profile DB は 1 つ）。
+ *   [9] **登録済み・未決済（registered unpaid）は正常な購入途中状態**。再登録を要求せず、
+ *       ログイン / 「始める」/ 有料ページ直打ち のいずれからも Pricing に着き、
+ *       そこから register を経由せず Checkout を再開できる（account は掃除しない）。
  *
  * ★ 実 Supabase / 実 Stripe に接続しない。ネットワーク不使用。secret 非表示。
  * 使い方: npx tsx scripts/career-signup-flow-qa.ts
@@ -545,6 +548,262 @@ console.log('[8] 受験版（Project A）との parity と境界');
   check(
     !/price_[A-Za-z0-9]/.test(codeOf(read('app/career/pricing/pricingDisplay.ts'))),
     '境界: 表示用コピーに Stripe ID を書いていない',
+  );
+}
+console.log('');
+
+console.log('[9] 登録済み・未決済（Registered Unpaid）を正常な購入途中状態として扱う');
+{
+  // 「メール登録・OTP 認証は済んだが決済していない」は失敗でも異常でもなく、
+  // registered → unpaid → paid → onboarded というライフサイクルの正規の 1 状態。
+  // このブロックはその状態のユーザーが **再登録なしで決済を再開できる**ことを固定する。
+  const GUEST: CareerAccessState = { kind: 'guest' };
+  const UNPAID: CareerAccessState = { kind: 'unpaid' };
+  const PAID_NEW: CareerAccessState = { kind: 'paid', basicInfoComplete: false };
+  const PAID_DONE: CareerAccessState = { kind: 'paid', basicInfoComplete: true };
+
+  // ── 27-1 / 27-2: ログイン後も「始める」も Pricing（Home でも register でもない）──
+  //   ログイン既定着地は dispatcher（/career/start）で、そこが unpaid → Pricing を返す。
+  check(DEFAULT_CAREER_REDIRECT === CAREER_ROUTES.start, '27-1: ログイン既定着地は状態解決 dispatcher');
+  check(
+    resolveCareerStartDestination(UNPAID) === CAREER_ROUTES.pricing,
+    '27-1: registered unpaid のログイン後着地は Pricing',
+  );
+  check(
+    resolveCareerStartDestination(UNPAID) !== CAREER_ROUTES.home,
+    '27-1: ログイン後に常に Home へ飛ばす処理が復活していない',
+  );
+  check(CAREER_START_PATH === CAREER_ROUTES.pricing, '27-2: registered unpaid の「始める」も Pricing');
+  for (const forbidden of [CAREER_ROUTES.register, CAREER_ROUTES.login, CAREER_ROUTES.basicInfo, CAREER_ROUTES.home]) {
+    check(
+      resolveCareerStartDestination(UNPAID) !== forbidden,
+      `27-2: registered unpaid を ${forbidden} へ送らない（再登録・再入力を要求しない）`,
+    );
+  }
+
+  // ── 28: 4 状態 × 5 導線の routing matrix を表で固定する ──
+  //   Start / ログイン後 は同じ dispatcher、Profile / Home は同じ guard が決める。
+  const MATRIX: Array<{
+    label: string;
+    state: CareerAccessState;
+    start: string;
+    profile: string | null;
+    home: string | null;
+  }> = [
+    {
+      label: 'Guest',
+      state: GUEST,
+      start: CAREER_ROUTES.pricing,
+      profile: `${CAREER_ROUTES.login}?redirect=${encodeURIComponent(CAREER_ROUTES.basicInfo)}`,
+      home: `${CAREER_ROUTES.login}?redirect=${encodeURIComponent(CAREER_ROUTES.home)}`,
+    },
+    {
+      label: 'Registered Unpaid',
+      state: UNPAID,
+      start: CAREER_ROUTES.pricing,
+      profile: CAREER_ROUTES.pricing,
+      home: CAREER_ROUTES.pricing,
+    },
+    {
+      label: 'Paid / Basic Info Incomplete',
+      state: PAID_NEW,
+      start: CAREER_ROUTES.basicInfo,
+      profile: null,
+      home: null,
+    },
+    {
+      label: 'Paid / Basic Info Complete',
+      state: PAID_DONE,
+      start: CAREER_ROUTES.home,
+      profile: null,
+      home: null,
+    },
+  ];
+  for (const row of MATRIX) {
+    check(
+      resolveCareerStartDestination(row.state) === row.start,
+      `28: ${row.label} — Start / ログイン後 → ${row.start}`,
+    );
+    check(
+      resolveCareerGuardRedirect(row.state, CAREER_ROUTES.basicInfo) === row.profile,
+      `28: ${row.label} — Profile 直打ち → ${row.profile ?? '描画を許可'}`,
+    );
+    check(
+      resolveCareerGuardRedirect(row.state, CAREER_ROUTES.home) === row.home,
+      `28: ${row.label} — Home 直打ち → ${row.home ?? '描画を許可'}`,
+    );
+  }
+}
+console.log('');
+
+console.log('[10] registered unpaid の決済再開（register を経由しない）');
+{
+  const btn = codeOf(read('app/career/components/CareerCheckoutButton.tsx'));
+  const pricing = codeOf(read('app/career/pricing/page.tsx'));
+
+  // ── 27-3: 認証済み（member）が「決済する」を押したら checkout API へ直行する ──
+  //   handleClick の中で register へ逃がすのは **guest（!isMember）のときだけ**。
+  const clickAt = btn.indexOf('async function handleClick()');
+  check(clickAt >= 0, '27-3: CTA に handleClick がある');
+  const clickBody = btn.slice(clickAt, btn.indexOf('\n  }', clickAt) + 4);
+  const guardAt = clickBody.indexOf('!isMember');
+  const registerAt = clickBody.indexOf('redirectToRegister');
+  const checkoutAt = clickBody.indexOf('startCheckout');
+  check(guardAt >= 0, '27-3: 新規登録への分岐は isMember 判定の内側にある');
+  check(
+    guardAt >= 0 && registerAt > guardAt,
+    '27-3: register へ送るのは !isMember（guest）のときだけ',
+  );
+  check(
+    checkoutAt > registerAt,
+    '27-3: guest 分岐を早期 return した後、member はそのまま checkout を叩く',
+  );
+  // register へ push する経路がこの 1 箇所（redirectToRegister）以外に無い。
+  check(
+    (btn.match(/CAREER_ROUTES\.register/g) ?? []).length === 1,
+    '27-3: 新規登録へ遷移する経路は 1 箇所だけ（member 用の別経路を作らない）',
+  );
+  // 自動再開（?checkout=1）も member 限定。guest の URL 直打ちで checkout を叩かない。
+  check(/if \(!isMember\) return;/.test(btn), '27-3: checkout 自動再開は member 限定');
+  // CTA は client 側で契約状態を判定しない（server の 409 が最終防御）。
+  check(!/\bpaid\b/.test(btn), '27-3: CTA は client で paid を判定しない');
+
+  // ── 25: Pricing は unpaid を特別扱いしない（内部状態をユーザーに意識させない）──
+  check(
+    !/'unpaid'|"unpaid"/.test(pricing),
+    '25: Pricing は registered unpaid 専用の分岐・説明文を持たない',
+  );
+  check(
+    !/CAREER_ROUTES\.register/.test(pricing),
+    '25/8: Pricing 自身が register への導線を持たない（CTA の guest 分岐のみ）',
+  );
+
+  // ── 27-6 / 12: Checkout をキャンセルしても Pricing から再開できる ──
+  const cancel = codeOf(read('app/career/billing/cancel/page.tsx'));
+  check(/\/career\/pricing/.test(cancel), '27-6: cancel から Pricing へ戻せる');
+  check(
+    !/signOut|delete|remove/i.test(cancel),
+    '27-6/20: cancel は account を一切片付けない',
+  );
+
+  // ── 22: 未契約は購入可能・契約済みだけ 409 ──
+  const route = codeOf(read('app/api/career/billing/checkout/route.ts'));
+  check(
+    /if \(state\.snapshot\.paid\)/.test(route),
+    '22: 409 ALREADY_SUBSCRIBED は paid のときだけ（unpaid は購入可能）',
+  );
+  // ── 21: 中断を繰り返しても Stripe Customer を量産しない（1:1 mapping）──
+  const customer = codeOf(read('lib/careerBilling/customer.ts'));
+  check(
+    /getOrCreateCareerStripeCustomer/.test(route),
+    '21: Customer は canonical mapping から解決する',
+  );
+  check(
+    /career_billing_customers/.test(customer) && /isUniqueViolation/.test(customer),
+    '21: mapping は user_id 一意で、競合時は勝者を再利用する',
+  );
+  check(
+    !/customer_email/.test(route),
+    '21: Stripe に Customer を自動生成させない（重複 Customer を作らない）',
+  );
+}
+console.log('');
+
+console.log('[11] account lifecycle と「登録 ≠ 課金」');
+{
+  // ── 27-7 / 26: 同じ email で戻ってきても Auth user を重複作成しない ──
+  const auth = codeOf(read('lib/careerSupabase/auth.ts'));
+  const account = codeOf(read('lib/careerSupabase/account.ts'));
+  check(
+    /shouldCreateUser: true/.test(auth),
+    '26: 既存 email も同じ signInWithOtp で扱う（既存なら Supabase Auth が再利用する）',
+  );
+  check(
+    !/admin\.createUser|signUp\(/.test(auth),
+    '26: 新規専用の signUp / admin.createUser を持たない（user を作る経路が 1 つ）',
+  );
+  check(
+    !/already registered|既に登録|登録済みです/i.test(auth) &&
+      !/already registered|既に登録|登録済みです/i.test(codeOf(read('app/career/components/CareerEmailOtpForm.tsx'))),
+    '26: 「このメールは登録済み」でエラーにしない',
+  );
+  check(
+    /onConflict/.test(account) || /23505|reload/.test(account),
+    '27-7: career_accounts の作成は冪等（再ログインで行を増やさない）',
+  );
+
+  // ── 19 / 20: 未決済という理由で account / customer / profile を掃除しない ──
+  const LIFECYCLE_FILES = [
+    'lib/careerSupabase/auth.ts',
+    'lib/careerSupabase/account.ts',
+    'lib/careerBilling/customer.ts',
+    'lib/careerBilling/entitlement.ts',
+    'app/api/career/billing/checkout/route.ts',
+    'app/career/billing/cancel/page.tsx',
+  ];
+  for (const rel of LIFECYCLE_FILES) {
+    const src = codeOf(read(rel));
+    check(
+      !/auth\.admin\.deleteUser|\.delete\(\)/.test(src),
+      `20: ${rel} は未決済 account を削除しない`,
+    );
+  }
+
+  // ── 10 / 27-8 / 27-9: Checkout Session を作っただけでは paid にならない ──
+  const route = codeOf(read('app/api/career/billing/checkout/route.ts'));
+  check(
+    !/career_subscriptions|CAREER_SUBSCRIPTIONS_TABLE/.test(route),
+    '27-8: checkout route は権利 table に書かない（Session 作成は entitlement ではない）',
+  );
+  check(
+    /return Response\.json\(\{ url: session\.url \}/.test(route),
+    '27-8: Checkout Session から client に渡すのは URL だけ',
+  );
+  // 権利 table の唯一の writer が署名付き webhook であること（11 / 30）。
+  const writers = walkTs(join(ROOT, 'app'))
+    .concat(walkTs(join(ROOT, 'lib')))
+    .filter((f) => {
+      const src = codeOf(readFileSync(f, 'utf8'));
+      return (
+        /from\((?:CAREER_SUBSCRIPTIONS_TABLE|'career_subscriptions')\)/.test(src) &&
+        /\.upsert\(|\.insert\(|\.update\(|\.delete\(/.test(src)
+      );
+    })
+    .map((f) => f.slice(ROOT.length + 1));
+  check(
+    writers.length === 1 && writers[0] === join('lib', 'careerBilling', 'subscription.ts'),
+    `11: career_subscriptions を書くのは同期関数 1 つだけ（実際: ${writers.join(', ') || 'なし'}）`,
+  );
+  const syncImporters = walkTs(join(ROOT, 'app'))
+    .filter((f) => /syncCareerSubscriptionFromStripe/.test(codeOf(readFileSync(f, 'utf8'))))
+    .map((f) => f.slice(ROOT.length + 1));
+  check(
+    syncImporters.length === 1 &&
+      syncImporters[0] === join('app', 'api', 'career', 'billing', 'webhook', 'route.ts'),
+    `11: その同期関数を呼ぶのは署名付き webhook だけ（実際: ${syncImporters.join(', ') || 'なし'}）`,
+  );
+
+  // ── 27-10 / 18: paid になって初めて基本情報へ進む ──
+  check(
+    resolveCareerStartDestination({ kind: 'paid', basicInfoComplete: false }) ===
+      CAREER_ROUTES.basicInfo,
+    '27-10: paid + 基本情報未完 になって初めて基本情報へ進む',
+  );
+  for (const state of [
+    { kind: 'guest' } as CareerAccessState,
+    { kind: 'unpaid' } as CareerAccessState,
+    { kind: 'unavailable' } as CareerAccessState,
+  ]) {
+    check(
+      resolveCareerStartDestination(state) !== CAREER_ROUTES.basicInfo,
+      `18: ${state.kind} を基本情報入力へ進ませない（旧「始める→profile」導線を復活させない）`,
+    );
+  }
+  // ── 23: Promotion Code は状態判定に関与しない ──
+  const policy = codeOf(read('lib/careerBilling/entitlementPolicy.ts'));
+  check(
+    !/promo|coupon|discount/i.test(policy),
+    '23: 権利判定に割引の概念が入っていない',
   );
 }
 console.log('');

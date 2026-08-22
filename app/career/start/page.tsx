@@ -4,7 +4,7 @@
  * LP の「始める」は **新規ユーザー獲得導線の入口**であり、押した瞬間の宛先は
  * その人の状態で変わる:
  *
- *   未ログイン / 未契約 / 判定不能 → /career/billing（まず料金・プランを見せる）
+ *   未ログイン / 未契約 / 判定不能 → /career/pricing（まず料金・プランを見せる）
  *   契約あり + 基本情報 未完了     → /career/profile
  *   契約あり + 基本情報 完了       → /career/home
  *
@@ -12,7 +12,8 @@
  * このページ自身は UI を持たない（必ず redirect する）。
  *
  * ★ 判定は server session と Project B の実データのみ。query / localStorage は見ない。
- * ★ 料金ページを新設していない。canonical な料金ページは既存の /career/billing。
+ * ★ 買う前の canonical な料金ページは /career/pricing（公開 Pricing）。
+ *   /career/billing は買った後の契約管理ページなので、未契約者をそこへ送らない。
  */
 
 import { redirect } from 'next/navigation';

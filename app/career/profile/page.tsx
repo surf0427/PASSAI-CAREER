@@ -5,7 +5,7 @@
  *
  * ★ 有料 entitlement を持つ member だけが入力へ進める（AGENTS §16 / §24）。
  *     未認証           → /career/login?redirect=/career/profile
- *     未契約 / 判定不能 → /career/billing（fail-closed）
+ *     未契約 / 判定不能 → /career/pricing（fail-closed。登録済み・未決済もここ）
  *     契約あり         → 描画
  *   URL 直打ちで未契約ユーザーが入れる状態にしない。Stripe の success_url へ
  *   到達したこと・session_id・localStorage は判定材料にしない（権利の正本は
