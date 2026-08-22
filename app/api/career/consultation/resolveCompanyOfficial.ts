@@ -11,8 +11,10 @@
 //   - 独自の企業名 resolver を作らない。identity 解決は既存の
 //     findCompanyCandidates + buildCompanyResolveResult（loadCompanyOfficialContext 内部）に委ねる。
 //     ambiguous / unresolved は「公式情報なし」に倒す（誤った企業の事実を prompt へ載せない）。
-//   - 自由文から企業名を抽出（NER）しない。候補は **本人が既に構造化データとして持っている
-//     企業名**（志望企業 / 企業研究メモ / ES 履歴）に限る。推測で企業を特定しない。
+//   - 自由文から企業名を「推測」しない。今回の発話から企業を拾う経路
+//     （resolveConsultationCompanyMentions）はあるが、照合できるのは **既に Company Master /
+//     Alias に存在する名前だけ**で、identity の確定は既存 resolver（buildCompanyResolveResult）が
+//     行う。NER / LLM / 類似度 / 外部検索は一切使わない。辞書に無い企業は作らないし使わない。
 //
 // A 層（企業の一次情報）と B 層（ユーザー本人の企業研究メモ）は別経路・別 block。
 // B 層は従来どおり resolveContextInputs.ts / consultationCrossFeature が扱う。ここでは触らない。
@@ -21,6 +23,11 @@ import 'server-only';
 
 import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 import { loadCompanyOfficialContext } from '@/lib/careerCompanyOfficial/readRepository.server';
+import { loadCompanyMentionDictionary } from '@/lib/careerCompanyIdentity/mentionDictionary.server';
+import { detectCompanyMentions, foldMessageForMention } from '@/lib/careerCompanyIdentity/mentionMatch';
+import type { CompanyMentionDictionary } from '@/lib/careerCompanyIdentity/mentionDictionary.server';
+import { buildCompanyResolveResult } from '@/lib/careerCompanyIdentity/resolution';
+import { normalizeCompanyName } from '@/lib/careerCompanyKnowledge/identity';
 import { renderCompanyOfficialForPurpose } from '@/lib/careerContextRenderers/companyOfficialContext';
 
 /** 相談で企業文脈の対象になりうる企業（本人の構造化データ由来）。 */
@@ -64,6 +71,18 @@ const COMPANY_CONTEXT_KEYWORDS: readonly string[] = [
   '面接', '選考', 'ES', 'エントリーシート', 'GD', 'グループディスカッション', '逆質問', '対策',
   // 企業理解
   '企業', '会社', '事業', '社風', 'カルチャー', '働き方', '将来性', '強み', 'リスク',
+];
+
+/**
+ * 「今回の発話で企業そのものを相談している」ことを示す最小マーカー。
+ *
+ * ★ COMPANY_CONTEXT_KEYWORDS を広げるのではなく **別集合**にしている理由:
+ *   これらは単体では一般語すぎる（「どう」「教えて」）。**今回の発話に辞書一致した企業名がある**
+ *   ときにだけ併用することで、「任天堂ってどう？」「味の素について教えて」を拾いつつ、
+ *   企業名を含まない一般相談には一切影響させない。
+ */
+const COMPANY_MENTION_INTENT_MARKERS: readonly string[] = [
+  'どう', 'どんな', 'どれ', '教えて', 'おしえて', 'について', 'ってあり', '合いそう', '合うかな',
 ];
 
 function normalize(text: string): string {
@@ -126,41 +145,168 @@ export function collectConsultationCompanyCandidates(input: {
   return out;
 }
 
+/** 今回の発話から既存 identity resolver で確定した企業言及。 */
+export type ConsultationCompanyMention = {
+  companyId: string;
+  displayName: string;
+  /** 文中で一致した正規化 token（必要判定の除去にも使う）。 */
+  matchedToken: string;
+  /** 折りたたみ後本文での出現位置（発話順を決める）。 */
+  at: number;
+};
+
+/** 判定用に、与えられた名前群を本文から取り除く（社名の字面で誤発火させないため）。 */
+function stripNames(text: string, names: readonly string[]): string {
+  let out = text;
+  for (const name of names) {
+    if (typeof name === 'string' && name !== '') out = out.split(name).join('');
+    const folded = foldMessageForMention(typeof name === 'string' ? name : '');
+    if (folded !== '') out = out.split(folded).join('');
+  }
+  return out;
+}
+
+/** 候補のうち haystack に現れたものを出現順で最大 max 件返す（純関数）。 */
+function pickFromMessage(
+  candidates: readonly ConsultationCompanyCandidate[],
+  haystack: string,
+  max: number,
+): ConsultationCompanyCandidate[] {
+  const hits: Array<{ at: number; candidate: ConsultationCompanyCandidate }> = [];
+  for (const candidate of candidates) {
+    const at = haystack.indexOf(candidate.companyName);
+    if (at >= 0) hits.push({ at, candidate });
+  }
+  hits.sort((a, b) => a.at - b.at);
+  return hits.slice(0, max).map((h) => h.candidate);
+}
+
+/**
+ * 今回の発話から、**既に Company Master / Alias に存在する企業**の言及を解決する
+ * （server・never-throw / fail-open）。
+ *
+ * 流れ:
+ *   message → 辞書照合（detectCompanyMentions・longest match / 曖昧 span は捨てる）
+ *           → 既存 identity resolver（buildCompanyResolveResult）で **resolved のみ**採用
+ *           → 出現順・最大 max 社
+ *
+ * ★ 辞書に無い企業名は候補にならない（新規登録も外部検索もしない）。
+ * ★ resolver が ambiguous / unresolved を返したものは採用しない（曖昧なら使わない）。
+ * ★ 「Master にいる = Company Data Spine がある」ではない。公式情報の可否は
+ *   後段の loadCompanyOfficialContext + renderer が判定する（facts 0 なら prompt 非注入）。
+ *
+ * @param loadDictionary DI（QA から差し替えるための seam。既定は実 loader）。
+ */
+export async function resolveConsultationCompanyMentions(
+  message: string,
+  loadDictionary: (nowMs?: number) => Promise<CompanyMentionDictionary> = loadCompanyMentionDictionary,
+  max: number = CONSULTATION_COMPANY_MAX,
+): Promise<{ mentions: ConsultationCompanyMention[]; dictionaryQueries: number }> {
+  const text = normalize(message);
+  if (text === '') return { mentions: [], dictionaryQueries: 0 };
+
+  let dictionary: CompanyMentionDictionary;
+  try {
+    dictionary = await loadDictionary();
+  } catch {
+    return { mentions: [], dictionaryQueries: 0 };
+  }
+  if (dictionary.entries.length === 0) {
+    return { mentions: [], dictionaryQueries: dictionary.queries };
+  }
+
+  const detected = detectCompanyMentions(text, dictionary.entries);
+  const mentions: ConsultationCompanyMention[] = [];
+
+  for (const hit of detected) {
+    // ★ 最終権限は既存 resolver。辞書 hit をそのまま企業として採用しない。
+    //   照合対象は「その token を持つ企業だけ」ではなく **辞書全体**にする
+    //   （別企業が同名 alias を持っていれば ambiguous になり、採用されない）。
+    const records = dictionary.entries.map((e) => ({
+      companyId: e.companyId,
+      displayName: e.displayName,
+      normalizedName: e.tokens[0] ?? '',
+      aliases: e.tokens,
+      corporateGroupId: null,
+    }));
+    const resolved = buildCompanyResolveResult(hit.matchedToken, records);
+    if (resolved.status !== 'resolved') continue;
+    if (mentions.some((m) => m.companyId === resolved.companyId)) continue;
+    mentions.push({
+      companyId: resolved.companyId,
+      displayName: resolved.displayName,
+      matchedToken: hit.matchedToken,
+      at: hit.at,
+    });
+    if (mentions.length >= max) break;
+  }
+
+  return { mentions, dictionaryQueries: dictionary.queries };
+}
+
 /**
  * 今回の turn で公式情報を読む企業を選ぶ（純関数・決定論）。
  *
  * 判定:
- *   1. 相談自体が企業文脈を要するか（社名を除いた本文で consultationNeedsCompanyContext）。要さないなら 0 社。
- *   2. 候補企業名のうち **今回のメッセージに現れたもの**を優先して採用。
- *   3. 今回のメッセージに無ければ、直近のユーザー発話（最大 2 turn）に現れたものを採用
+ *   1. 相談自体が企業文脈を要するか（社名を除いた本文で consultationNeedsCompanyContext）。
+ *      ただし今回の発話に **辞書一致した企業言及**があれば、相談マーカー（どう / 教えて / について 等）
+ *      でも成立させる（「任天堂ってどう？」を拾うため。企業言及が無い turn には影響しない）。
+ *   2. 今回の発話で解決済みの企業言及（mentions）を最優先で採用（出現順）。
+ *   3. 次に、本人の構造化データ候補のうち **今回のメッセージに現れたもの**。
+ *   4. 今回のメッセージに無ければ、直近のユーザー発話（最大 2 turn）に現れたものを採用
  *      （「A社について〜」→「じゃあ志望動機は？」のような follow-up を拾う）。
- *   4. どこにも現れなければ 0 社（＝ DB を叩かない）。
+ *   5. どこにも現れなければ 0 社（＝ Company Data Spine を読まない）。
  *
- * 出現順は「メッセージ中の登場順」で決定的に並べる（A社とB社 → [A社, B社]）。
+ * dedupe は **companyId 単位**（「任天堂」と「任天堂株式会社」を 2 社にしない）。
+ * companyId を持たない構造化候補は正規化名で突き合わせる。
  */
 export function selectConsultationCompanyTargets(input: {
   message: string;
   history?: readonly { role?: unknown; content?: unknown }[] | null;
   candidates: readonly ConsultationCompanyCandidate[];
+  /** 今回の発話から既存 identity resolver で解決済みの企業（resolveConsultationCompanyMentions の出力）。 */
+  mentions?: readonly ConsultationCompanyMention[];
   max?: number;
 }): ConsultationCompanyCandidate[] {
   const max = input.max ?? CONSULTATION_COMPANY_MAX;
   const message = normalize(input.message);
-  if (message === '' || input.candidates.length === 0) return [];
+  const mentions = [...(input.mentions ?? [])].sort((a, b) => a.at - b.at);
+  if (message === '' || (input.candidates.length === 0 && mentions.length === 0)) return [];
+
   // 社名を除いた本文で「企業を論点にしているか」を判定する（社名の字面で誤発火させない）。
-  if (!consultationNeedsCompanyContext(message, input.candidates.map((c) => c.companyName))) return [];
+  //   ★ 自由文で一致した企業名も除去対象に含める（「株式会社◯◯」の "会社" で誤発火させない）。
+  const strippedNames = [
+    ...input.candidates.map((c) => c.companyName),
+    ...mentions.map((m) => m.matchedToken),
+    ...mentions.map((m) => m.displayName),
+  ];
+  const needsByKeyword = consultationNeedsCompanyContext(message, strippedNames);
+  const needsByMention =
+    mentions.length > 0 &&
+    COMPANY_MENTION_INTENT_MARKERS.some((marker) =>
+      stripNames(foldMessageForMention(message), strippedNames).includes(marker),
+    );
+  if (!needsByKeyword && !needsByMention) return [];
 
-  const pick = (haystack: string): ConsultationCompanyCandidate[] => {
-    const hits: Array<{ at: number; candidate: ConsultationCompanyCandidate }> = [];
-    for (const candidate of input.candidates) {
-      const at = haystack.indexOf(candidate.companyName);
-      if (at >= 0) hits.push({ at, candidate });
-    }
-    hits.sort((a, b) => a.at - b.at);
-    return hits.slice(0, max).map((h) => h.candidate);
-  };
+  // 今回の発話で解決済みの企業言及が最優先（保存データに無くても届く経路）。
+  if (mentions.length > 0) {
+    const fromMentions = mentions.slice(0, max).map((m) => ({
+      companyName: m.displayName,
+      companyId: m.companyId,
+    }));
+    const remaining = max - fromMentions.length;
+    if (remaining <= 0) return fromMentions;
+    // 余枠があれば、同 turn に現れた構造化候補を companyId / 正規化名で dedupe しつつ足す。
+    const takenIds = new Set(fromMentions.map((c) => c.companyId).filter((id): id is string => !!id));
+    const takenNames = new Set(fromMentions.map((c) => normalizeCompanyName(c.companyName)));
+    const extra = pickFromMessage(input.candidates, message, remaining).filter((c) => {
+      if (c.companyId && takenIds.has(c.companyId)) return false;
+      return !takenNames.has(normalizeCompanyName(c.companyName));
+    });
+    return [...fromMentions, ...extra];
+  }
 
-  const inMessage = pick(message);
+  const inMessage = pickFromMessage(input.candidates, message, max);
   if (inMessage.length > 0) return inMessage;
 
   // 直近のユーザー発話（新しい順に最大 2 件）を follow-up の文脈として見る。
@@ -170,7 +316,7 @@ export function selectConsultationCompanyTargets(input: {
     .map((m) => m.content as string)
     .reverse();
   for (const turn of recentUserTurns) {
-    const hit = pick(turn);
+    const hit = pickFromMessage(input.candidates, turn, max);
     if (hit.length > 0) return hit;
   }
   return [];

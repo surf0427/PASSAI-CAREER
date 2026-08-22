@@ -51,6 +51,7 @@ import { resolveConsultationContextInputs } from './resolveContextInputs';
 import {
   collectConsultationCompanyCandidates,
   selectConsultationCompanyTargets,
+  resolveConsultationCompanyMentions,
   resolveConsultationCompanyOfficial,
 } from './resolveCompanyOfficial';
 // Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
@@ -341,9 +342,14 @@ export async function POST(req: Request) {
   //   ★ 企業名が会話に出ただけでは読まない。「企業を論点にした相談」かつ「本人の構造化データに
   //     ある企業名が今回のメッセージ（または直近のユーザー発話）に出ている」ときだけ read する。
   //     候補ゼロ = DB query ゼロ（自己分析・面接一般論・感情相談では I/O が発生しない）。
+  //   ★ 今回の発話に出た企業名は、本人の保存データに無くても拾う。ただし照合できるのは
+  //     **既に Company Master / Alias にある名前**だけで、確定は既存 identity resolver が行う
+  //     （NER / LLM / 外部検索は使わない。辞書に無い企業は作らないし使わない）。
+  const { mentions: companyMentions } = await resolveConsultationCompanyMentions(message);
   const companyTargets = selectConsultationCompanyTargets({
     message,
     history,
+    mentions: companyMentions,
     candidates: collectConsultationCompanyCandidates({
       targetCompanies: ctx.profile?.targetCompanies ?? null,
       companyResearch: crossFeature.companyResearch,
