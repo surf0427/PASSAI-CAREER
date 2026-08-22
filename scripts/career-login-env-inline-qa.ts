@@ -60,7 +60,12 @@ console.log('[1] no-env を transient failure として表示していないこ�
 /** incident 当時、設定不備がこの文言で出ていた。時間経過では解消しないので retry 案内は誤り。 */
 const TRANSIENT_STORAGE_PHRASE = 'ストレージに接続できません';
 
-const LOGIN_PAGES = ['app/login/page.tsx', 'app/career/login/page.tsx'];
+// CAREER 側の OTP フォーム本体は login / register 共有の CareerEmailOtpForm に集約済み
+// （page.tsx は mode を渡すだけ）。no-env 文言の実体はそちらにある。
+const LOGIN_PAGES = [
+  'app/login/page.tsx',
+  'app/career/components/CareerEmailOtpForm.tsx',
+];
 
 for (const rel of LOGIN_PAGES) {
   const src = readFileSync(join(ROOT, rel), 'utf8');

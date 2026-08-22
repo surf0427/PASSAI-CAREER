@@ -8,7 +8,10 @@
  * ★ CAREER は単一の有料プラン。プラン選択 UI は存在しない。
  *
  * 振る舞い:
- *   1. 未ログイン（guest）→ checkout を叩かずに /career/login へ。
+ *   1. 未ログイン（guest）→ checkout を叩かずに **新規登録**（/career/register）へ。
+ *      料金を見た人がここで押す = まだアカウントが無い前提なので、既存ユーザー向けの
+ *      ログイン画面ではなく「メールアドレスを登録」へ送る（既にアカウントがある人は
+ *      登録画面からログインへ渡るリンクがある。認証基盤は同じ email OTP で 1 つだけ）。
  *      戻り先は `/career/billing?checkout=1`（sanitizeCareerRedirect が許可する
  *      CAREER 名前空間内の相対 path。外部 URL は構造上入り込めない）。
  *   2. member → POST /api/career/billing/checkout → 200 { url } で Stripe へ遷移。
@@ -25,6 +28,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useCareerAuth } from '@/app/career/components/CareerAuthProvider';
+import { CAREER_ROUTES } from '@/lib/careerRouting/destination';
 
 type Props = {
   label: string;
@@ -33,7 +37,7 @@ type Props = {
 
 type CheckoutResponse = { url?: string; error?: string; detail?: string };
 
-/** ログイン後の checkout 自動再開を示す query key（値は '1' 固定）。 */
+/** 認証後の checkout 自動再開を示す query key（値は '1' 固定）。 */
 const CHECKOUT_RESUME_PARAM = 'checkout';
 
 // checkout の auto-resume を 1 回に制限する module スコープのガード。
@@ -52,9 +56,9 @@ export function CareerCheckoutButton({ label, highlight }: Props) {
   const isMember = status === 'member';
   const disabled = loading || status === 'loading';
 
-  const redirectToLogin = useCallback(() => {
+  const redirectToRegister = useCallback(() => {
     const next = `/career/billing?${CHECKOUT_RESUME_PARAM}=1`;
-    router.push(`/career/login?redirect=${encodeURIComponent(next)}`);
+    router.push(`${CAREER_ROUTES.register}?redirect=${encodeURIComponent(next)}`);
   }, [router]);
 
   const clearResumeQuery = useCallback(() => {
@@ -82,7 +86,7 @@ export function CareerCheckoutButton({ label, highlight }: Props) {
       if (res.status === 401 || res.status === 403) {
         setLoading(false);
         clearResumeQuery();
-        redirectToLogin();
+        redirectToRegister();
         return;
       }
       if (!res.ok || !data.url) {
@@ -97,18 +101,18 @@ export function CareerCheckoutButton({ label, highlight }: Props) {
       setLoading(false);
       clearResumeQuery();
     }
-  }, [clearResumeQuery, redirectToLogin]);
+  }, [clearResumeQuery, redirectToRegister]);
 
   async function handleClick() {
     if (disabled) return;
     if (!isMember) {
-      redirectToLogin();
+      redirectToRegister();
       return;
     }
     await startCheckout();
   }
 
-  // ログイン後 `?checkout=1` で戻ってきたら 1 回だけ自動再開する。
+  // 認証後 `?checkout=1` で戻ってきたら 1 回だけ自動再開する。
   useEffect(() => {
     if (autoResumedRef.current) return;
     if (!isMember) return;

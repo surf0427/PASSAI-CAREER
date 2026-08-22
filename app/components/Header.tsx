@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { type ReactNode } from 'react';
 import { Logo } from '@/app/components/Logo';
 import { CAREER_LOGIN_PATH, CAREER_START_PATH } from '@/lib/careerLandingRoutes';
+import { CAREER_ROUTES } from '@/lib/careerRouting/destination';
 
 // ── Header ────────────────────────────────────────────────────────
 // 上部ナビは「Home」と「基本情報」だけに限定する。
@@ -31,9 +32,14 @@ const LP_NAV_LINKS = [
 
 // LP ヘッダーの導線は CAREER 固定。route literal は lib/careerLandingRoutes.ts に集約し、
 // ページ下部の Closing CTA と必ず同じ遷移先になるようにする。
-//   - ログイン: /career/login（redirect 無し → 既定先 /career/home。未入力なら home 側 guard が
-//               /career/profile へ送る。再訪ユーザーを基本情報フォームに戻さない）
-//   - 始める  : /career/profile（基本情報入力・ログイン不要、入力後 /career/home）
+// 2 つの CTA は **役割が違う**ので同じ画面へ飛ばさない:
+//   - ログイン: 既存ユーザーの復帰入口。/career/login（redirect 無し → 認証後は
+//               既定先 /career/start が server 側で状態を解決し、未契約なら料金、
+//               基本情報未完なら基本情報、完了なら Home へ送る）
+//   - 始める  : 新規ユーザー獲得入口。/career/start（状態解決 dispatcher）。
+//               未ログイン / 未契約はまず料金ページ /career/billing に着き、
+//               そこから メール登録 → Stripe Checkout → 基本情報 → Home と進む。
+//               ログイン済み契約者を再登録・再入力に戻さない。
 const LP_LOGIN_HREF = CAREER_LOGIN_PATH;
 const LP_START_HREF = CAREER_START_PATH;
 
@@ -41,13 +47,19 @@ export function Header() {
   const pathname = usePathname();
   const isLanding = pathname === '/';
 
-  // 認証ページ（/login）と料金ページ（/pricing）では Home / 基本情報 のナビを
-  // 出さず、ロゴのみ表示する。
-  //   - /login: ログイン完了までユーザーを導くため、他ページへの導線は不要。
-  //   - /pricing: 課金コンバージョンページのため、離脱導線（Home / 基本情報）を
-  //     封鎖して Checkout への集中度を上げる。
-  const isAuthPage = pathname === '/login';
-  const isPricingPage = pathname === '/pricing';
+  // 認証ページと料金ページでは Home / 基本情報 のナビを出さず、ロゴのみ表示する。
+  //   - 認証（/login, /career/login, /career/register）: 認証完了までユーザーを導くため、
+  //     他ページへの導線は不要。
+  //   - 料金（/pricing, /career/billing）: 課金コンバージョンページのため、離脱導線
+  //     （Home / 基本情報）を封鎖して Checkout への集中度を上げる。
+  //   ★ CAREER 側でこれが特に重要なのは、Home / 基本情報 が server guard 付き（未契約は
+  //     /career/billing へ弾き返す）になったため。料金・登録画面にこのナビを出すと
+  //     「押しても料金画面に戻るだけ」の空リンクになる。
+  const isAuthPage =
+    pathname === '/login' ||
+    pathname === CAREER_ROUTES.login ||
+    pathname === CAREER_ROUTES.register;
+  const isPricingPage = pathname === '/pricing' || pathname === CAREER_ROUTES.pricing;
   // 公開の法務 / 事業者情報ページ。受験版・就活版どちらの footer からも到達するため、
   // 片方のアプリのナビ（Home / 基本情報）を出さない。
   //   ※ ここを出していると、就活版 LP → footer → /terms → 「Home」→ /home →

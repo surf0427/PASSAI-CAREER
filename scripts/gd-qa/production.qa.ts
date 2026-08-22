@@ -157,7 +157,8 @@ check('A1 " TRUE " -> ON', evalCareerGdFlag(' TRUE ') === true);
 
 // A-5 [STATIC] UI gate は導線を落とすだけ（server flag を読まない）。
 {
-  const home = stripTsComments(read('app/career/home/page.tsx'));
+  // Home の描画本体。page.tsx は server 側 route guard に分離済み（flag 参照は client 側）。
+  const home = stripTsComments(read('app/career/home/CareerHomeClient.tsx'));
   check('A5 home imports UI flag', home.includes('isCareerGdUiEnabled'));
   check('A5 home filters gd feature', home.includes("f.key !== 'gd'"));
   // ★ UI は server flag を読まない（client bundle へ server 権限を持ち込まない）。

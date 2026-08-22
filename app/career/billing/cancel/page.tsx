@@ -2,7 +2,10 @@
  * PASSAI CAREER — Checkout をキャンセルして戻ってきたときの着地ページ。
  *
  * Stripe の cancel_url。決済は行われていないため、状態は何も変わらない。
- * blank page にせず「課金されていないこと」を明示し、やり直し導線を出す（AGENTS §27）。
+ * blank page にせず「課金されていないこと」を明示し、料金画面へ安全に戻す（AGENTS §27）。
+ * paid entitlement は当然付与しない（このページは読み取りも書き込みも行わない）。
+ * 二次導線を /career/home ではなく LP にしているのは、未契約ユーザーが Home の
+ * server guard で /career/billing へ弾き返されるだけの往復を避けるため。
  */
 
 import Link from 'next/link';
@@ -17,7 +20,7 @@ export default function CareerBillingCancelPage() {
       <PageHeader title="お申し込みを中断しました" />
 
       <AlertBox variant="info" className="mb-4">
-        お支払いは行われていません。
+        お支払いはまだ完了していません。
       </AlertBox>
 
       <Card padding="md">
@@ -33,10 +36,10 @@ export default function CareerBillingCancelPage() {
             プランを見る
           </Link>
           <Link
-            href="/career/home"
+            href="/"
             className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
-            ホームへ戻る
+            トップへ戻る
           </Link>
         </div>
       </Card>

@@ -125,6 +125,7 @@
     "qa:careerStripeEnvironment": "npx tsx scripts/career-stripe-environment-qa.ts",
     "qa:careerLoginRedirect": "npx tsx scripts/career-login-redirect-qa.ts",
     "qa:careerLandingCta": "npx tsx scripts/career-landing-cta-qa.ts",
+    "qa:careerSignupFlow": "npx tsx scripts/career-signup-flow-qa.ts",
     "qa:careerLoginEnvInline": "npx tsx scripts/career-login-env-inline-qa.ts",
     "qa:careerMypageDataSpine": "npx tsx scripts/career-mypage-data-spine-qa.ts",
     "qa:careerEventsTimeline": "npx tsx scripts/career-event-timeline-qa.ts",

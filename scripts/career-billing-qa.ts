@@ -540,10 +540,15 @@ console.log('[7] client bundle safety (no secrets, no server-only imports)');
     'CTA は checkout に body を送らない（plan / price を client が選べない）',
   );
   check(!/priceId|customerId|price_/.test(btn), 'CTA は priceId / customerId を送らない');
-  // ★ QA Case 5: open redirect 防止（login への戻り先は CAREER 相対 path 固定）。
+  // ★ QA Case 5: open redirect 防止（認証画面への戻り先は CAREER 相対 path 固定）。
+  //   未ログインの申し込みは新規登録（/career/register）へ送る（既存ログインとは UI を分ける）。
   check(
-    /\/career\/login\?redirect=\$\{encodeURIComponent\(next\)\}/.test(btn),
-    'login への戻り先は encodeURIComponent 済みの CAREER 相対 path',
+    /\$\{CAREER_ROUTES\.register\}\?redirect=\$\{encodeURIComponent\(next\)\}/.test(btn),
+    '認証画面への戻り先は encodeURIComponent 済みの CAREER 相対 path',
+  );
+  check(
+    /CAREER_ROUTES\.register/.test(btn) && !/'\/career\/login'/.test(btn),
+    '未ログインの申し込みは登録画面（canonical 定数）へ送る',
   );
   check(
     /const next = `\/career\/billing\?\$\{CHECKOUT_RESUME_PARAM\}=1`/.test(btn),

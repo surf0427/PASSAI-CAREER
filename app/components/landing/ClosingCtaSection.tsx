@@ -7,10 +7,11 @@ import { CAREER_LOGIN_PATH, CAREER_START_PATH } from '@/lib/careerLandingRoutes'
 // 中央寄せの本文 → メイン CTA（/career/profile）→ サブ導線（ログイン）で締める。
 //
 // CTA の遷移先は Header 右上の LP CTA と同一（lib/careerLandingRoutes.ts に集約）。
-//   - メイン CTA … /career/profile（基本情報入力・ログイン不要）。入力後は
-//     /career/home に着地する（app/career/profile/ProfileClient.tsx の push 参照）。
-//   - サブ導線   … /career/login（redirect 無し）。既定先 /career/home へ着き、
-//     基本情報が未入力なら /career/home 側の既存 guard が /career/profile へ送る。
+//   - メイン CTA … /career/start（新規ユーザー獲得導線）。未ログイン / 未契約はまず
+//     料金ページ /career/billing に着き、メール登録 → Checkout → 基本情報 → Home と進む。
+//     ログイン済みの契約者は基本情報 or Home へ直接送られる（再登録を求めない）。
+//   - サブ導線   … /career/login（既存ユーザーの復帰導線・redirect 無し）。認証後は
+//     既定先 /career/start が server 側で状態を解決して適切な画面へ送る。
 
 export function ClosingCtaSection() {
   return (
@@ -50,7 +51,7 @@ export function ClosingCtaSection() {
             1つの流れで進められるように作られています。
           </p>
           <p className="font-semibold text-slate-800">
-            まずは基本情報の入力から、
+            まずはプランを確認して、
             <br />
             自分の就活準備を始めてください。
           </p>

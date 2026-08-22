@@ -30,6 +30,7 @@ import {
   DEFAULT_CAREER_REDIRECT,
   sanitizeCareerRedirect,
 } from '../app/career/login/careerLoginRedirect';
+import { resolveCareerStartDestination } from '../lib/careerRouting/destination';
 
 const ROOT = process.cwd();
 let failures = 0;
@@ -48,19 +49,58 @@ const CLOSING = read('app/components/landing/ClosingCtaSection.tsx');
 const headerCode = codeOf(HEADER);
 const closingCode = codeOf(CLOSING);
 
-console.log('[1] canonical 定数と login 既定先');
+console.log('[1] canonical 定数と CTA の役割分離');
 check(CAREER_LOGIN_PATH === '/career/login', `CAREER_LOGIN_PATH = /career/login（実際: ${CAREER_LOGIN_PATH}）`);
-check(CAREER_START_PATH === '/career/profile', `CAREER_START_PATH = /career/profile（実際: ${CAREER_START_PATH}）`);
-// login CTA は redirect を付けない → 既存 sanitize の既定先（/career/home）が効く。
+check(CAREER_START_PATH === '/career/start', `CAREER_START_PATH = /career/start（実際: ${CAREER_START_PATH}）`);
+// 2 つの CTA は役割が違う（既存復帰 / 新規獲得）。同じ画面へ飛ばさない。
+// literal 型どうしの比較を型レベルで潰さないよう string へ widen して見る。
+const loginHref: string = CAREER_LOGIN_PATH;
+const startHref: string = CAREER_START_PATH;
+check(loginHref !== startHref, '「ログイン」と「始める」が別 route（導線を混ぜない）');
+// 「始める」は料金確認を飛ばしてログイン画面や基本情報入力へ直行しない。
+check(
+  startHref !== '/career/login' && startHref !== '/career/profile',
+  '「始める」がログイン画面 / 基本情報入力へ直行しない',
+);
+// login CTA は redirect を付けない → 既存 sanitize の既定先（状態解決 dispatcher）が効く。
 check(!CAREER_LOGIN_PATH.includes('?'), 'login CTA に redirect クエリを付けない（canonical 既定先に委ねる）');
 check(
-  sanitizeCareerRedirect(null) === DEFAULT_CAREER_REDIRECT && DEFAULT_CAREER_REDIRECT === '/career/home',
-  'redirect 無しの login 着地は /career/home（既存 DEFAULT_CAREER_REDIRECT）',
+  sanitizeCareerRedirect(null) === DEFAULT_CAREER_REDIRECT && DEFAULT_CAREER_REDIRECT === '/career/start',
+  'redirect 無しの login 着地は /career/start（状態解決 dispatcher）',
 );
+
+// dispatcher は server で状態を解決し、必ず既存 route へ redirect する（UI を持たない）。
+const START_PAGE = codeOf(read('app/career/start/page.tsx'));
+check(/resolveCareerAccessState\(\)/.test(START_PAGE), '/career/start は server の状態 resolver を使う');
+check(/resolveCareerStartDestination\(/.test(START_PAGE), '/career/start は共通の純関数で遷移先を決める');
+check(/redirect\(/.test(START_PAGE), '/career/start は必ず redirect する（独自 UI を持たない）');
+check(
+  !/['"`]\/career\/[^'"`]*['"`]/.test(START_PAGE),
+  '/career/start に route literal の直書きが無い（canonical 定数経由）',
+);
+
+// 未契約 / 未ログインの「始める」は料金画面（既存 /career/billing）に着く。新設していない。
+check(
+  resolveCareerStartDestination({ kind: 'guest' }) === '/career/billing',
+  '未ログインの「始める」→ 料金画面（既存 /career/billing）',
+);
+check(
+  resolveCareerStartDestination({ kind: 'unpaid' }) === '/career/billing',
+  '未契約の「始める」→ 料金画面',
+);
+check(
+  resolveCareerStartDestination({ kind: 'paid', basicInfoComplete: false }) === '/career/profile',
+  '契約あり + 基本情報未完 →（既存の）基本情報入力',
+);
+check(
+  resolveCareerStartDestination({ kind: 'paid', basicInfoComplete: true }) === '/career/home',
+  '契約あり + 基本情報完了 → Home（再登録を求めない）',
+);
+
 // 未入力ユーザーは /career/home 側の既存 guard が /career/profile へ送る（第二の状態管理なし）。
 check(
-  /router\.replace\('\/career\/profile'\)/.test(codeOf(read('app/career/home/page.tsx'))),
-  '/career/home に「基本情報未入力 → /career/profile」の既存 guard がある',
+  /router\.replace\('\/career\/profile'\)/.test(codeOf(read('app/career/home/CareerHomeClient.tsx'))),
+  '/career/home に「基本情報未完了 → /career/profile」の既存 guard がある',
 );
 // 開始 CTA の着地後は既存 ProfileClient が /career/home へ push する。
 check(
@@ -97,7 +137,15 @@ for (const [label, code] of [['Header(LP 分岐)', LP_BRANCH], ['ClosingCtaSecti
 }
 
 console.log('[3] 参照先 route が実在（404 route 参照 = 0）');
-for (const p of [CAREER_LOGIN_PATH, CAREER_START_PATH, DEFAULT_CAREER_REDIRECT]) {
+for (const p of [
+  CAREER_LOGIN_PATH,
+  CAREER_START_PATH,
+  DEFAULT_CAREER_REDIRECT,
+  '/career/register',
+  '/career/billing',
+  '/career/profile',
+  '/career/home',
+]) {
   check(existsSync(join(ROOT, 'app', p.replace(/^\//, ''), 'page.tsx')), `${p} に page.tsx が実在`);
 }
 

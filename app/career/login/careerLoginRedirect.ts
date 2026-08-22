@@ -8,15 +8,34 @@
 //   - identity は auth.users.id。display_user_id は遷移先の判定に **使わない**。
 //   - 表示ID未設定を理由に /career/onboarding/profile へ強制遷移しない（受験版と整合）。
 
-/** redirect 未指定 / 不正 / CAREER 外時の既定遷移先。 */
-export const DEFAULT_CAREER_REDIRECT = '/career/home';
+import { CAREER_ROUTES } from '@/lib/careerRouting/destination';
+
+/**
+ * redirect 未指定 / 不正 / CAREER 外時の既定遷移先。
+ *
+ * ★ 状態解決 dispatcher（/career/start）に委ねる。ログイン直後に固定で /career/home へ
+ *   送ると、未契約ユーザーが料金画面を飛ばして Home に着き、基本情報未入力ユーザーが
+ *   Home 側の client guard に頼ることになる。dispatcher なら server が
+ *   「未契約 → 料金 / 基本情報未完 → 基本情報 / 完了 → Home」を 1 箇所で決められる。
+ *   判定ロジックの本体は lib/careerRouting/destination.ts（純関数・単一の出所）。
+ */
+export const DEFAULT_CAREER_REDIRECT = CAREER_ROUTES.start;
 
 // pathname 判定用のダミー同一 origin base（値は表示にも遷移にも使わない）。
 const INTERNAL_BASE = 'http://career.internal';
 
-/** login 画面自身（redirect ループ源）を弾く。/career/login と /career/login/... を対象。 */
-function isCareerLoginPath(pathname: string): boolean {
-  return pathname === '/career/login' || pathname.startsWith('/career/login/');
+/**
+ * 認証画面自身（redirect ループ源）を弾く。
+ * ログイン（/career/login）と新規登録（/career/register）は同じ OTP 基盤の入口なので
+ * どちらも「認証後の戻り先」にはなり得ない。配下 path（/career/login/... 等）も対象。
+ */
+function isCareerAuthPath(pathname: string): boolean {
+  return (
+    pathname === CAREER_ROUTES.login ||
+    pathname.startsWith(CAREER_ROUTES.login + '/') ||
+    pathname === CAREER_ROUTES.register ||
+    pathname.startsWith(CAREER_ROUTES.register + '/')
+  );
 }
 
 /** `/career` 名前空間の内部 path か。/careerish・/career-foo は境界外（false）。 */
@@ -28,11 +47,11 @@ function isCareerNamespace(pathname: string): boolean {
  * 認証後の遷移先を **CAREER 内部 path のみ** に制限する。
  *
  * 許可: /career, /career/, /career/* （query / hash は保持）。
- * 拒否 →（DEFAULT_CAREER_REDIRECT へ fallback）:
+ * 拒否 →（DEFAULT_CAREER_REDIRECT = /career/start へ fallback）:
  *   - null / undefined / 空文字
  *   - 外部 / protocol-relative / scheme付き（http(s):, //, /\, javascript: 等）
  *   - 非 CAREER 同一 origin path（/login, /home, /account, /pricing, /careerish 等）
- *   - login self-redirect（/career/login, /career/login/, /career/login?..#..）
+ *   - 認証画面への self-redirect（/career/login, /career/register とその配下）
  *   - URL 正規化後に CAREER 外/別 origin となる値（/career/../login 等）
  *
  * 単純な文字列 prefix だけでなく URL parser で pathname を正規化して判定する。
@@ -54,7 +73,7 @@ export function sanitizeCareerRedirect(raw: string | null | undefined): string {
 
   const { pathname } = url;
   if (!isCareerNamespace(pathname)) return DEFAULT_CAREER_REDIRECT;
-  if (isCareerLoginPath(pathname)) return DEFAULT_CAREER_REDIRECT;
+  if (isCareerAuthPath(pathname)) return DEFAULT_CAREER_REDIRECT;
 
   // 正常な CAREER path は query / hash を保持して相対 path で返す。
   return `${pathname}${url.search}${url.hash}`;

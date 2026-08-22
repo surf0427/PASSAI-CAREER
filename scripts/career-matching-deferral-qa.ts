@@ -150,7 +150,8 @@ async function main(): Promise<void> {
   console.log('\n[D8] UI 導線');
 
   const uiSites: Array<[string, string]> = [
-    ['Home', 'app/career/home/page.tsx'],
+    // Home の描画本体。page.tsx は server 側 route guard に分離済み（flag 参照は client 側）。
+    ['Home', 'app/career/home/CareerHomeClient.tsx'],
     ['My Page', 'app/career/mypage/mypageSummary.ts'],
     ['GD 結果', 'app/career/gd/GdSoloResultDetail.tsx'],
   ];
