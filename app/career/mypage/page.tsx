@@ -3,7 +3,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
-import { LinkButton } from '@/components/ui/LinkButton';
 import CareerProfileSummary from '@/components/career/CareerProfileSummary';
 import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard';
 import CareerBillingCard from '@/app/career/components/CareerBillingCard';
@@ -35,6 +34,7 @@ import { hasBasicProfileContent } from './mypageSummary';
 //   - AI 呼び出しをここで新設しない（mypage_summary purpose は DORMANT のまま）。
 //   - ここは dashboard ではない。次のアクション提案・実績/履歴/アウトプットの一覧・
 //     充実度メーター・各機能への CTA は持たない（機能入口は /career/home が担当）。
+//   - View 専用。編集・入力の導線も持たない（プロフィール編集は /career/profile 本体が担当）。
 //   - 受験版 /mypage のコンポーネント（BillingCard / UsageStatusCard / LoginNudge 等）は流用しない。
 
 export default function CareerMypagePage() {
@@ -101,17 +101,14 @@ function ProfileSection({ profile }: { profile: CareerProfile | null }) {
   if (!hasBasicProfileContent(profile)) {
     return (
       <section>
-        <div className="flex items-center justify-between mb-3 px-1">
-          <h2 className="text-sm font-semibold text-brand-600">プロフィール</h2>
-        </div>
+        <h2 className="text-sm font-semibold text-brand-600 mb-3 px-1">プロフィール</h2>
         <Card variant="default" padding="md">
-          <p className="text-sm text-gray-600 mb-3">基本情報がまだ登録されていません。</p>
-          <LinkButton href="/career/profile" variant="primary" size="md">
-            基本情報を入力する
-          </LinkButton>
+          <p className="text-sm text-gray-600">基本情報がまだ登録されていません。</p>
         </Card>
       </section>
     );
   }
-  return <CareerProfileSummary profile={profile} editHref="/career/profile" />;
+  // editHref を渡さない = CareerProfileSummary の「編集する」リンクは描画されない。
+  // （共通 component 側は既存のまま。/career/home の呼び出しと同じ形。）
+  return <CareerProfileSummary profile={profile} />;
 }
