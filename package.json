@@ -78,6 +78,7 @@
     "qa:careerInterviewHardening": "npm run qa:careerInterviewRequestGuard && npm run qa:careerInterviewVoiceResilience",
     "qa:careerInterviewCompanyFacts": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-interview-company-facts-qa.ts",
     "qa:careerConsultationOrchestratorParity": "npx tsx scripts/career-consultation-orchestrator-parity-qa.ts",
+    "qa:careerConsultationPromptCache": "npx tsx scripts/career-consultation-prompt-cache-qa.ts",
     "qa:careerPersonalMemorySchema": "npx tsx scripts/career-personal-memory-schema-qa.ts",
     "qa:careerPersonalMemoryRepository": "npx tsx scripts/career-personal-memory-repository-qa.ts",
     "qa:careerPersonalMemoryWriter": "npx tsx scripts/career-personal-memory-writer-qa.ts",

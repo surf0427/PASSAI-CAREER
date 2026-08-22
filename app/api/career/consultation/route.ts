@@ -42,7 +42,7 @@ import {
 } from '@/lib/careerConsultation/historySnapshots';
 // P15-D: Personal Memory 由来の横断 context 組み立て + system prompt 組み立ては pure builder へ抽出。
 //   Event Signal は本 route が現行どおり resolve し、builder へ block 文字列として渡す（境界維持）。
-import { buildConsultationSystemPrompt } from './consultationPrompt';
+import { buildConsultationSystemBlocks } from './consultationPrompt';
 // Batch 1: base context（profile/activity/values）を canary + Source-Sync verified のときだけ
 //   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
 import { resolveConsultationContextInputs } from './resolveContextInputs';
@@ -79,7 +79,7 @@ const MAX_MESSAGE_LENGTH = 1000;
 const HISTORY_MAX_TURNS = 10;
 
 // P15-D: 司令塔 persona / 出力形式 / Personal Memory 由来の横断 renderer は
-//   ./consultationPrompt（buildConsultationSystemPrompt）と
+//   ./consultationPrompt（buildConsultationSystemBlocks / buildConsultationSystemPrompt）と
 //   lib/careerMemory/renderers/consultationCrossFeature へ移設した（byte-identical）。
 //   本 route は request 検証・正規化・Event Signal resolve・AI 実行・response 正規化に専念する。
 
@@ -330,7 +330,10 @@ export async function POST(req: Request) {
     contextOutcome: null,
   });
 
-  const systemPrompt = buildConsultationSystemPrompt({
+  // Prompt Cache（P2）: system prompt を「静的 prefix」と「動的 suffix」に分けて受け取る。
+  //   flatten（cachedPrefix + '\n\n' + dynamicSuffix）は従来の完成 system prompt と byte 一致し、
+  //   AI へ渡る prompt text の意味内容は不変（persona / 出力形式 / 並び順すべて据え置き）。
+  const systemParts = buildConsultationSystemBlocks({
     profile: ctx.profile,
     activity: compressCareerActivityForConsultation(
       ctx.activity as Parameters<typeof compressCareerActivityForConsultation>[0],
@@ -340,6 +343,25 @@ export async function POST(req: Request) {
     eventSignalsBlock,
     personalMemory,
   });
+
+  // Anthropic `system` の content block 配列（受験版 tutor /api/tutor と同型）。
+  //   block 1: 全ユーザー共通・完全静的な prefix（司令塔 persona + 共通基本方針 + 機能別指示）。
+  //            ここだけ cache_control: 'ephemeral'（既定 TTL 5 分）＝ cache breakpoint。
+  //   block 2: User Data Spine / Personal Memory / Event Signal / 出力形式（＝ request ごとに変わる）。
+  //            breakpoint より後段なので毎 request 通常入力として課金される。
+  //   会話履歴と今回のユーザー発話は従来どおり messages 側にのみ載せる（cached block に混ぜない）。
+  const systemBlocks: Array<{
+    type: 'text';
+    text: string;
+    cache_control?: { type: 'ephemeral' };
+  }> = [
+    {
+      type: 'text',
+      text: systemParts.cachedPrefix,
+      cache_control: { type: 'ephemeral' },
+    },
+    { type: 'text', text: systemParts.dynamicSuffix },
+  ];
 
   // P17-E: shadow read（本処理と独立・fire-and-forget）。systemPrompt / messages / response は不変。
   //   flag OFF では即 return（DB query 0）。shadow の失敗は consultation 本処理へ影響しない。
@@ -370,7 +392,7 @@ export async function POST(req: Request) {
           // AI_CONSULTATION_TRUNCATED）が発生したため、余裕を持たせる（maxDuration 80s 内）。
           max_tokens: 3200,
           temperature: attempt === 2 ? 0 : 0.4,
-          system: systemPrompt,
+          system: systemBlocks,
           messages: [...history, { role: 'user', content: message }],
         },
         { signal: createTimeoutSignal(callTimeoutMs) },

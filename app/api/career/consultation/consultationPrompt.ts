@@ -271,10 +271,46 @@ export type ConsultationSystemPromptInput = {
   personalMemory?: readonly CareerPersonalMemorySection[];
 };
 
-// 相談AIの完成 system prompt を組み立てる純関数。
-//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ Personal Memory 横断（crossFeatureContext）
-//   → Event Signal block（route resolve 済み・現行位置）→ 出力形式。
-export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInput): string {
+// ── Prompt Cache 境界（P2 / prompt caching only） ────────────────────────────
+//
+// Anthropic Prompt Caching は「レンダリング後の byte prefix 一致」でしか効かないため、
+// cache breakpoint より前を **全ユーザー共通・完全静的**に保つ必要がある。
+// consultation の system prompt の並びは:
+//
+//   [1] COMMANDER_PERSONA                    静的（全ユーザー共通）
+//   [2] orchestrated.systemPrompt
+//        ├ CAREER_BASE_POLICY                静的
+//        ├ 「今回の機能: 就活相談」            静的
+//        ├ 機能別指示（career-consultation）   静的
+//        └ # 学生プロフィール / # 活動・経験 / # 就活軸   ← ここから動的
+//   [3] crossFeatureContext                  動的
+//   [4] personalMemoryContext                動的
+//   [5] eventSignalsBlock                    動的
+//   [6] OUTPUT_FORMAT_INSTRUCTION            静的だが **動的 block の後ろ**
+//
+// [6] は静的だが位置が動的 block の後なので prefix に入らない。ここで前へ動かすと
+// AI へ渡る prompt text そのものが変わってしまう（＝相談思想の再検証が必要になる）ため、
+// 今回は **並び順を一切変えず**、[1]+[2]静的頭 までを cached prefix として切り出すだけにする。
+//
+// 分割は「orchestrated.systemPrompt 内で最初の動的 section が始まる位置」で行う。
+// buildCareerSystemPrompt が必ず `# 学生プロフィール` section を無条件で出すため、この marker は
+// 常に存在する。万一 marker が見つからない場合でも **cachedPrefix を persona だけに縮める**
+// fail-safe に倒し、prompt text は常に従来と byte 互換のまま（cache 効率だけが落ちる）。
+const CONSULTATION_SECTION_SEPARATOR = '\n\n';
+const FIRST_DYNAMIC_SECTION_MARKER = `${CONSULTATION_SECTION_SEPARATOR}# 学生プロフィール\n`;
+
+// system prompt を「cache 対象の静的 prefix」と「毎 request 通常入力の動的 suffix」に分けた形。
+//   不変条件: `${cachedPrefix}\n\n${dynamicSuffix}` === buildConsultationSystemPrompt(input)
+//   （常設 harness scripts/career-consultation-prompt-cache-qa.ts で byte 検証）。
+export type ConsultationSystemBlocks = {
+  cachedPrefix: string;
+  dynamicSuffix: string;
+};
+
+// prompt の構成要素を 1 度だけ組み立てる内部共通処理（flat 版 / block 版で共有）。
+function assembleConsultationSystemParts(
+  input: ConsultationSystemPromptInput,
+): ConsultationSystemBlocks {
   const context = buildCareerAiContext({
     featureKey: FEATURE_KEY,
     profile: input.profile,
@@ -297,10 +333,21 @@ export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInp
       : {}),
   });
 
-  return [
-    COMMANDER_PERSONA,
-    // P3-C: 同一 system 内の feature instruction 二重 append を削除（純粋な重複除去）。
-    orchestrated.systemPrompt,
+  // orchestrated.systemPrompt を「静的頭」と「動的残り」へ分ける（separator は捨てず片側へ寄せない）。
+  const base = orchestrated.systemPrompt;
+  const markerIndex = base.indexOf(FIRST_DYNAMIC_SECTION_MARKER);
+  const staticBaseHead = markerIndex >= 0 ? base.slice(0, markerIndex) : '';
+  const dynamicBaseTail =
+    markerIndex >= 0
+      ? base.slice(markerIndex + CONSULTATION_SECTION_SEPARATOR.length)
+      : base;
+
+  const cachedPrefix = [COMMANDER_PERSONA, staticBaseHead]
+    .filter((s) => s !== '')
+    .join(CONSULTATION_SECTION_SEPARATOR);
+
+  const dynamicSuffix = [
+    dynamicBaseTail,
     // P15-D: Personal Memory 由来の横断ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
     // Data Spine Layer 2（Personal Memory）。★ base / crossFeature とは **別ブロック**の
@@ -312,5 +359,27 @@ export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInp
     OUTPUT_FORMAT_INSTRUCTION,
   ]
     .filter((s) => s !== '')
-    .join('\n\n');
+    .join(CONSULTATION_SECTION_SEPARATOR);
+
+  return { cachedPrefix, dynamicSuffix };
+}
+
+// 相談AIの完成 system prompt を組み立てる純関数（flat 版・byte 仕様は従来どおり）。
+//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ Personal Memory 横断（crossFeatureContext）
+//   → Event Signal block（route resolve 済み・現行位置）→ 出力形式。
+export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInput): string {
+  const { cachedPrefix, dynamicSuffix } = assembleConsultationSystemParts(input);
+  return [cachedPrefix, dynamicSuffix]
+    .filter((s) => s !== '')
+    .join(CONSULTATION_SECTION_SEPARATOR);
+}
+
+// 相談AIの system prompt を Prompt Cache 用の 2 分割で返す純関数。
+//   route はこれを Anthropic `system` の content block 配列へそのまま載せ、
+//   cachedPrefix にだけ cache_control: 'ephemeral' を付ける（受験版 tutor と同型）。
+//   flatten すると buildConsultationSystemPrompt と byte 一致する（意味内容は不変）。
+export function buildConsultationSystemBlocks(
+  input: ConsultationSystemPromptInput,
+): ConsultationSystemBlocks {
+  return assembleConsultationSystemParts(input);
 }
