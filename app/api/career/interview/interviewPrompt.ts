@@ -29,6 +29,8 @@ import type { InterviewCompanyResearchContext } from '@/lib/careerCompanyResearc
 import {
   getInterviewModeConfig,
   buildInterviewRubricLines,
+  scoredInterviewCriteria,
+  CAREER_INTERVIEW_RUBRIC_CRITERIA,
   SHARED_INTERVIEWER_RULES,
   type CareerInterviewModeConfig,
 } from '@/app/career/interview/interviewModes';
@@ -516,6 +518,17 @@ export function buildFinalFeedbackInstruction(
     config.pressure
       ? '圧迫面接の評価でも、指摘は厳しくてよいが、フィードバック自体は学生が次に改善できるよう建設的にすること（人格否定・人格への言及は禁止。評価対象は回答内容のみ）。'
       : '指摘は率直にしつつ、学生が次に改善できるよう建設的にすること。',
+    '',
+    // ── 数値評価（criterionScores）─────────────────────────────────────
+    //   ★ AI が出すのは各観点の 0〜100 点だけ。総合点は server が上の
+    //     評価ウェイトとの加重平均で算出するため、AI には計算させない。
+    //   ★ [対象外] の観点は出力スキーマ自体に含めない（0 点として平均に混ざる事故を防ぐ）。
+    '## 観点別スコア（criterionScores）',
+    '上の評価ウェイトで評価対象になっている観点それぞれについて、0〜100 の整数で採点してください。',
+    '採点は回答内容だけを根拠にし、上の「採点の水準」に照らして判断してください。',
+    '★ 総合点・ランクは出力しないでください（あなたが出した観点別スコアと評価ウェイトから自動で算出されます）。',
+    '★ [対象外] の観点は criterionScores に含めないでください（下のスキーマに列挙された key だけを返す）。',
+    '',
     '出力は次の JSON オブジェクトのみとし、前後に説明文やコードブロック記号を付けないでください。',
     '各配列は2〜4個入れ、空配列にしない。実際の回答内容に即した具体的な指摘にし、テンプレ文を避ける。',
     '事実確認が必要な企業・業界情報は断定しない。companyFit は志望業界・職種・就活軸（あれば志望企業）との相性・接続を、回答内容に即して2〜4文で述べる。',
@@ -533,9 +546,17 @@ export function buildFinalFeedbackInstruction(
   const targetGuidance = buildTargetFeedbackGuidance(target);
   if (targetGuidance) lines.push(targetGuidance);
 
+  // 採点対象の criterion だけを列挙する（[対象外] は key ごと出さない）。
+  const scoredCriteria = scoredInterviewCriteria(config);
   lines.push(
     '',
     '{',
+    '  "criterionScores": {           // 観点別スコア（各 0〜100 の整数。総合点は書かない）',
+    ...scoredCriteria.map(
+      (key, i) =>
+        `    "${key}": number${i === scoredCriteria.length - 1 ? '' : ','}          // ${CAREER_INTERVIEW_RUBRIC_CRITERIA[key]}`,
+    ),
+    '  },',
     '  "overallComment": string,      // 全体評価の総括（数文）',
     '  "strengths": string[],         // 良かった点・強み',
     '  "improvements": string[],      // 改善点',

@@ -11,10 +11,14 @@ import { loadInterviewResults } from '../interviewStorage';
 import {
   getInterviewModeConfig,
   interviewSelectionLabel,
+  scoredInterviewCriteria,
+  CAREER_INTERVIEW_RUBRIC_CRITERIA,
+  CAREER_INTERVIEW_RUBRIC_WEIGHT_LABELS,
 } from '../interviewModes';
 import type {
   CareerInterviewResult,
   CareerInterviewTargetFeedback,
+  CareerInterviewType,
 } from '@/types/careerInterview';
 
 const subscribeMount = () => () => {};
@@ -153,6 +157,13 @@ export default function CareerInterviewResultPage() {
                 </Card>
               )}
 
+              {/* 数値評価（rubric ベース）。旧ログ（スコア無し）では丸ごと出さない。 */}
+              <InterviewScoreCard
+                interviewType={selected.interviewType}
+                overallScore={selected.result.overallScore}
+                criterionScores={selected.result.criterionScores}
+              />
+
               <Section title="総合評価">
                 <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
                   {selected.result.overallComment || '—'}
@@ -231,6 +242,79 @@ function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString('ja-JP');
+}
+
+// 数値評価カード（総合スコア + 評価軸別スコア）。
+//
+// 表示規則:
+//   - スコアを持たない旧ログでは **カードごと出さない**（0 点表示にしない）。
+//   - 表示する観点は、その面接モードで採点対象（weight !== 'none'）のものだけ。
+//     モードごとに評価軸が違うこと自体が面接機能の設計なので、
+//     対象外の軸を「0 点」や「—」で並べない。
+//   - 重視度ラベル（最重視 / 重視 / 通常 / 参考）を添えて、同じ点でもモードによって
+//     総合スコアへの効き方が違うことが読み取れるようにする。
+function InterviewScoreCard({
+  interviewType,
+  overallScore,
+  criterionScores,
+}: {
+  interviewType?: CareerInterviewType;
+  overallScore?: number;
+  criterionScores?: Record<string, number>;
+}) {
+  const config = getInterviewModeConfig(interviewType);
+  const rows = scoredInterviewCriteria(config)
+    .map((key) => ({
+      key,
+      label: CAREER_INTERVIEW_RUBRIC_CRITERIA[key].replace(/（.*$/, ''),
+      weightLabel: CAREER_INTERVIEW_RUBRIC_WEIGHT_LABELS[config.rubric[key]],
+      score: criterionScores?.[key],
+    }))
+    .filter((row): row is typeof row & { score: number } => typeof row.score === 'number');
+
+  // 旧ログ（スコア無し）は静かに何も出さない。
+  if (typeof overallScore !== 'number' && rows.length === 0) return null;
+
+  return (
+    <Card variant="soft" padding="md" className="mb-4">
+      {typeof overallScore === 'number' && (
+        <div className="mb-3">
+          <p className="text-[11px] text-slate-500 mb-0.5">総合スコア</p>
+          <p className="text-3xl font-bold text-slate-900 leading-none">
+            {overallScore}
+            <span className="text-base text-slate-400"> / 100</span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            {config.label}の評価ウェイトで算出しています。
+          </p>
+        </div>
+      )}
+      {rows.length > 0 && (
+        <>
+          <h2 className="text-sm font-bold text-slate-900 mb-2">評価軸</h2>
+          <div className="flex flex-col gap-2.5">
+            {rows.map((row) => (
+              <div key={row.key}>
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <span className="text-xs text-slate-600 min-w-0 truncate">
+                    {row.label}
+                    <span className="ml-1.5 text-[10px] text-slate-400">{row.weightLabel}</span>
+                  </span>
+                  <span className="text-xs font-semibold text-slate-800 shrink-0">{row.score}</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-500"
+                    style={{ width: `${Math.max(0, Math.min(100, row.score))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
 }
 
 // 受験先・選考の想定に向けた追加フィードバック（target あり結果のみ）。

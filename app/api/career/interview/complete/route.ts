@@ -21,6 +21,9 @@ import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import {
   resolveInterviewType,
   normalizeInterviewTarget,
+  getInterviewModeConfig,
+  normalizeInterviewCriterionScores,
+  computeInterviewOverallScore,
 } from '@/app/career/interview/interviewModes';
 import { normalizeInterviewCompanyResearchContext } from '@/lib/careerCompanyResearch/context';
 import { anthropic, extractJson } from '@/lib/ai';
@@ -95,8 +98,21 @@ function normalizeTargetFeedback(
   return Object.keys(fb).length > 0 ? fb : undefined;
 }
 
-function normalizeResult(raw: unknown): CareerInterviewFinalResult {
+// AI 出力 → CareerInterviewFinalResult。
+//   ★ 数値評価の authority 分離（ES / GD と同じ契約）:
+//     AI が出すのは criterionScores（各 0〜100）だけで、overallScore は
+//     mode 別 rubric ウェイトとの加重平均から **server が**算出する。
+//     AI が overallScore / rank を返しても採用しない（そもそも prompt で禁止している）。
+//   ★ そのモードで weight='none' の観点は normalize 段階で破棄されるため、
+//     加重平均の分母にも分子にも入らない。
+function normalizeResult(
+  raw: unknown,
+  interviewType: CareerInterviewType,
+): CareerInterviewFinalResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const modeConfig = getInterviewModeConfig(interviewType);
+  const criterionScores = normalizeInterviewCriterionScores(modeConfig, r.criterionScores);
+  const overallScore = computeInterviewOverallScore(modeConfig, criterionScores);
   const result: CareerInterviewFinalResult = {
     overallComment: str(r.overallComment),
     strengths: strArray(r.strengths),
@@ -106,6 +122,13 @@ function normalizeResult(raw: unknown): CareerInterviewFinalResult {
     nextActions: strArray(r.nextActions),
     companyFit: str(r.companyFit),
   };
+  // 数値評価は「取れたときだけ」載せる。
+  //   採点不能（AI が criterionScores を返さない / 全部壊れている）なら field ごと省略し、
+  //   旧ログと同じ「スコアなし」状態にする（0 点として保存しない）。
+  if (Object.keys(criterionScores).length > 0) {
+    result.criterionScores = criterionScores as Record<string, number>;
+  }
+  if (overallScore !== null) result.overallScore = overallScore;
   // 企業研究ログを使った面接でのみ AI が返す（未使用なら空文字は付けない）。
   const companyResearchFit = str(r.companyResearchFit);
   if (companyResearchFit) result.companyResearchFit = companyResearchFit;
@@ -223,7 +246,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        result = normalizeResult(JSON.parse(extractJson(raw)));
+        result = normalizeResult(JSON.parse(extractJson(raw)), interviewType);
         break;
       } catch {
         if (attempt === 1) continue;

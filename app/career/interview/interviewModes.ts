@@ -616,6 +616,121 @@ export function buildInterviewRubricLines(
   });
 }
 
+// ── 数値スコアリング（rubric → overallScore の決定論算出） ────────────────
+//
+// 背景:
+//   本 module は 11 criterion × mode 別ウェイトの rubric を既に持っているが、
+//   それは prompt へ自然言語（[最重視] 等）で流し込まれるだけで、最終評価に
+//   数値が 1 つも出ていなかった。ES（6 軸 → server 平均）/ プレゼン / GD が
+//   すべてスコアを出す中で面接だけ欠落しており、ユーザーは自分の水準も
+//   練習の伸びも確認できなかった。
+//
+// 設計（既存 ES / GD と同じ authority 分離）:
+//   AI が決めるのは **各 criterion の 0〜100 点だけ**。
+//   overallScore は server が rubric ウェイトとの加重平均で **決定論的**に算出する。
+//   → 「モード別 rubric 差」が「実際の overallScore 差」として機械的に現れる。
+//
+// ★ rubric（どの観点をどれだけ重視するか）は一切変更していない。
+//   ここで足すのは「既存 rubric を数値へ写す」変換だけ。
+
+/**
+ * rubric ウェイト語彙 → 数値ウェイト。
+ *
+ * ★ 本 repo に既存の数値対応は無かったため、ここを**唯一の定義点**とする
+ *   （prompt / route / UI / QA すべてがこの map を参照する。第 2 の定義を作らない）。
+ * ★ none = 0 は「加重平均の分母にも分子にも入らない」ことを意味する。
+ *   0 点として平均へ混ぜてはならない（対象外の観点で減点する結果になるため）。
+ */
+export const CAREER_INTERVIEW_RUBRIC_WEIGHT_VALUES: Record<
+  CareerInterviewRubricWeight,
+  number
+> = {
+  none: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  veryHigh: 4,
+};
+
+/** 全 criterion key（宣言順）。prompt / normalize / UI が同じ順序を共有する。 */
+export const CAREER_INTERVIEW_RUBRIC_CRITERION_KEYS = Object.keys(
+  CAREER_INTERVIEW_RUBRIC_CRITERIA,
+) as CareerInterviewRubricCriterionKey[];
+
+/**
+ * このモードで **実際に採点する** criterion（weight !== 'none'）。
+ *
+ * prompt の出力スキーマ・AI 出力の sanitize・UI の表示行がすべてこの集合で揃う。
+ * ＝ 対象外の観点は「AI に出させない / 受け取らない / 平均に入れない / 表示しない」。
+ */
+export function scoredInterviewCriteria(
+  config: CareerInterviewModeConfig,
+): CareerInterviewRubricCriterionKey[] {
+  return CAREER_INTERVIEW_RUBRIC_CRITERION_KEYS.filter(
+    (key) => config.rubric[key] !== 'none',
+  );
+}
+
+/** criterion スコア（0〜100 の整数）。採点対象の criterion だけを持つ部分 map。 */
+export type CareerInterviewCriterionScores = Partial<
+  Record<CareerInterviewRubricCriterionKey, number>
+>;
+
+/**
+ * criterion スコア → overallScore（0〜100 の整数）を決定論で算出する。
+ *
+ * 規則:
+ *   - weight 'none' の criterion は**完全に無視**する（値があっても捨てる）。
+ *   - 値が無い / 数値でない criterion も無視する（欠損で 0 点にしない）。
+ *   - 有効な criterion が 1 つも無ければ null（＝採点不能。0 点にしない）。
+ *   - それ以外は Σ(score × weight) / Σ(weight) を四捨五入。
+ *
+ * ★ never-throw。壊れた AI 出力でも null か 0〜100 の整数しか返さない。
+ */
+export function computeInterviewOverallScore(
+  config: CareerInterviewModeConfig,
+  scores: CareerInterviewCriterionScores | null | undefined,
+): number | null {
+  if (!scores || typeof scores !== 'object') return null;
+  let weighted = 0;
+  let totalWeight = 0;
+  for (const key of CAREER_INTERVIEW_RUBRIC_CRITERION_KEYS) {
+    const weight = CAREER_INTERVIEW_RUBRIC_WEIGHT_VALUES[config.rubric[key]];
+    if (!weight) continue; // none（0）は分母にも入れない。
+    const raw = scores[key];
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+    const score = Math.max(0, Math.min(100, raw));
+    weighted += score * weight;
+    totalWeight += weight;
+  }
+  if (totalWeight === 0) return null;
+  return Math.round(weighted / totalWeight);
+}
+
+/**
+ * 任意の unknown を、そのモードで採点対象の criterion だけの整数 map へ正規化する。
+ *
+ * - 未知 key・weight 'none' の key は **破棄**する（AI が勝手に足しても入らない）。
+ * - 数値でない / 非有限は破棄（欠損として扱う。0 で埋めない）。
+ * - 0〜100 に clamp して整数化する。
+ * ★ never-throw。
+ */
+export function normalizeInterviewCriterionScores(
+  config: CareerInterviewModeConfig,
+  raw: unknown,
+): CareerInterviewCriterionScores {
+  const out: CareerInterviewCriterionScores = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const r = raw as Record<string, unknown>;
+  for (const key of scoredInterviewCriteria(config)) {
+    const value = r[key];
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) continue;
+    out[key] = Math.round(Math.max(0, Math.min(100, n)));
+  }
+  return out;
+}
+
 // ── 受験先・選考の想定（target）の純粋ユーティリティ ─────────────────────
 // client（target 入力 / setup / result 表示）と server（start/turn/complete route）の
 // 双方から使う。ブラウザ API は使わない。

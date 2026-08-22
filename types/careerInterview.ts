@@ -120,6 +120,21 @@ export type CareerInterviewTargetFeedback = {
 // 面接全体の最終評価。
 // companyFit は STEP（就活版面接強化）で追加。旧ログには無いため読み取り側は欠損許容する。
 export type CareerInterviewFinalResult = {
+  // ── 数値評価（rubric ベース・すべて optional＝旧ログ後方互換） ──────────
+  // 旧ログ（本 field 追加前の面接結果）には存在しない。読み取り側は
+  // 「欠損＝スコアなし」として正常表示すること（0 点として扱わない）。
+  //
+  // ★ authority 分離（ES / GD と同じ契約）:
+  //   AI が決めるのは criterionScores（各 0〜100）だけ。
+  //   overallScore は server が interviewModes の mode 別 rubric ウェイトとの
+  //   加重平均で決定論的に算出する（AI の自己申告は採用しない）。
+  //
+  // criterion key は CareerInterviewRubricCriterionKey と 1:1。
+  // そのモードで weight='none' の観点は **含まれない**（採点対象外）。
+  criterionScores?: Record<string, number>;
+  // 総合スコア（0〜100 の整数。server 算出）。採点不能なら未設定。
+  overallScore?: number;
+
   overallComment: string;
   strengths: string[];
   improvements: string[];
