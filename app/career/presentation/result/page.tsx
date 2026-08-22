@@ -168,7 +168,13 @@ export default function CareerPresentationResultPage() {
       }
       const next: CareerPresentationQaTurn[] = [
         ...withAnswer,
-        { role: 'question', content: data.question },
+        {
+          role: 'question',
+          content: data.question,
+          // 直前の回答へのリアクション（API は以前から返していたが捨てられていた）。
+          // 空文字は保存しない（旧ログと同じ「リアクション無し」状態に揃える）。
+          ...(data.reaction?.trim() ? { reaction: data.reaction.trim() } : {}),
+        },
       ];
       setQaTurns(next);
       persistQa(next);
@@ -327,6 +333,11 @@ export default function CareerPresentationResultPage() {
                   <ul className="flex flex-col gap-2 mb-4">
                     {displayedTurns.map((t, i) => (
                       <li key={i} className="text-sm leading-relaxed">
+                        {/* 直前の回答への一言リアクション（面接 / ES 深掘りと同じ扱い）。
+                            旧ログには無いので、値があるときだけ質問の上に出す。 */}
+                        {t.role === 'question' && t.reaction && (
+                          <p className="mb-1 text-xs text-emerald-700">{t.reaction}</p>
+                        )}
                         <span
                           className={
                             t.role === 'question'

@@ -127,6 +127,15 @@ export type CareerPresentationFinalResult = {
 export type CareerPresentationQaTurn = {
   role: 'question' | 'answer';
   content: string;
+  /**
+   * 直前の回答に対する採用担当の一言リアクション（role='question' のターンにのみ付く）。
+   *
+   * API（/api/career/presentation/qa）は以前から `{ reaction, question }` を返していたが、
+   * 結果画面が question しか使わず reaction を捨てていた（面接 / ES 深掘りは表示している）。
+   * ★ optional。旧ログ（本 field 追加前の qa 配列）には存在しないため、
+   *   読み取り側は欠損を前提に扱うこと（欠損＝リアクション無しで正常）。
+   */
+  reaction?: string;
 };
 
 // 進行中 / 完了済みのプレゼンセッション（localStorage: careerPresentationSessions）。

@@ -25,6 +25,7 @@ import type {
   CareerPresentationType,
   CareerPresentationQaTurn,
   CareerPresentationConfig,
+  CareerPresentationRank,
 } from '@/types/careerPresentation';
 import type { CompanyOfficialReadResult } from '@/types/careerCompanyOfficial';
 import {
@@ -55,6 +56,45 @@ export const CAREER_PRESENTATION_AXES: Array<{ key: string; label: string; hint:
   { key: 'timeManagement', label: '発表時間への収まり', hint: '発表時間に対して情報量が過不足ないか' },
   { key: 'connection', label: 'お題・企業・職種との接続／独自性', hint: 'お題や志望先・職種に接続し、自分ならではの視点があるか' },
 ];
+
+// ── 総合点 / ランクの決定論算出（server が唯一の算出者）─────────────────
+//
+// route（evaluate/route.ts）から lift した純関数。QA harness が fixture で
+// 直接検証できるようにするため（prompt を lift しているのと同じ理由）。
+//
+// 背景:
+//   以前は AI が totalScore / rank を自己申告し、それがほぼそのまま採用されていたため
+//   「8 軸が全部 40 点でも総合 85 点」が構造的に起こりえた。ES（6 軸平均）/ GD（加重平均）と
+//   同じく **AI は軸だけ・総合点は server** という authority 分離に揃える。
+
+/**
+ * 8 軸スコア → 総合点（0〜100 の整数）。
+ *
+ * 重み: プレゼンには既存の重み概念が無い（presentationModes / prompt / config の
+ *   いずれにも軸別ウェイトの定義が無い）ため **単純平均**。
+ *   evaluationFocus（ユーザーが選ぶ「特に評価してほしい観点」）は prompt 側で
+ *   採点の着眼点として既に効いているので、ここで二重に重み付けしない。
+ *   将来ウェイトを入れる場合もこの関数 1 箇所を変えれば済む。
+ */
+export function computePresentationTotalScore(
+  axes: readonly { score: number }[],
+): number {
+  if (axes.length === 0) return 0;
+  const sum = axes.reduce((acc, a) => acc + (Number.isFinite(a.score) ? a.score : 0), 0);
+  return Math.round(Math.max(0, Math.min(100, sum / axes.length)));
+}
+
+/**
+ * 総合点 → ランク。
+ * ★ プレゼン固有の閾値（S90+ / A80 / B65 / C50 / D）。他機能へ揃えない。
+ */
+export function presentationRankFromScore(score: number): CareerPresentationRank {
+  if (score >= 90) return 'S';
+  if (score >= 80) return 'A';
+  if (score >= 65) return 'B';
+  if (score >= 50) return 'C';
+  return 'D';
+}
 
 // お題ベースプレゼンの評価コンテキスト（persona / prompt が共有）。
 export type CareerPresentationPromptContext = {
@@ -355,7 +395,11 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
       ? `${jobEmphasis} この職種観点は companyFit・expectedQuestions・interviewerConcerns にも反映する。`
       : '',
     '評価軸（axes）は以下の8軸すべてを、それぞれ 0〜100 の整数で採点し、key/label は指定どおりにしてください。',
-    'totalScore は8軸を踏まえた総合点（0〜100の整数）。rank は totalScore に応じて S(90+)/A(80-89)/B(65-79)/C(50-64)/D(0-49) とする。',
+    // ★ 総合点・ランクは AI に出させない（server が 8 軸から決定論で算出する）。
+    //   以前は AI が totalScore / rank を自己申告し、それがほぼそのまま採用されていたため、
+    //   「8 軸が全部 40 点でも総合 85 点」が構造的に起こりえた。
+    '★ 総合点（totalScore）とランク（rank）は出力しないでください。8軸のスコアから自動的に算出されます。',
+    '★ そのため、8軸それぞれの採点が総合評価そのものになります。印象で甘くつけず、軸ごとに根拠をもって採点してください。',
     'structureFeedback は構成（話す順番・骨子）への、persuasionFeedback は説得力への、deliveryFeedback は話し方・伝え方への、それぞれ2文の個別フィードバック。',
     // 出力長の契約（P1: runtime budget 内に収めるための上限）。
     //   ★ 評価項目そのものは 1 つも削っていない（8 軸・全 field を維持）。
@@ -373,8 +417,6 @@ export function buildEvaluateInstruction(ctx: CareerPresentationPromptContext): 
     '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
     '',
     '{',
-    '  "totalScore": 0〜100の整数,',
-    '  "rank": "S" | "A" | "B" | "C" | "D",',
     '  "overallComment": string,',
     '  "axes": [',
     axisList,

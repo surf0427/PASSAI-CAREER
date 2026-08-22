@@ -18,7 +18,6 @@ import type { CareerMatchEngineResult } from '@/lib/careerMatching';
 import type {
   CareerPresentationConfig,
   CareerPresentationFinalResult,
-  CareerPresentationRank,
   CareerPresentationAxisScore,
   CareerPresentationType,
 } from '@/types/careerPresentation';
@@ -30,6 +29,8 @@ import {
   buildPresentationSystemParts,
   buildEvaluateUserPrompt,
   buildEvaluateInstruction,
+  computePresentationTotalScore,
+  presentationRankFromScore,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
 // Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
@@ -96,21 +97,8 @@ function clampScore(value: unknown): number {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-function rankFromScore(score: number): CareerPresentationRank {
-  if (score >= 90) return 'S';
-  if (score >= 80) return 'A';
-  if (score >= 65) return 'B';
-  if (score >= 50) return 'C';
-  return 'D';
-}
-
-function normalizeRank(value: unknown, score: number): CareerPresentationRank {
-  const v = str(value).toUpperCase();
-  if (v === 'S' || v === 'A' || v === 'B' || v === 'C' || v === 'D') {
-    return v as CareerPresentationRank;
-  }
-  return rankFromScore(score);
-}
+// 総合点 / ランクの算出は presentationPrompt.ts（共有モジュール）へ lift 済み。
+//   QA harness が fixture で直接検証できるようにするため。route はそれを呼ぶだけ。
 
 // AI が返した axes を CAREER_PRESENTATION_AXES の固定順・固定ラベルに正規化する。
 function normalizeAxes(raw: unknown): CareerPresentationAxisScore[] {
@@ -136,12 +124,15 @@ function normalizeAxes(raw: unknown): CareerPresentationAxisScore[] {
 
 function normalizeResult(raw: unknown): CareerPresentationFinalResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const totalScore = clampScore(r.totalScore);
+  // ★ authority: 8 軸だけが AI 由来。総合点とランクは server が軸から導出する。
+  //   AI が totalScore / rank を返しても **読まない**（prompt でも出力を禁止済み）。
+  const axes = normalizeAxes(r.axes);
+  const totalScore = computePresentationTotalScore(axes);
   return {
     totalScore,
-    rank: normalizeRank(r.rank, totalScore),
+    rank: presentationRankFromScore(totalScore),
     overallComment: str(r.overallComment),
-    axes: normalizeAxes(r.axes),
+    axes,
     goodPoints: strArray(r.goodPoints),
     improvements: strArray(r.improvements),
     priorityImprovements: strArray(r.priorityImprovements),
