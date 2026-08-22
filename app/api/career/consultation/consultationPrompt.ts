@@ -263,6 +263,11 @@ export type ConsultationSystemPromptInput = {
   values: CareerValuesInput | null;
   // Personal Memory 由来の横断 snapshot（Event Signal は含まない）。
   crossFeature: ConsultationCrossFeatureInput;
+  // Company Data Spine A 層（公式情報）。route が resolve + render 済みの **文字列**で渡す
+  //   （Event Signal と同じ契約: 本 builder は read / gate / renderer を import しない）。
+  //   企業が論点でない turn / 未解決 / 事実なし / flag OFF では '' で渡り、下の filter で除去される。
+  //   ★ ユーザー本人の企業研究メモ（B 層）は crossFeature 側にあり、これとは別ブロック。
+  companyOfficialBlock?: string;
   // route が現行どおり resolve（pilot guard 適用済み）した Event Signal block 文字列。
   //   pilot OFF / reject / empty / malformed 時は '' で渡り、下の filter で除去される（block なし＝不変）。
   eventSignalsBlock: string;
@@ -348,6 +353,11 @@ function assembleConsultationSystemParts(
 
   const dynamicSuffix = [
     dynamicBaseTail,
+    // Company Data Spine A 層（公式情報）。★ B 層（下の crossFeatureContext 内の企業研究メモ）とは
+    //   **別ブロック**として並べる。公式事実 / 本人の解釈 / AI 派生を混ぜないのが Spine の中核契約。
+    //   位置は面接 / プレゼンと同じ「base の直後・crossFeature の前」に揃える。
+    //   企業が論点でない turn では '' ＝ 従来 prompt と byte 互換。
+    input.companyOfficialBlock ?? '',
     // P15-D: Personal Memory 由来の横断ブロックは crossFeatureContext に決定的に集約済み。
     orchestrated.crossFeatureContext,
     // Data Spine Layer 2（Personal Memory）。★ base / crossFeature とは **別ブロック**の
@@ -365,7 +375,8 @@ function assembleConsultationSystemParts(
 }
 
 // 相談AIの完成 system prompt を組み立てる純関数（flat 版・byte 仕様は従来どおり）。
-//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ Personal Memory 横断（crossFeatureContext）
+//   並び順（現行維持）: 司令塔 persona → base（Orchestrator）→ Company Data Spine A 層（公式情報・
+//   route resolve 済み / 無ければ ''）→ Personal Memory 横断（crossFeatureContext）
 //   → Event Signal block（route resolve 済み・現行位置）→ 出力形式。
 export function buildConsultationSystemPrompt(input: ConsultationSystemPromptInput): string {
   const { cachedPrefix, dynamicSuffix } = assembleConsultationSystemParts(input);

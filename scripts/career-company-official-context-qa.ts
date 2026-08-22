@@ -262,15 +262,26 @@ check('C-3m allowlist 内 purpose では出る', renderCompanyOfficialForPurpose
 //   STEP-GD-31 で gd_feedback は allowlist へ **意図的に追加**されたため負例から外した
 //   （GD は Company Data Spine を使う purpose になった）。
 //   ES / プレゼン / 面接も opt-in 済みのため負例には使えない。
-check('C-3n allowlist 外 purpose では出さない', !renderCompanyOfficialForPurpose('consultation', READY).used);
+check('C-3n allowlist 外 purpose では出さない', !renderCompanyOfficialForPurpose('mypage_summary', READY).used);
 check('C-3n2 マッチングにも投入しない', !renderCompanyOfficialForPurpose('matching', READY).used);
 check('C-3n3 自己分析にも投入しない', !renderCompanyOfficialForPurpose('self_analysis', READY).used);
 // Phase 2 で面接、Data Spine connection で ES / プレゼンを明示的に opt-in。
 //   allowlist は **列挙で固定**する（件数だけの assert だと、意図しない purpose が紛れ込んでも通る）。
 check(
-  'C-3o allowlist は company_research_review / interview_practice / es_review / es_deep_dive / presentation_feedback / gd_feedback の 6 つだけ',
+  'C-3o allowlist は company_research_review / interview_practice / es_review / es_deep_dive / presentation_feedback / gd_feedback / consultation の 7 つだけ',
   [...COMPANY_OFFICIAL_PURPOSES].sort().join(',') ===
-    'company_research_review,es_deep_dive,es_review,gd_feedback,interview_practice,presentation_feedback',
+    'company_research_review,consultation,es_deep_dive,es_review,gd_feedback,interview_practice,presentation_feedback',
+);
+check(
+  'C-3o1e ★ 就活相談 purpose で公式情報 block が出る（A 層 → consultation）',
+  renderCompanyOfficialForPurpose('consultation', READY).used,
+);
+check(
+  'C-3o1e2 就活相談の注意書きは企業優劣の断定と選考事実の創作を禁じている',
+  (() => {
+    const t = renderCompanyOfficialForPurpose('consultation', READY).text;
+    return t.includes('企業そのものの優劣') && t.includes('選考フロー');
+  })(),
 );
 check(
   'C-3o1d ★ GD purpose で公式情報 block が出る（A 層 → gd_feedback・STEP-GD-31）',
@@ -445,7 +456,11 @@ console.log('[C-5] Orchestrator parity（company 未指定なら byte 一致）'
   check('C-5g data があれば companyOfficialContext が出る', withData.companyOfficialContext !== '');
   check(
     'C-5h 対象外 purpose では data があっても ""',
-    buildCareerContextForPurpose('consultation', base, { company: READY }).companyOfficialContext === '',
+    buildCareerContextForPurpose('matching', base, { company: READY }).companyOfficialContext === '',
+  );
+  check(
+    'C-5h0 ★ consultation では data があれば出る（相談AI への Company Data Spine 接続）',
+    buildCareerContextForPurpose('consultation', base, { company: READY }).companyOfficialContext !== '',
   );
   check(
     'C-5h1 ★ gd_feedback では data があれば出る（STEP-GD-31）',

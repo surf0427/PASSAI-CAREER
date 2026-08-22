@@ -46,6 +46,13 @@ import { buildConsultationSystemBlocks } from './consultationPrompt';
 // Batch 1: base context（profile/activity/values）を canary + Source-Sync verified のときだけ
 //   Layer 1 server read へ切り替える。未証明・非 canary では従来どおり request body bridge。
 import { resolveConsultationContextInputs } from './resolveContextInputs';
+// Company Data Spine A 層（公式情報）。企業が論点になる turn だけ解決する（never-throw / fail-open）。
+//   identity 解決 / moderation / provenance / freshness / budget は既存 helper と renderer が強制する。
+import {
+  collectConsultationCompanyCandidates,
+  selectConsultationCompanyTargets,
+  resolveConsultationCompanyOfficial,
+} from './resolveCompanyOfficial';
 // Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
 import { resolvePersonalMemoryForPurpose } from '../resolvePersonalMemoryContext';
 // dedupe presence は crossFeature renderer と **同一実装**で block の有無を判定する。
@@ -330,6 +337,24 @@ export async function POST(req: Request) {
     contextOutcome: null,
   });
 
+  // Company Data Spine A 層（never-throw / fail-open）。
+  //   ★ 企業名が会話に出ただけでは読まない。「企業を論点にした相談」かつ「本人の構造化データに
+  //     ある企業名が今回のメッセージ（または直近のユーザー発話）に出ている」ときだけ read する。
+  //     候補ゼロ = DB query ゼロ（自己分析・面接一般論・感情相談では I/O が発生しない）。
+  const companyTargets = selectConsultationCompanyTargets({
+    message,
+    history,
+    candidates: collectConsultationCompanyCandidates({
+      targetCompanies: ctx.profile?.targetCompanies ?? null,
+      companyResearch: crossFeature.companyResearch,
+      esHistory: crossFeature.esHistory,
+    }),
+  });
+  const companyOfficial =
+    companyTargets.length > 0
+      ? await resolveConsultationCompanyOfficial(companyTargets, new Date().toISOString())
+      : { block: '', rendered: [], skipped: [] };
+
   // Prompt Cache（P2）: system prompt を「静的 prefix」と「動的 suffix」に分けて受け取る。
   //   flatten（cachedPrefix + '\n\n' + dynamicSuffix）は従来の完成 system prompt と byte 一致し、
   //   AI へ渡る prompt text の意味内容は不変（persona / 出力形式 / 並び順すべて据え置き）。
@@ -340,6 +365,7 @@ export async function POST(req: Request) {
     ) as CareerActivityInput | null,
     values: ctx.values,
     crossFeature,
+    companyOfficialBlock: companyOfficial.block,
     eventSignalsBlock,
     personalMemory,
   });
