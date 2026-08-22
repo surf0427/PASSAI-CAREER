@@ -119,6 +119,7 @@
     "qa:careerLegacyBootstrapBoundary": "npx tsx scripts/career-legacy-bootstrap-boundary-qa.ts",
     "qa:careerBilling": "npx tsx scripts/career-billing-qa.ts",
     "qa:careerEntitlement": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-entitlement-qa.ts",
+    "qa:careerE2eDiscount": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-e2e-discount-qa.ts",
     "qa:careerDailyQuota": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-daily-quota-qa.ts",
     "qa:careerStripeObservability": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-stripe-observability-qa.ts",
     "qa:careerStripeEnvironment": "npx tsx scripts/career-stripe-environment-qa.ts",

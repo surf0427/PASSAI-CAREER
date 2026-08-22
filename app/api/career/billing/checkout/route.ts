@@ -19,6 +19,10 @@
  *   - CAREER は単一の有料プラン。priceId は server が env（STRIPE_CAREER_PRICE_ID）
  *     からのみ解決する。任意の Stripe Price ID も plan 選択も client に許さない。
  *   - identity は server session（Project B cookie）が唯一の正本。
+ *   - E2E 専用ユーザー 1 名にだけ初回 coupon を当てる経路がある
+ *     （lib/careerBilling/e2eDiscount.ts）。適用判定は **server session の userId と
+ *     email の両方一致**でのみ決まり、client からは coupon / price / plan を一切指定できない。
+ *     env 未設定の環境では完全に no-op（通常ユーザーの価格は不変）。
  *   - Customer は career_billing_customers の 1:1 mapping から解決（重複契約防止）。
  *
  * ── 受験版との差分 ────────────────────────────────────────────────────
@@ -46,6 +50,11 @@ import {
   retrieveCareerPrice,
 } from '@/lib/careerBilling/stripe';
 import { CAREER_METADATA_USER_ID_KEY } from '@/lib/careerBilling/subscription';
+import {
+  checkCareerE2eCoupon,
+  resolveCareerE2eDiscountFromEnv,
+} from '@/lib/careerBilling/e2eDiscount';
+import { currentExpectedStripeLivemode } from '@/lib/stripe/environment';
 import { resolveCareerAppOrigin } from '@/lib/careerBilling/origin';
 import { logCareerStripeFailure } from '@/lib/careerBilling/stripeLog';
 
@@ -178,7 +187,38 @@ export async function POST(req: Request) {
   }
   const priceId = priceCheck.price.id;
 
-  // ── 6) Checkout Session ──
+  // ── 6) E2E 専用ユーザーの初回 coupon（通常ユーザーには一切影響しない）──
+  //    ★ 判定材料は server session の userId / email だけ。client 指定は不可能。
+  //    ★ E2E ユーザーだと確定したのに coupon が使えない場合は、通常価格へ倒さず失敗させる
+  //      （¥200 のつもりで ¥3,000 の決済画面を出さないため = fail-closed）。
+  const e2e = resolveCareerE2eDiscountFromEnv({ userId, email });
+  let e2eApplied: { couponId: string; amountOff: number; expectedInitialAmount: number } | null = null;
+
+  if (e2e.kind === 'misconfigured') {
+    devWarn('[career/billing/checkout] e2e discount misconfigured', { reason: e2e.reason });
+    return jsonError('BILLING_UNCONFIGURED', 'ただいまお申し込みを受け付けていません。', 503);
+  }
+  if (e2e.kind === 'apply') {
+    let coupon: Stripe.Coupon;
+    try {
+      coupon = await getStripeClient().coupons.retrieve(e2e.couponId);
+    } catch (err) {
+      logCareerStripeFailure('coupons.retrieve', err);
+      return jsonError('BILLING_UNCONFIGURED', 'ただいまお申し込みを受け付けていません。', 503);
+    }
+    const checked = checkCareerE2eCoupon(coupon, priceCheck.price, currentExpectedStripeLivemode());
+    if (checked.kind !== 'ok') {
+      devWarn('[career/billing/checkout] e2e coupon rejected', { reason: checked.reason });
+      return jsonError('BILLING_UNCONFIGURED', 'ただいまお申し込みを受け付けていません。', 503);
+    }
+    e2eApplied = {
+      couponId: e2e.couponId,
+      amountOff: checked.amountOff,
+      expectedInitialAmount: checked.expectedInitialAmount,
+    };
+  }
+
+  // ── 7) Checkout Session ──
   const params: Stripe.Checkout.SessionCreateParams = {
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],
@@ -191,13 +231,44 @@ export async function POST(req: Request) {
       metadata: { [CAREER_METADATA_USER_ID_KEY]: userId },
     },
     metadata: { [CAREER_METADATA_USER_ID_KEY]: userId, app: 'passai-career' },
-    allow_promotion_codes: true,
+    // ★ Stripe は discounts と allow_promotion_codes を同時指定できない。
+    //   通常ユーザーは従来どおり promotion code 入力可、E2E だけ server 指定の coupon。
+    ...(e2eApplied
+      ? { discounts: [{ coupon: e2eApplied.couponId }] }
+      : { allow_promotion_codes: true }),
   };
 
   try {
     const session = await getStripeClient().checkout.sessions.create(params);
     if (!session.url) {
       return jsonError('STRIPE_ERROR', 'お支払いページを開けませんでした。', 502);
+    }
+    if (e2eApplied) {
+      // 期待額と違う Session の URL は返さない（fail-closed）。
+      const total = session.amount_total;
+      if (typeof total === 'number' && total !== e2eApplied.expectedInitialAmount) {
+        devWarn('[career/billing/checkout] e2e amount mismatch', {
+          expected: e2eApplied.expectedInitialAmount,
+          actual: total,
+        });
+        return jsonError('BILLING_UNCONFIGURED', 'ただいまお申し込みを受け付けていません。', 503);
+      }
+      // 検証用の内訳（金額のみ。coupon id / price id / customer id は返さない）。
+      return Response.json(
+        {
+          url: session.url,
+          e2e: {
+            priceUnitAmount: priceCheck.price.unit_amount,
+            couponAmountOff: e2eApplied.amountOff,
+            expectedInitialAmount: e2eApplied.expectedInitialAmount,
+            amountTotal: total ?? null,
+            currency: priceCheck.price.currency,
+            livemode: session.livemode,
+            mode: session.mode,
+          },
+        },
+        { status: 200 },
+      );
     }
     return Response.json({ url: session.url }, { status: 200 });
   } catch (err) {

@@ -41,6 +41,7 @@ import 'server-only';
 /** 診断対象の Stripe API operation（課金 chain 上の外部呼び出しのみ）。 */
 export type CareerStripeOperation =
   | 'prices.retrieve'
+  | 'coupons.retrieve'
   | 'customers.create'
   | 'checkout.sessions.create'
   | 'billingPortal.sessions.create';
