@@ -3,7 +3,8 @@
 // 質問文・回答文は LP からのコピー編集が見やすいよう配列で集中管理。
 //
 // 回答は必ず実装に一致させること（推測で書かない）。根拠:
-//   - 機能一覧            … app/career/home/page.tsx の FEATURES
+//   - 機能一覧            … app/components/landing/featureAvailability.ts の catalog を
+//                            server flag で絞ったもの（機能カードと同一。件数も配列長から導く）
 //   - 開始導線            … LP の「始める」→ /career/pricing → 登録 → Stripe Checkout →
 //                            /career/profile（基本情報）→ /career/home
 //   - ログイン / 契約必須  … lib/careerBilling/aiAccess.ts の requireCareerAiAccess。
@@ -21,11 +22,22 @@ import {
   CAREER_PUBLIC_MONTHLY_PRICE_LABEL,
   CAREER_PUBLIC_PRODUCT_NAME,
 } from '@/lib/careerPricing';
+import {
+  selectAvailableLandingFeatureNames,
+  type CareerLandingAvailability,
+} from './featureAvailability';
 
-const FAQ_ITEMS: { q: string; a: string }[] = [
+// ★ 「何ができますか？」の機能一覧は **flag で提供中のものだけ**を、機能カードと同じ
+//   catalog から作る（件数もそこから導く）。カードには無いのに FAQ には書いてある、
+//   というズレが構造的に起きない。
+function buildFaqItems(
+  availability: CareerLandingAvailability,
+): { q: string; a: string }[] {
+  const featureNames = selectAvailableLandingFeatureNames(availability);
+  return [
   {
     q: 'PASSAI CAREERでは何ができますか？',
-    a: '新卒就活の準備を、次の8つの機能で進められます。\n活動整理／自己分析／就活軸整理／企業研究／ES作成／面接練習／GD練習／プレゼン対策。\nあわせて、進め方を相談できる「就活相談AI」と、進捗と履歴を確認できる「マイページ」が使えます。',
+    a: `新卒就活の準備を、次の${featureNames.length}つの機能で進められます。\n${featureNames.join('／')}。\nあわせて、進め方を相談できる「就活相談AI」と、進捗と履歴を確認できる「マイページ」が使えます。`,
   },
   {
     q: 'どんな就活生向けですか？',
@@ -33,11 +45,11 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: '自己分析だけでも利用できますか？',
-    a: 'はい、使いたい機能だけでも利用できます。\nおすすめの進め方（活動整理 → 就活軸整理 → 自己分析 → 企業研究 → ES → 面接 → プレゼン → GD）は表示されますが、この順番どおりに進める必要はありません。',
+    a: 'はい、使いたい機能だけでも利用できます。\nおすすめの進め方は画面に表示されますが、この順番どおりに進める必要はありません。',
   },
   {
     q: 'ESや面接対策にも使えますか？',
-    a: 'はい。ES作成ではガクチカ・自己PR・志望動機などを深掘り質問と添削で仕上げられます。\n面接練習では面接官AIと、質問→回答→深掘りのターン形式で音声練習ができ、自己分析／企業理解／本番／圧迫の4モードから選べます。\nこのほかGD練習・プレゼン対策も利用できます。',
+    a: 'はい。ES作成ではガクチカ・自己PR・志望動機などを深掘り質問と添削で仕上げられます。\n面接練習では面接官AIと、質問→回答→深掘りのターン形式で音声練習ができ、自己分析／企業理解／本番／圧迫の4モードから選べます。\nこのほかプレゼン対策も利用できます。',
   },
   {
     q: '保存した情報は他の機能でも使われますか？',
@@ -67,7 +79,8 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
     q: '入力した内容はどこに保存されますか？',
     a: '入力内容や結果は、まずお使いのブラウザ内に保存されます。\nログイン中は、対応している保存データがアカウントにも保存され、同じアカウントでログインすれば別の端末やブラウザでも引き継げます。\nログインせずにご利用の場合や、対応していないデータは、その端末のブラウザにのみ残ります。ブラウザのデータを削除すると、その端末の保存内容は消えるためご注意ください。',
   },
-];
+  ];
+}
 
 function FAQItem({ q, a }: { q: string; a: string }) {
   return (
@@ -102,7 +115,13 @@ function FAQItem({ q, a }: { q: string; a: string }) {
   );
 }
 
-export function FaqSection() {
+export function FaqSection({
+  availability,
+}: {
+  availability: CareerLandingAvailability;
+}) {
+  const faqItems = buildFaqItems(availability);
+
   return (
     <section id="faq" className="bg-slate-50 border-y border-slate-200">
       <div className="mx-auto max-w-3xl px-6 sm:px-8 py-14 sm:py-20">
@@ -116,7 +135,7 @@ export function FaqSection() {
         </div>
 
         <div className="space-y-3 sm:space-y-4">
-          {FAQ_ITEMS.map((item) => (
+          {faqItems.map((item) => (
             <FAQItem key={item.q} q={item.q} a={item.a} />
           ))}
         </div>

@@ -26,11 +26,13 @@ import { BRAND_NAME } from "@/lib/brand";
 
 // 公開トップ（app/page.tsx）は PASSAI CAREER 専用 LP のため、ルート metadata も
 // CAREER 基準にする。/career 配下は app/career/layout.tsx が個別に上書きする。
-// 掲載する機能は実装済み route のみ（企業マッチングは flag 既定 OFF のため含めない）。
+// 掲載する機能は実装済み route のみ、かつ **feature flag で停止しうる機能を名指ししない**
+// （GD / 企業マッチングは既定 OFF。metadata は静的なので flag に追従できず、OFF のときに
+//  「使える」と読める記述が検索結果・SNS プレビューへ出てしまうため常時提供分だけを書く）。
 export const metadata: Metadata = {
   title: `${BRAND_NAME} CAREER`,
   description:
-    "新卒就活の活動整理・自己分析・就活軸整理・企業研究・ES・面接練習・GD練習・プレゼン対策をAIでサポートする就活サービスです。入力した内容は次の対策にも引き継がれます。",
+    "新卒就活の活動整理・自己分析・就活軸整理・企業研究・ES・面接練習・プレゼン対策をAIでサポートする就活サービスです。入力した内容は次の対策にも引き継がれます。",
 };
 
 export default function RootLayout({

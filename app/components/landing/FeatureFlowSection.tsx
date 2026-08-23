@@ -6,20 +6,27 @@
 // flex-col + 説明 flex-1 の構造で、グリッド内の同じ行のカードどうしで
 // 「特徴・キャッチコピーの位置」が揃う。
 //
-// 掲載しているのは /career 配下に実ページがある機能だけ（app/career/home/page.tsx の
-// FEATURES / RECOMMENDED_STEPS と一致）。企業マッチング（/career/matching）は
-// NEXT_PUBLIC_CAREER_COMPANY_MATCHING_ENABLED が既定 OFF で公開対象外のため載せない。
+// 掲載しているのは /career 配下に実ページがあり、かつ **今この環境で提供されている**機能だけ。
+// カードの実データは app/components/landing/featureAvailability.ts の catalog が持ち、
+// 提供可否（GD / 企業マッチング）は app/page.tsx が server flag から解決して渡す。
+// ★ 番号（01, 02 …）は **絞り込んだ後の並び**で採番するので、OFF の機能があっても欠番にならない。
+// ★ JSX でカードを二重に持たない（catalog を filter して map するだけ）。
 //
 // 流れのステップとは別に、それらを横断して支える機能（就活相談AI / マイページ / 企業登録）を
 // 「流れ全体を支える機能」として番号なしの別ブロックで提示する。
 // num を省略すると番号バッジが消える以外は、流れカードと同一デザインを共有する。
+
+import {
+  selectAvailableLandingFlowSteps,
+  type CareerLandingAvailability,
+} from './featureAvailability';
 
 type StepCardProps = {
   num?: string;
   icon: string;
   title: string;
   desc: string;
-  tags: string[];
+  tags: readonly string[];
   catchphrase: string;
 };
 
@@ -55,7 +62,14 @@ function StepCard({ num, icon, title, desc, tags, catchphrase }: StepCardProps) 
   );
 }
 
-export function FeatureFlowSection() {
+export function FeatureFlowSection({
+  availability,
+}: {
+  availability: CareerLandingAvailability;
+}) {
+  // 提供中のステップだけを、catalog の順序のまま取り出す。
+  const steps = selectAvailableLandingFlowSteps(availability);
+
   return (
     <section id="features" className="bg-white">
       <div className="mx-auto max-w-5xl px-6 sm:px-8 py-14 sm:py-20">
@@ -66,7 +80,7 @@ export function FeatureFlowSection() {
             1つの流れでつながる
           </h2>
           <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-            活動整理から自己分析、就活軸、企業研究、ES、面接・GD・プレゼン練習まで。
+            活動整理から自己分析、就活軸、企業研究、ES、面接・プレゼン練習まで。
             <br className="hidden sm:inline" />
             バラバラに対策するのではなく、入力した内容を次の対策に活かしながら進められます。
             <br className="hidden sm:inline" />
@@ -75,70 +89,17 @@ export function FeatureFlowSection() {
         </div>
 
         <ol className="grid gap-5 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <StepCard
-            num="01"
-            icon="🗂️"
-            title="活動整理"
-            desc="サークル・アルバイト・インターン・資格などの経験を、質問に答えるだけで整理。ESや面接で使える形にまとまります。"
-            tags={['#経験整理', '#AIヒント', '#ESにつながる']}
-            catchphrase="「経験を、話せる材料に変える。」"
-          />
-          <StepCard
-            num="02"
-            icon="🔍"
-            title="自己分析"
-            desc="「なぜその行動をしたのか」をAIが深掘り。自分でも気づかなかった強みや価値観を言葉にできます。"
-            tags={['#AI深掘り', '#強み分析', '#価値観の言語化']}
-            catchphrase="「自分の強みを、言葉にする。」"
-          />
-          <StepCard
-            num="03"
-            icon="🧭"
-            title="就活軸整理"
-            desc="重視する条件・避けたい条件・興味のある業界や職種・働き方・社風を、チェック形式で整理して就活の軸を言語化します。"
-            tags={['#チェック形式', '#業界職種', '#働き方']}
-            catchphrase="「選ぶ基準を、自分で決める。」"
-          />
-          <StepCard
-            num="04"
-            icon="🏢"
-            title="企業研究"
-            desc="自分で調べた企業研究メモをAIが添削。不足している視点や思い込みを指摘し、あなたの情報とのすり合わせまで行います。"
-            tags={['#メモ添削', '#不足の指摘', '#自分との接続']}
-            catchphrase="「調べた内容を、使える理解に。」"
-          />
-          <StepCard
-            num="05"
-            icon="✍️"
-            title="ES作成"
-            desc="ガクチカ・自己PR・志望動機などを、AIの深掘り質問と添削で仕上げます。AIが代筆するのではなく、自分で書く力を鍛える設計です。"
-            tags={['#深掘り質問', '#材料整理', '#AI添削', '#改善支援']}
-            catchphrase="「自分の言葉で、書き切る。」"
-          />
-          <StepCard
-            num="06"
-            icon="🤖"
-            title="面接練習"
-            desc="面接官AIと、質問→回答→深掘りのターン形式で音声練習。自己分析・企業理解・本番・圧迫の4モードから選べます。"
-            tags={['#音声回答', '#4モード', '#AIフィードバック', '#履歴が残る']}
-            catchphrase="「面接経験を、AIで積み重ねる。」"
-          />
-          <StepCard
-            num="07"
-            icon="👥"
-            title="GD練習"
-            desc="AI参加者とグループディスカッションを実施し、論理性・協調性・議論推進力などを選考目線で評価。ログインすれば公開部屋や友達との実施もできます。"
-            tags={['#ソロ練習', '#AI参加者', '#選考目線の評価', '#公開部屋']}
-            catchphrase="「議論の場数を、いつでも踏む。」"
-          />
-          <StepCard
-            num="08"
-            icon="🎤"
-            title="プレゼン対策"
-            desc="自己PR・ガクチカ・志望動機・ケース課題などの発表を、構成・説得力・具体性・時間配分の観点でAIが評価。発表後の質疑応答まで練習できます。"
-            tags={['#お題設定', '#AI評価', '#発表後Q&A', '#時間配分']}
-            catchphrase="「話す力を、可視化して伸ばす。」"
-          />
+          {steps.map((step, i) => (
+            <StepCard
+              key={step.title}
+              num={String(i + 1).padStart(2, '0')}
+              icon={step.icon}
+              title={step.title}
+              desc={step.desc}
+              tags={step.tags}
+              catchphrase={step.catchphrase}
+            />
+          ))}
         </ol>
 
         {/* 流れ全体を支える機能：順序フローには属さない横断機能。
@@ -164,7 +125,7 @@ export function FeatureFlowSection() {
             <StepCard
               icon="📊"
               title="マイページ"
-              desc="自己分析・ES・面接・GD・プレゼンなどの進捗と履歴を、ひとつの場所でまとめて確認できます。"
+              desc="自己分析・ES・面接・プレゼンなどの進捗と履歴を、ひとつの場所でまとめて確認できます。"
               tags={['#一元管理', '#進捗確認', '#振り返り']}
               catchphrase="「準備の積み上げを、見える化する。」"
             />

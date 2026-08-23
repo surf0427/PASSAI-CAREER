@@ -33,7 +33,7 @@ export function HeroSection() {
               ES・面接まで。
             </h1>
             <p className="text-base sm:text-lg text-slate-700 leading-relaxed mb-4">
-              活動整理・自己分析・就活軸・企業研究・ES・面接・GD・プレゼン練習まで、
+              活動整理・自己分析・就活軸・企業研究・ES・面接・プレゼン練習まで、
               就活準備を1つのサービスで進められます。
             </p>
             <p className="text-sm text-slate-500 leading-relaxed">

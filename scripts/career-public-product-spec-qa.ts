@@ -14,6 +14,7 @@
  *   [C] page gate — GD / 企業マッチングは flag OFF なら segment ごと 404
  *   [D] 利用上限 — 10/10/10/8/5/5/5 を quota の正本から引いて購入前に開示
  *   [E] 文言 — 「ログインなし」等の stale copy が到達可能な画面に残っていない
+ *   [F] Landing — LP の提供表現が Pricing / server flag と一致する（過剰な約束をしない）
  *
  * 使い方: npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-public-product-spec-qa.ts
  */
@@ -43,6 +44,13 @@ import {
   CAREER_PUBLIC_PRICE_JPY,
   CAREER_PUBLIC_PRODUCT_NAME,
 } from '../lib/careerPricing';
+import {
+  CAREER_LANDING_FLOW_STEPS,
+  isLandingFeatureVisible,
+  selectAvailableLandingFeatureNames,
+  selectAvailableLandingFlowSteps,
+  type CareerLandingAvailability,
+} from '../app/components/landing/featureAvailability';
 import { evalCareerGdFlag } from '../lib/careerGdGate/flag';
 import { evalCareerCompanyMatchingFlag } from '../lib/careerMatchingGate/flag';
 
@@ -336,6 +344,138 @@ console.log('[E] 文言 — 到達可能な画面に stale copy が残ってい�
   // ログイン導線は CAREER のものを指す。
   const loginLinkFiles = gdFiles.filter((f) => /career\/login/.test(readFileSync(f, 'utf8')));
   check(loginLinkFiles.length >= 1, 'GD のログイン導線は /career/login を指す');
+}
+
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+console.log('[F] Landing — LP の提供表現が Pricing / flag と一致する');
+// ═══════════════════════════════════════════════════════════════
+{
+  const LANDING_DIR = 'app/components/landing';
+  const HERO = `${LANDING_DIR}/HeroSection.tsx`;
+  const FLOW = `${LANDING_DIR}/FeatureFlowSection.tsx`;
+  const FAQ = `${LANDING_DIR}/FaqSection.tsx`;
+  const AVAIL = `${LANDING_DIR}/featureAvailability.ts`;
+  const LANDING_PAGE = 'app/page.tsx';
+
+  for (const f of [HERO, FLOW, FAQ, AVAIL, LANDING_PAGE]) {
+    check(existsSync(join(ROOT, f)), `${f} が存在する`);
+  }
+
+  const ALL: CareerLandingAvailability[] = [
+    { gd: false, matching: false },
+    { gd: true, matching: false },
+    { gd: false, matching: true },
+    { gd: true, matching: true },
+  ];
+  const label = (a: CareerLandingAvailability) =>
+    `GD=${a.gd ? 'ON' : 'OFF'}/Matching=${a.matching ? 'ON' : 'OFF'}`;
+
+  // ★ 表示モデル（exported data）で検証する。source grep だけで PASS にしない。
+  const landingShows = (a: CareerLandingAvailability, gate: 'gd' | 'matching') =>
+    selectAvailableLandingFlowSteps(a).some((s) => s.gate === gate);
+  const pricingOffers = (a: CareerLandingAvailability, gate: 'gd' | 'matching') =>
+    selectAvailableCareerPricingFeatures(a).some((f) => f.gate === gate);
+
+  // (1) GD は flag に完全追従（OFF で消え、ON で出る）。
+  for (const a of ALL) {
+    check(landingShows(a, 'gd') === a.gd, `${label(a)}: LP の GD カードが flag に追従`);
+  }
+
+  // (2) ★ 最重要の不変条件 — LP が Pricing の提供範囲を超えて約束しない。
+  //     （LP が控えめに載せない分には矛盾ではない。過剰な約束だけを禁止する。）
+  for (const a of ALL) {
+    for (const gate of ['gd', 'matching'] as const) {
+      check(
+        !landingShows(a, gate) || pricingOffers(a, gate),
+        `${label(a)}: LP は Pricing が提供しない ${gate} を宣伝しない`,
+      );
+    }
+  }
+
+  // (3) GD については LP と Pricing が完全一致（両方が載せている機能なので）。
+  for (const a of ALL) {
+    check(
+      landingShows(a, 'gd') === pricingOffers(a, 'gd'),
+      `${label(a)}: GD の availability が LP と Pricing で一致`,
+    );
+  }
+
+  // (4) FAQ の機能名リストもカードと同じ集合から作られている。
+  for (const a of ALL) {
+    const names = selectAvailableLandingFeatureNames(a);
+    const titles = selectAvailableLandingFlowSteps(a).map((s) => s.title);
+    check(
+      JSON.stringify(names) === JSON.stringify(titles),
+      `${label(a)}: FAQ の機能一覧はカードと同一集合`,
+    );
+    check(
+      names.some((n) => n.includes('GD')) === a.gd,
+      `${label(a)}: FAQ の機能一覧の GD が flag に追従`,
+    );
+  }
+
+  // (5) catalog の健全性。
+  check(CAREER_LANDING_FLOW_STEPS.length === 8, 'LP catalog は 8 ステップ');
+  const gatedLanding = CAREER_LANDING_FLOW_STEPS.filter((s) => s.gate !== null);
+  check(
+    gatedLanding.length === 1 && gatedLanding[0].gate === 'gd',
+    'LP catalog の gate 付きは GD のみ（企業マッチングは元から LP に載せていない）',
+  );
+  check(isLandingFeatureVisible(null, { gd: false, matching: false }), '常時提供は常に表示');
+  check(!isLandingFeatureVisible('gd', { gd: false, matching: true }), 'gd gate は GD flag に従う');
+  check(
+    !isLandingFeatureVisible('matching', { gd: true, matching: false }),
+    'matching gate は Matching flag に従う',
+  );
+
+  // (6) 権威が server flag であること（UI flag / client 判定にしない）。
+  const pageSrc = codeOf(read(LANDING_PAGE));
+  check(/isCareerGdEnabled\(\)/.test(pageSrc), 'LP は server flag isCareerGdEnabled() を読む');
+  check(
+    /isCareerCompanyMatchingEnabled\(\)/.test(pageSrc),
+    'LP は server flag isCareerCompanyMatchingEnabled() を読む',
+  );
+  check(
+    !/NEXT_PUBLIC_CAREER_(GD|COMPANY_MATCHING)_ENABLED/.test(pageSrc),
+    'LP は UI flag（NEXT_PUBLIC_*）を商品表示の権威にしない',
+  );
+  const availSrc = codeOf(read(AVAIL));
+  check(!/process\.env/.test(availSrc), 'availability helper は env を読まない（pure）');
+  check(!/NEXT_PUBLIC_/.test(availSrc), 'availability helper は UI flag を持たない');
+  for (const [name, src] of [['FeatureFlow', codeOf(read(FLOW))], ['Faq', codeOf(read(FAQ))]] as const) {
+    check(!/useEffect|useState/.test(src), `${name} は client hook で提供可否を判定しない`);
+    check(!/['"]use client['"]/.test(src), `${name} は server component のまま`);
+    check(/availability/.test(src), `${name} は availability を props で受け取る`);
+  }
+
+  // (7) 常時表示の copy が flag 依存機能を無条件に名指ししない。
+  const heroSrc = codeOf(read(HERO));
+  const flowSrc = codeOf(read(FLOW));
+  for (const [name, src] of [['Hero', heroSrc], ['FeatureFlow 見出し', flowSrc]] as const) {
+    check(
+      !/GD|グループディスカッション/.test(src),
+      `${name} の常時 copy が GD を無条件に名指ししない`,
+    );
+  }
+  // 「準備中 / 近日公開」等を勝手に足していない（OFF の理由を推測しない）。
+  for (const vague of ['準備中', '近日公開', 'Coming Soon', '順次提供']) {
+    check(
+      !availSrc.includes(vague) && !flowSrc.includes(vague) && !heroSrc.includes(vague),
+      `LP に予告文言「${vague}」を追加していない`,
+    );
+  }
+
+  // (8) 番号採番は絞り込み後（欠番を作らない）。
+  check(
+    /padStart\(2, '0'\)/.test(flowSrc) && /steps\.map\(\(step, i\)/.test(flowSrc),
+    'カード番号は絞り込み後の index から採番する（欠番なし）',
+  );
+  check(
+    !/num="0[1-8]"/.test(flowSrc),
+    'カード番号を JSX に直書きしていない',
+  );
 }
 
 console.log('');
