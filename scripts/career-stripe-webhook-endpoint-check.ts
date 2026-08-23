@@ -18,9 +18,20 @@
  *     - success ページは 30 秒ポーリングして「反映に時間がかかっています」で終わる
  *   コードは全て正常で、設定だけが誤っているため **コードの QA では検知できない**。
  *   この種の設定ミスを 1 コマンドで可視化するのが本 script の役割。
- *   （上記 URL は事故当時のもの。本番 canonical は現在 https://passaicareer.jp。
- *     旧 deployment URL 宛の endpoint でも同じ deployment に届くため、判定は
- *     **host ではなく path** で行い、host は INFO として表示するだけにしている。）
+ *
+ * ── 2 度目の事故（2026-08-24 / 独自ドメイン移行）───────────────────────
+ *   独自ドメイン passaicareer.jp を primary にした結果、Vercel が旧 deployment URL
+ *   passai-career.vercel.app を **canonical へ 307 redirect** するようになった。
+ *   Stripe は webhook 配送で redirect を追わない。公式ドキュメントの明記:
+ *
+ *       「3xx … 転送先へリダイレクトしようとした。webhook リクエストへの
+ *         リダイレクト応答は **エラーとして扱われる**。
+ *         対処: リダイレクト解決後の URL を endpoint に設定すること」
+ *
+ *   つまり旧 host 宛の endpoint は、移行した瞬間に **全配送が失敗**する。
+ *   1 度目の事故と症状は同じ（paid が永久に false）だが、原因は「path 誤り」では
+ *   なく「host が redirect される」ことなので、**path 一致だけの検査では素通り**した。
+ *   そのため本 script は host が canonical であることも **FAIL 条件**にしている。
  *
  * ── 安全性 ──────────────────────────────────────────────────────────────
  *   - 呼ぶのは GET /v1/webhook_endpoints だけ。**write API を一切呼ばない**。
@@ -135,17 +146,16 @@ async function main() {
       /* ignore */
     }
     check(e.status === 'enabled', `${host}: endpoint が enabled`);
-    // 独自ドメイン移行（passaicareer.jp）の観測。旧 Vercel deployment URL 宛でも
-    // 同じ deployment に届くため **FAIL にはしない**（署名 secret は endpoint 単位なので、
-    // 動いている endpoint を無闇に作り直すと配送が落ちる）。
-    // 移すときは「新 endpoint を追加 → live 配送成功を確認 → 旧 endpoint を無効化」の順。
-    if (host !== CAREER_PRODUCTION_HOST) {
-      console.log(
-        `  INFO  ${host}: 本番 canonical host（${CAREER_PRODUCTION_HOST}）宛ではない。` +
-          '旧 deployment URL 宛でも配送は届くが、移行するなら新 endpoint 追加 →' +
-          ' 配送成功確認 → 旧 endpoint 無効化 の順で（signing secret が別になる）。',
-      );
-    }
+    // ★ host も検査する。非 canonical host は Vercel が canonical へ 307 redirect し、
+    //   Stripe は redirect を追わない（3xx = 配送失敗）ため、実質的に endpoint が死ぬ。
+    //   直し方は endpoint の **url を書き換えるだけ**でよい。endpoint id が変わらなければ
+    //   signing secret は同じままなので、CAREER_STRIPE_WEBHOOK_SECRET の更新も redeploy も要らない
+    //   （secret が変わるのは新規 endpoint を作った場合と、明示的に Roll secret した場合だけ）。
+    check(
+      host === CAREER_PRODUCTION_HOST,
+      `${host}: 本番 canonical host（${CAREER_PRODUCTION_HOST}）宛である` +
+        `（非 canonical だと redirect され Stripe は配送失敗として扱う）`,
+    );
     for (const type of EXPECTED_EVENTS) {
       check(
         e.enabled_events.includes(type) || e.enabled_events.includes('*'),
