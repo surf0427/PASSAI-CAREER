@@ -39,10 +39,18 @@ import { resolveCareerAccessState } from '@/lib/careerRouting/serverState';
 import {
   CAREER_PRICING_DISPLAY_AMOUNT,
   CAREER_PRICING_DISPLAY_INTERVAL,
-  CAREER_PRICING_FEATURES,
   CAREER_PRICING_PRODUCT_NAME,
+  CAREER_PRICING_QUOTA_HEADING,
+  CAREER_PRICING_QUOTA_NOTE,
   CAREER_PRICING_SUMMARY,
+  selectAvailableCareerPricingFeatures,
 } from './pricingDisplay';
+// 提供可否は server flag が唯一の権威（UI flag は読まない）。本ページは server component
+// なので、そのまま server-only gate を評価できる。
+import { isCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
+import { isCareerCompanyMatchingEnabled } from '@/lib/careerMatchingGate/flags.server';
+// 1 日の利用上限は quota の正本から引く（Pricing 側に数値を複製しない）。
+import { getCareerDailyLimit } from '@/lib/careerQuota/limits';
 
 // server session と Stripe を読むため静的化・キャッシュしない。
 export const dynamic = 'force-dynamic';
@@ -96,6 +104,14 @@ export default async function CareerPricingPage() {
     (offer ? formatStripeInterval(offer) : null) ?? CAREER_PRICING_DISPLAY_INTERVAL;
   const productName = offer?.productName ?? CAREER_PRICING_PRODUCT_NAME;
 
+  // ★ 提供機能は **server flag から導出**する（P2-1）。
+  //   flag OFF の機能は一覧に出さない = 存在しない機能を購入者に約束しない。
+  //   API / page 側の実行権限も同じ server flag が持つため、表示と挙動が必ず一致する。
+  const availableFeatures = selectAvailableCareerPricingFeatures({
+    gd: isCareerGdEnabled(),
+    matching: isCareerCompanyMatchingEnabled(),
+  });
+
   // 契約状態（server 権威）。guest / 判定不能はいずれも「契約なし」として扱う。
   const access = await resolveCareerAccessState();
   const subscribed = access.kind === 'paid';
@@ -136,16 +152,41 @@ export default async function CareerPricingPage() {
           </p>
 
           <ul className="space-y-2 mb-7">
-            {CAREER_PRICING_FEATURES.map((feature) => (
+            {availableFeatures.map((feature) => (
               <li
-                key={feature}
+                key={feature.label}
                 className="flex items-start gap-2 text-sm text-slate-700 leading-relaxed"
               >
                 <PricingCheck />
-                <span>{feature}</span>
+                <span>{feature.label}</span>
               </li>
             ))}
           </ul>
+
+          {/* 1 日の利用上限（P2-4）。購入前に必ず見える位置に置く。
+              上限値は quota の正本（lib/careerQuota/limits.ts）から引き、
+              表示する機能は上の一覧と同じ availability policy に従う。 */}
+          <div className="mb-7 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-bold text-slate-700 mb-2">
+              {CAREER_PRICING_QUOTA_HEADING}
+            </p>
+            <ul className="space-y-1 mb-2">
+              {availableFeatures.map((feature) => (
+                <li
+                  key={feature.label}
+                  className="flex items-baseline justify-between gap-3 text-xs text-slate-600"
+                >
+                  <span>{feature.label}</span>
+                  <span className="font-semibold text-slate-800 tabular-nums">
+                    {getCareerDailyLimit(feature.quota)}回
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              {CAREER_PRICING_QUOTA_NOTE}
+            </p>
+          </div>
 
           {subscribed ? (
             <div className="mt-auto">

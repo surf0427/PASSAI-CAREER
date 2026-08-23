@@ -15,11 +15,18 @@
  *   career_gd_* テーブル一式、localStorage `careerGdResults` / `careerGdRoomLogs`、
  *   ソロ GD の localStorage 履歴、GD QA / E2E 一式。
  *
- * ★ 履歴表示の扱い:
- *   OFF でも **既に手元にある結果（localStorage）** の閲覧は妨げない（/career/gd/view）。
- *   ただし server 側の履歴 hydrate API（`/api/career/gd/room/results`）は
- *   「GD 機能の一部」として同じく 404 にする（OFF 中に DB を読ませない）。
- *   これにより「OFF = server 側 GD I/O ゼロ」が単純な 1 規則で成立する。
+ * ★ 適用範囲（STEP-CAREER-PUBLIC-SPEC / P2-2 で page 側も閉じた）:
+ *   OFF のとき `/career/gd` と `/career/gd/**` は **すべて 404**
+ *   （app/career/gd/layout.tsx が notFound()。履歴閲覧の /career/gd/view も含む）。
+ *   server 側の履歴 hydrate API（`/api/career/gd/room/results`）も同じく 404。
+ *   これにより「OFF = GD は存在しない」が page / API を通じた単純な 1 規則で成立する。
+ *
+ *   ★ 以前ここには「OFF でも /career/gd/view だけは閲覧を妨げない」と書いてあったが、
+ *     その例外は実装されたことが無く（page 側に gate 自体が無かった）、結果として
+ *     「全 page が 200 なのに API は全部 404」という最悪の組合せになっていた。
+ *     既存の企業マッチング（app/career/matching/layout.tsx が result 画面ごと 404 に
+ *     する）と同じ規則へ揃え、例外を持たない形にした。
+ *     ★ データは何も消さないので、flag を ON に戻せば履歴もそのまま再表示される。
  */
 
 import 'server-only';

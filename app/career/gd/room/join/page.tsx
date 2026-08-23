@@ -79,11 +79,11 @@ export default function CareerGdRoomJoinPage() {
         <Card variant="soft" padding="md" className="mb-5">
           <p className="text-sm font-bold text-slate-800 mb-2">ログインが必要です</p>
           <p className="text-xs text-slate-500 leading-relaxed mb-4">
-            マルチGDへの参加にはログイン（メール登録）が必要です。1人で練習するソロGDはログインなしで利用できます。
+            GDのご利用にはログイン（メール登録）と有効な利用プランのご契約が必要です。
           </p>
           <div className="flex flex-col sm:flex-row gap-3">
             <Link
-              href={`/login?next=${encodeURIComponent('/career/gd/room/join')}`}
+              href={`/career/login?redirect=${encodeURIComponent('/career/gd/room/join')}`}
               className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
             >
               ログインする →

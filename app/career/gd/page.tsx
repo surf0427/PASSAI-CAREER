@@ -32,7 +32,7 @@ const MENUS: { emoji: string; title: string; description: string; href: string; 
   {
     emoji: '🧑‍💻',
     title: 'ソロプレイ',
-    description: 'AIメンバーとGD練習を行います。ログインなしで今すぐ始められます。',
+    description: 'AIメンバーとGD練習を行います。ログインとご契約が必要です。',
     href: '/career/gd/run',
     accent: 'text-blue-700',
   },
