@@ -402,8 +402,31 @@ console.log('[E] route.ts wiring source contract');
   check('maxDuration が ROUTE_MAX_DURATION_SECONDS と一致', !!mdMatch && Number(mdMatch[1]) === ROUTE_MAX_DURATION_SECONDS);
   check('after() scheduler を使用', /after\(task\)/.test(src) && /from 'next\/server'/.test(src));
   check('legacy へ silent fallback は dev flag ガード', /allowDevUndefinedTableFallback/.test(src));
-  check('member 認証は getServerSupabaseClient 由来', /getServerSupabaseClient/.test(src));
-  check('job write は service-role admin', /getServiceRoleSupabaseClient/.test(src));
+  // ★ 守りたいのは client factory の **名前** ではなく役割と Project 境界:
+  //     - member 認証は cookie session に紐づく server client（browser client ではない）
+  //     - job の write は service-role admin
+  //     - どちらも CAREER 専用 Project B（受験版 Project A の factory を使わない）
+  //   旧実装は Project A の getServerSupabaseClient / getServiceRoleSupabaseClient を
+  //   literal で要求していたため、Project B 分離後は落ちるだけでなく、
+  //   通そうとすると career-supabase-project-boundary-qa（Project A 依存ゼロ）と
+  //   矛盾する要求になっていた。
+  check(
+    'member 認証は Project B の server(cookie session) client 由来',
+    /getCareerServerSupabaseClient\s*\(/.test(src),
+  );
+  check(
+    'job write は Project B の service-role admin 由来',
+    /getCareerServiceRoleSupabaseClient\s*\(/.test(src),
+  );
+  check(
+    '受験版 Project A の client factory を使わない',
+    !/(?<![A-Za-z])getServerSupabaseClient\s*\(/.test(src) &&
+      !/(?<![A-Za-z])getServiceRoleSupabaseClient\s*\(/.test(src),
+  );
+  check(
+    'browser client を server route で使わない',
+    !/getBrowserSupabaseClient|createBrowserClient/.test(src),
+  );
 }
 }
 

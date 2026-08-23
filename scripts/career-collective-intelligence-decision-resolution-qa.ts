@@ -57,6 +57,12 @@ const codeOnly = (src: string): string =>
   src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
 
 let failures = 0;
+import {
+  assertSanctionedPureModules,
+  isSanctionedPureFile,
+  SANCTIONED_PURE_LAYER_MODULES,
+} from './fixtures/careerLayerBoundary';
+
 const check = (ok: boolean, name: string, detail?: string) => {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${!ok && detail ? ` — ${detail}` : ''}`);
   if (!ok) failures++;
@@ -395,11 +401,23 @@ async function main() {
     for (const cap of CONSUMER_CAPABILITIES) {
       check(!isConsumerConnected(cap.consumer), `consumer ${cap.consumer}: not_connected`);
     }
-    // app/ から Layer 5 / context loaders / renderers へ到達しない。
+    // app/ から Layer 5 / context loaders / renderers の **データ権威**へ到達しない。
+    //   ★ 到達先が allowlist 済みの純粋ユーティリティ（企業名正規化 / 公式情報 renderer）
+    //     なら違反にしない。directory 単位で塞いでいた頃は、Company Identity が
+    //     identity.ts の純関数を再利用しただけで落ちていた。
+    //     repository / projection / loader 等のデータ権威へ到達したら従来どおり違反。
+    //   ★ 許可が穴に化けないよう、allowlist 対象の purity をここでも検証する。
+    const impure = assertSanctionedPureModules(ROOT);
+    check(
+      impure.length === 0,
+      `★ allowlist した Layer 4/5 module は純粋関数のまま（${SANCTIONED_PURE_LAYER_MODULES.length} module）`,
+      impure.map((v) => `${v.file}: ${v.markers.join('/')}`).join(' | '),
+    );
     const forbidden = (f: string) =>
-      /lib\/careerCompanyKnowledge\//.test(f) ||
-      /lib\/careerContextLoaders\//.test(f) ||
-      /lib\/careerContextRenderers\//.test(f);
+      !isSanctionedPureFile(f) &&
+      (/lib\/careerCompanyKnowledge\//.test(f) ||
+        /lib\/careerContextLoaders\//.test(f) ||
+        /lib\/careerContextRenderers\//.test(f));
     const offenders: string[] = [];
     for (const seed of tsFiles('app')) {
       const path = findReachablePath(seed, forbidden);

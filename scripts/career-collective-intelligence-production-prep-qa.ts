@@ -80,6 +80,12 @@ const codeOnly = (src: string): string =>
   src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|--)/.test(l)).join('\n');
 
 let failures = 0;
+import {
+  assertSanctionedPureModules,
+  findForbiddenLayerImports,
+  SANCTIONED_PURE_LAYER_MODULES,
+} from './fixtures/careerLayerBoundary';
+
 const check = (ok: boolean, name: string, detail?: string) => {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${!ok && detail ? ` — ${detail}` : ''}`);
   if (!ok) failures++;
@@ -525,15 +531,22 @@ async function main() {
     for (const cap of CONSUMER_CAPABILITIES) {
       check(!isConsumerConnected(cap.consumer), `consumer ${cap.consumer}: not_connected`);
     }
-    // app/ から Layer 5 / loaders / renderers を import しない。
+    // app/ から Layer 5 / loaders / renderers の **データ権威**を import しない。
+    //   ★ 純粋ユーティリティの再利用（allowlist）は許可し、repository / projection /
+    //     loader / policy registry への import だけを違反として検出する。
+    const impurePrep = assertSanctionedPureModules(ROOT);
+    check(
+      impurePrep.length === 0,
+      `★ allowlist した Layer 4/5 module は純粋関数のまま（${SANCTIONED_PURE_LAYER_MODULES.length} module）`,
+      impurePrep.map((v) => `${v.file}: ${v.markers.join('/')}`).join(' | '),
+    );
+    const FORBIDDEN_LAYER_MODULES = ['careerCompanyKnowledge', 'careerCollectiveIntelligence', 'careerContextLoaders', 'careerContextRenderers'];
     const offenders: string[] = [];
     for (const f of tsFiles('app')) {
-      const code = codeOnly(readFileSync(f, 'utf8'));
-      if (/careerCompanyKnowledge|careerContextLoaders|careerContextRenderers|careerCollectiveIntelligence/.test(code)) {
-        offenders.push(rel(f));
-      }
+      const specs = findForbiddenLayerImports(readFileSync(f, 'utf8'), FORBIDDEN_LAYER_MODULES);
+      if (specs.length > 0) offenders.push(`${rel(f)}(${specs.join(' ')})`);
     }
-    check(offenders.length === 0, '★ app/ が Layer 5 / policy registry を import しない（consumer 0）', offenders.join(','));
+    check(offenders.length === 0, '★ app/ が Layer 5 / policy registry のデータ権威を import しない', offenders.join(','));
     // Personal Optimization の分離。
     for (const d of ['lib/careerSourceData', 'lib/careerServerContext', 'lib/careerMemory']) {
       for (const f of tsFiles(d)) {

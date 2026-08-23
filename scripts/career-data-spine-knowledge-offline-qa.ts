@@ -21,6 +21,12 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import {
+  assertSanctionedPureModules,
+  findForbiddenLayerImports,
+  SANCTIONED_PURE_LAYER_MODULES,
+} from './fixtures/careerLayerBoundary';
+
 // Layer 5
 import {
   detectAliasCollisions,
@@ -519,8 +525,24 @@ console.log('[J] Production isolation (static guard)');
     'careerDataGovernance',
     'careerAggregateBatch',
   ];
+  // ★ 禁止判定は **directory 名**ではなく **runtime data authority** で行う。
+  //   Company Identity / Company Data Spine が Layer 5 の純粋関数
+  //   （identity.ts の normalizeCompanyName / resolveCompany、companyOfficialContext の
+  //     renderCompanyOfficialForPurpose）を正当に再利用するようになったため、
+  //   directory 名判定はそれを「禁止 consumer」と誤検出して落ちていた。
+  //   許可するのは fixtures/careerLayerBoundary の allowlist（純粋 module のみ）と
+  //   型だけの import に限り、repository / projection / loader / governance などの
+  //   データ権威は従来どおり禁止のまま。
   const importsForbidden = (src: string) =>
-    FORBIDDEN.some((mod) => new RegExp(`from\\s+['"][^'"]*${mod}[^'"]*['"]`).test(src));
+    findForbiddenLayerImports(src, FORBIDDEN).length > 0;
+
+  // ★ 許可が穴に化けないよう、allowlist した module が本当に純粋かを毎回検証する。
+  const impure = assertSanctionedPureModules(ROOT);
+  check(
+    `J0 allowlist した Layer 4/5 module は I/O を持たない純粋関数のまま（${SANCTIONED_PURE_LAYER_MODULES.length} module）`,
+    impure.length === 0,
+    impure.map((v) => `${v.file}: ${v.markers.join('/')}`).join(' | '),
+  );
 
   const appFiles = consumerFiles.filter((f) => f.startsWith(join(ROOT, 'app')));
   const apiFiles = appFiles.filter((f) => f.startsWith(join(ROOT, 'app/api')));
@@ -539,8 +561,15 @@ console.log('[J] Production isolation (static guard)');
     missingManifest.map((f) => f.slice(ROOT.length + 1)).join(','));
 
   // orchestrator 未変更（新モジュール非 import）
+  //   ★ 旧実装は生 substring（コメント込み）で判定していたため、orchestrator が
+  //     純粋 renderer を 1 本 import しただけで落ちていた。import 文だけを見る。
   const orch = readFileSync(join(ROOT, 'lib/careerContext/orchestrator.ts'), 'utf8');
-  check('J5 orchestrator.ts が新モジュールを import しない', !FORBIDDEN.some((m) => orch.includes(m)) && !orch.includes('careerAggregate'));
+  const orchForbidden = findForbiddenLayerImports(orch, [...FORBIDDEN, 'careerAggregate']);
+  check(
+    'J5 orchestrator.ts が Layer 4/5 のデータ権威を import しない',
+    orchForbidden.length === 0,
+    orchForbidden.join(','),
+  );
 
   // 新モジュールが supabase/localStorage/fetch/private research を実使用しない
   const newFiles = [

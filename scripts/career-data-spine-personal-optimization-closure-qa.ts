@@ -410,14 +410,29 @@ async function main() {
   console.log('[POC-8] client-only source が structural bridge として明示されている');
   {
     check(!(CAREER_SOURCE_KINDS as readonly string[]).includes('gd'), 'solo gd は source kind に無い');
-    // schema 全体に solo GD の table が存在しないこと（再確認）。
-    const sqlDir = join(ROOT, 'supabase');
-    const sql = readdirSync(sqlDir).filter((f) => f.endsWith('.sql'))
-      .map((f) => readFileSync(join(sqlDir, f), 'utf8')).join('\n');
-    check(!/career_gd_results\b|career_gd_solo/.test(sql), 'solo GD の table が schema に存在しない');
-    // mirror module も存在しない。
-    const mirrors = readdirSync(join(ROOT, 'lib/supabase')).filter((f) => /^career/i.test(f));
-    check(!mirrors.some((f) => /gdResults|gdSolo/i.test(f)), 'solo GD の mirror module が存在しない');
+    // ★ ここで守るのは「solo GD は **server 側 Data Spine の source ではない**」という
+    //   structural bridge の性質であって、「solo GD がどこにも永続化されない」ことではない。
+    //
+    //   旧実装は「schema に solo GD の table が無い」「mirror module が無い」を根拠にして
+    //   いたが、その後 solo GD は他機能（ES / 面接 / プレゼン）と同水準の耐久性を持つよう
+    //   owner-scoped な durable mirror（career_gd_solo_results / lib/supabase/careerGdSolo.ts）
+    //   を **意図的に**獲得した。存在しないことを根拠にする形はもう成立しない。
+    //
+    //   永続化そのもの（DDL / natural key / GRANT 最小権限 / restore 経路）は
+    //   scripts/career-gd-company-and-solo-persistence-qa.ts が専任で固定しているため
+    //   ここでは重複して検証しない。本 QA は Data Spine 境界だけを見る。
+    check(
+      !Object.values(CAREER_SOURCE_TABLES).some((t) => /gd_solo|career_gd_results\b/.test(String(t))),
+      'solo GD の table が Data Spine の source table 表に無い（server context が読まない）',
+      Object.values(CAREER_SOURCE_TABLES).join(','),
+    );
+    const serverReaderSrc = readFileSync(
+      join(ROOT, 'lib/careerSourceData/serverReader.server.ts'), 'utf8',
+    );
+    check(
+      !/career_gd_solo/.test(serverReaderSrc),
+      '共有 server reader が solo GD の table を読まない（structural bridge のまま）',
+    );
     // 観測語彙で safety fallback と区別される。
     const obs = readFileSync(join(ROOT, 'lib/careerDataSpineCanary/observation.ts'), 'utf8');
     check(/not_server_capable/.test(obs), 'structural bridge 用の観測値がある');

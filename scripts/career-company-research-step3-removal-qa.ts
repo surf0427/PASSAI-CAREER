@@ -16,6 +16,10 @@ import {
   hasAnyMaterial,
 } from '../app/career/company-research/researchText';
 import type { CareerCompanyResearchFile } from '../types/careerCompanyResearch';
+import {
+  countAnthropicCalls,
+  listAnthropicCallForms,
+} from './fixtures/careerAiCallDetection';
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = '') {
@@ -132,8 +136,14 @@ check('D extract 呼び出しは 1 箇所だけ', extractCalls === 1, `count=${e
 check('D テキスト素材だけなら extract は呼ばれない（呼び出しは handleFiles 内のみ）',
   DO.split('async function handleFiles')[1].includes('extractTextFromFile(file)') &&
   !/extractTextFromFile\(/.test(beforeHandleFiles));
+// ★ 守りたいのは「Step3 廃止で AI call が増えていない」＝ **本数**であって、呼び出し形ではない。
+//   以前は 'anthropic.messages.create' の literal を数えていたため、本 route が
+//   streaming（anthropic.messages.stream(...).finalMessage()）へ移行した時点で
+//   count=0 になり「1 箇所のまま」が誤って落ちていた。検出は呼び出し形非依存にする。
+const routeAiCalls = countAnthropicCalls(ROUTE);
 check('D 企業分析 route の anthropic 呼び出しは 1 箇所のまま',
-  (ROUTE.match(/anthropic\.messages\.create/g) ?? []).length === 1);
+  routeAiCalls === 1,
+  `count=${routeAiCalls} forms=${listAnthropicCallForms(ROUTE).join(',') || 'none'}`);
 
 // ── E. Company Data Spine 経路 ───────────────────────────────────────
 console.log('\n[E] Company Data Spine → 企業分析 prompt が維持されている');

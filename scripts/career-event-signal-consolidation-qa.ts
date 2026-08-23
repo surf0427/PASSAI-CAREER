@@ -130,7 +130,23 @@ void (async () => {
     check('reader owner filter: .eq(user_id)', /\.eq\('user_id',\s*userId\)/.test(reader));
     check('reader UUID guard（不正 userId no-op）', /UUID_RE\.test/.test(reader));
     check('reader SELECT は 4 列固定（* 禁止）', /CAREER_EVENT_SIGNAL_SELECT\s*=\s*'feature, event_type, score_band, occurred_at'/.test(reader));
-    check('reader service_role 不使用（browser client のみ）', /getBrowserSupabaseClient/.test(reader) && !/service_role|SERVICE_ROLE/.test(reader));
+    // ★ 守りたいのは client factory の名前ではなく **RLS で owner に閉じること**:
+    //   anon key + user session の browser client を使い、RLS を迂回する service_role を
+    //   決して使わない。Project B 分離（careerSupabase/browserClient）で factory 名が
+    //   getBrowserSupabaseClient → getCareerBrowserSupabaseClient へ変わったため、
+    //   名前 literal での判定は stale になっていた（security 性質は不変）。
+    check(
+      'reader は anon + user session の browser client を使う（RLS で owner に閉じる）',
+      /getCareerBrowserSupabaseClient\s*\(/.test(reader),
+    );
+    check(
+      'reader は service_role を使わない（RLS を迂回しない）',
+      !/service_role|SERVICE_ROLE|ServiceRole/.test(reader),
+    );
+    check(
+      'reader は受験版 Project A の client factory を使わない',
+      !/(?<![A-Za-z])getBrowserSupabaseClient\s*\(/.test(reader),
+    );
     // same now: loader は nowMs を 1 度計算し reader と builder の両方へ同一値を渡す。
     check('loader は nowMs を 1 度計算', /const nowMs = input\.now instanceof Date/.test(loader));
     check('loader は reader へ nowMs を渡す', /readCareerEventSignalSourceRows\(\{ userId: input\.userId, now: nowMs \}/.test(loader));

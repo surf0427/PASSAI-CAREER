@@ -104,6 +104,12 @@ const ROOT = process.cwd();
 const codeOnly = (s: string) => s.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*|--)/.test(l)).join('\n');
 
 let failures = 0;
+import {
+  assertSanctionedPureModules,
+  findForbiddenLayerImports,
+  SANCTIONED_PURE_LAYER_MODULES,
+} from './fixtures/careerLayerBoundary';
+
 const check = (ok: boolean, name: string, detail?: string) => {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${!ok && detail ? ` — ${detail}` : ''}`);
   if (!ok) failures++;
@@ -780,15 +786,24 @@ async function main() {
     } else {
       check(true, '.env.local 無し');
     }
-    // production consumer 0。
+    // production consumer 0（= Layer 4/5 の **データ権威**を app/ が使っていない）。
+    //   ★ 判定は directory 名の substring ではなく import specifier 単位。
+    //     Company Data Spine が純粋 module（企業名正規化 / 公式情報 renderer）を
+    //     再利用するのは正当なので allowlist で除外し、repository / projection /
+    //     loader / policy registry への import は従来どおり違反として検出する。
+    const impure = assertSanctionedPureModules(ROOT);
+    check(
+      impure.length === 0,
+      `★ allowlist した Layer 4/5 module は純粋関数のまま（${SANCTIONED_PURE_LAYER_MODULES.length} module）`,
+      impure.map((v) => `${v.file}: ${v.markers.join('/')}`).join(' | '),
+    );
+    const FORBIDDEN_LAYER_MODULES = ['careerCompanyKnowledge', 'careerCollectiveIntelligence', 'careerContextLoaders', 'careerContextRenderers'];
     const consumers: string[] = [];
     for (const f of tsFiles('app')) {
-      const code = codeOnly(readFileSync(f, 'utf8'));
-      if (/careerCompanyKnowledge|careerCollectiveIntelligence|careerContextLoaders|careerContextRenderers/.test(code)) {
-        consumers.push(rel(f));
-      }
+      const specs = findForbiddenLayerImports(readFileSync(f, 'utf8'), FORBIDDEN_LAYER_MODULES);
+      if (specs.length > 0) consumers.push(`${rel(f)}(${specs.join(' ')})`);
     }
-    check(consumers.length === 0, '★ production consumer 0', consumers.join(','));
+    check(consumers.length === 0, '★ production consumer 0（Layer 4/5 のデータ権威）', consumers.join(','));
   }
 
   console.log('[OD-16] member app path から service-role へ到達不能');

@@ -51,6 +51,12 @@ import { loadCompanyKnowledgeContext } from '@/lib/careerContextLoaders/companyK
 import { loadPersonalMemoryContext } from '@/lib/careerContextLoaders/personalMemory';
 
 let failures = 0;
+import {
+  assertSanctionedPureModules,
+  findForbiddenLayerImports,
+  SANCTIONED_PURE_LAYER_MODULES,
+} from './fixtures/careerLayerBoundary';
+
 function check(name: string, cond: boolean, detail?: string): void {
   if (cond) console.log(`  PASS  ${name}`);
   else {
@@ -434,7 +440,11 @@ function importGuards(): void {
   ].filter((f) => !isNewDir(f));
 
   const importsLoader = (src: string) => /from\s+['"][^'"]*careerContextLoaders[^'"]*['"]/.test(src);
-  const importsCompanyKnowledge = (src: string) => /from\s+['"][^'"]*careerCompanyKnowledge[^'"]*['"]/.test(src);
+  // ★ Company Knowledge（Layer 5）の **データ権威** を production が使っていないこと。
+  //   企業名正規化のような純粋関数の再利用は Company Identity の正当な実装なので
+  //   allowlist で除外する（allowlist 対象の purity は下の 43b が毎回検証する）。
+  const importsCompanyKnowledge = (src: string) =>
+    findForbiddenLayerImports(src, ['careerCompanyKnowledge']).length > 0;
 
   const appApiFiles = consumerFiles.filter((f) => f.startsWith(join(ROOT, 'app')));
   const apiOnly = appApiFiles.filter((f) => f.startsWith(join(ROOT, 'app/api')));
@@ -448,7 +458,14 @@ function importGuards(): void {
   // 39. app/api/ から loader import 0
   check('39 app/api/ から loader import 0', loaderOffendersApi.length === 0, loaderOffendersApi.join(','));
   // 43. private research storage import 0（新 Layer5/loaders 側）は [C-guard]19 で検証済。
-  check('43 production consumer が company knowledge domain を import 0', ckOffenders.length === 0, ckOffenders.join(','));
+  check('43 production consumer が company knowledge domain のデータ権威を import 0', ckOffenders.length === 0, ckOffenders.join(','));
+  // 43b. 許可した純粋 module が I/O を獲得していないこと（許可が穴に化けない）。
+  const impureCk = assertSanctionedPureModules(ROOT);
+  check(
+    `43b allowlist した Layer 4/5 module は純粋関数のまま（${SANCTIONED_PURE_LAYER_MODULES.length} module）`,
+    impureCk.length === 0,
+    impureCk.map((v) => `${v.file}: ${v.markers.join('/')}`).join(' | '),
+  );
 
   // 40. production prompt から import 0（prompt 名を含むファイル）。
   const promptFiles = consumerFiles.filter((f) => /prompt/i.test(f));

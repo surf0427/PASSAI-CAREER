@@ -57,6 +57,11 @@ const bodyOf = (src: string, signature: string): string => {
   return at < 0 ? '' : src.slice(at);
 };
 
+import {
+  findAnthropicCallIndex,
+  stripComments as stripCodeComments,
+} from './fixtures/careerAiCallDetection';
+
 let fails = 0;
 const check = (cond: boolean, label: string) => {
   console.log(`${cond ? '✅' : '❌'} ${label}`);
@@ -90,18 +95,56 @@ for (const r of ROUTES) {
 
   // guard が AI 呼び出し・context 解決より前にあること。
   //   ★ import 行に引っかからないよう POST の本体だけで順序を測る。
-  const post = bodyOf(src, 'export async function POST');
+  //   ★ AI call の検出は **呼び出し形に依存させない**（fixtures/careerAiCallDetection）。
+  //     以前は 'anthropic.messages.create' の literal を探していたが、evaluate が
+  //     streaming（anthropic.messages.stream(...).finalMessage()）へ移行した結果
+  //     「AI call が無い」と誤検出して常に落ちていた。守るべきは呼び出し形ではなく
+  //     **guard 群が実 network call より前にある**という順序そのもの。
+  //   ★ index 空間を揃えるため、順序比較はすべて stripCodeComments 後の本体で行う。
+  const post = stripCodeComments(bodyOf(src, 'export async function POST'));
   const guardAt = post.indexOf('guardPresentationRequest');
-  const aiAt = post.indexOf('anthropic.messages.create');
+  const paidAt = post.indexOf('requireCareerAiAccess(');
+  const aiAt = findAnthropicCallIndex(post);
   const ctxAt = post.indexOf('resolvePresentationContextInputs(');
   const companyAt = post.indexOf('resolvePresentationCompanyOfficial(');
 
+  // ★ 「AI call を 1 件も検出できない」は検出器の劣化なので、順序の前に明示的に落とす。
+  check(aiAt >= 0, `${r.name}: 実 AI call を検出できる（create / stream いずれの形でも）`);
+
   check(guardAt >= 0 && aiAt >= 0 && guardAt < aiAt, `${r.name}: guard は AI call より前にある`);
+  check(
+    paidAt >= 0 && aiAt >= 0 && paidAt < aiAt,
+    `${r.name}: 有料ゲートは AI call より前にある（未契約に原価を出さない）`,
+  );
+  check(
+    guardAt >= 0 && paidAt >= 0 && guardAt < paidAt,
+    `${r.name}: 順序は request guard → 有料ゲート`,
+  );
   check(guardAt >= 0 && ctxAt >= 0 && guardAt < ctxAt, `${r.name}: guard は context 解決より前にある`);
   check(
     guardAt >= 0 && companyAt >= 0 && guardAt < companyAt,
     `${r.name}: guard は Company Spine read より前にある（無認証で I/O させない）`,
   );
+
+  // quota anchor（evaluate のみ）は quota が有料ゲートの後・AI call の前にあること。
+  //   非 anchor（theme / qa）は quota を消費しないのが仕様なので、存在しないことを固定する。
+  const quotaAt = post.indexOf('enforceCareerDailyQuota(');
+  if (r.op === 'evaluate') {
+    check(quotaAt >= 0, `${r.name}: quota anchor なので enforceCareerDailyQuota を通す`);
+    check(
+      quotaAt >= 0 && paidAt >= 0 && paidAt < quotaAt,
+      `${r.name}: 順序は 有料ゲート → Daily Quota（未契約に quota を消費させない）`,
+    );
+    check(
+      quotaAt >= 0 && aiAt >= 0 && quotaAt < aiAt,
+      `${r.name}: 順序は Daily Quota → AI call`,
+    );
+  } else {
+    check(
+      quotaAt === -1,
+      `${r.name}: 非 anchor なので quota を消費しない（1 セッション = 1 回の計上点は evaluate だけ）`,
+    );
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
