@@ -31,6 +31,7 @@
     "qa:diagnosisScoring": "npx tsx scripts/diagnosis-scoring-qa.ts",
     "qa:examDiagnosis": "npx tsx scripts/exam-diagnosis-scoring-qa.ts",
     "qa:diagnosis": "npm run qa:diagnosisScoring && npm run qa:diagnosisTaxonomy && npm run qa:examDiagnosis",
+    "qa:careerMyPageProgress": "npx tsx scripts/career-mypage-progress-qa.ts",
     "qa:careerMatching": "npx tsx scripts/qa-career-matching.ts",
     "qa:careerMatchingDeferral": "npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-matching-deferral-qa.ts",
     "qa:careerMemoryMatching": "npx tsx scripts/career-memory-matching-byte-qa.ts",

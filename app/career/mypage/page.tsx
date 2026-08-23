@@ -8,6 +8,10 @@ import CareerLoginStatusCard from '@/app/career/components/CareerLoginStatusCard
 import CareerBillingCard from '@/app/career/components/CareerBillingCard';
 // NEXT-7: 同意取得カード。gate（運用 flag + 法務承認 + readiness）が閉じている間は null を返し何も描画しない。
 import CareerConsentCard from './CareerConsentCard';
+// 進度セクション（今回追加）。数値は既存機能が保存済みの実評価だけを読み出して描く。
+import ActivityProgressSection from './ActivityProgressSection';
+import GrowthSection from './GrowthSection';
+import { useCareerMyPageProgress } from './useCareerMyPageProgress';
 // User Data Spine Layer 1 の canonical bundle loader（server reader と同じ CareerSourceBundle 型）。
 import { loadCanonicalSourceBundle } from '@/app/career/sourceSyncClient';
 import {
@@ -32,8 +36,9 @@ import { hasBasicProfileContent } from './mypageSummary';
 //   - マイページ専用のデータ体系（MyPageProfile / mypage localStorage / 専用 table）を作らない。
 //   - 表示は実 canonical data 由来のみ。ダミー profile / ダミー insight を作らない。
 //   - AI 呼び出しをここで新設しない（mypage_summary purpose は DORMANT のまま）。
-//   - ここは dashboard ではない。次のアクション提案・実績/履歴/アウトプットの一覧・
-//     充実度メーター・各機能への CTA は持たない（機能入口は /career/home が担当）。
+//   - 次のアクション提案・アウトプット本文の一覧は持たない（機能入口は /career/home が担当）。
+//     ★ 「練習・作成の進度 / 成長進度」だけは例外として持つ（本人の実績の確認＝マイページの役割）。
+//       ただし出すのは **各機能が既に保存している実評価の数値**のみで、ここで再評価・再計算はしない。
 //   - View 専用。編集・入力の導線も持たない（プロフィール編集は /career/profile 本体が担当）。
 //   - 受験版 /mypage のコンポーネント（BillingCard / UsageStatusCard / LoginNudge 等）は流用しない。
 
@@ -52,6 +57,9 @@ export default function CareerMypagePage() {
       canonicalVersion < 0 ? null : loadCanonicalSourceBundle(CROSS_FEATURE_SYNC_KINDS),
     [canonicalVersion],
   );
+
+  // 進度は server（auth session + RLS）優先・端末 canonical フォールバックで取る。
+  const { progress } = useCareerMyPageProgress(bundle);
 
   if (!bundle) return null;
 
@@ -84,6 +92,10 @@ export default function CareerMypagePage() {
 
         {/* 登録済みの基本情報 */}
         <ProfileSection profile={bundle.profile} />
+
+        {/* 練習・作成の進度 / 成長進度。progress が未確定のうちは描画しない（空を 0 件と誤表示しない）。 */}
+        {progress && <ActivityProgressSection activity={progress.activity} />}
+        {progress && <GrowthSection progress={progress} />}
 
         {/* データ利用の同意（NEXT-7）。既定では API が enabled:false を返すため何も描画されない。
             法務承認 + readiness + 運用 flag が揃ったときだけ現れる。 */}
