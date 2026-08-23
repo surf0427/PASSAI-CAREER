@@ -17,9 +17,11 @@ export const BRAND_NAME = 'PASSAI';
  *   Supabase の auth cookie は host 単位で保存されるため、canonical へ寄せてしまうと
  *   preview deployment で認証したユーザーが本番 host に着地して session を失う。
  *
- * 旧 Vercel origin（https://passai-career.vercel.app）は Vercel 側の deployment URL
- * として当面残る。到達性の維持と webhook の後方互換のために消さないが、
- * 「公開 URL」としてはこの定数だけを正本にする。
+ * 旧 Vercel origin（https://passai-career.vercel.app）は Vercel の deployment URL として
+ * 残っているが、**この定数へ 307 redirect される**。したがって「旧 host でも同じものが
+ * 配信される」前提のコード・設定を書いてはいけない。
+ * 特に Stripe webhook は redirect を追わず 3xx を配送失敗として扱うため、外部サービスの
+ * 登録先は必ずこの canonical origin にすること（2026-08-24 に実際に踏んだ）。
  */
 export const CAREER_PRODUCTION_ORIGIN = 'https://passaicareer.jp';
 
