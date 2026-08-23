@@ -450,6 +450,75 @@ export function countQaAnswers(turns: CareerPresentationQaTurn[]): number {
 
 export const CAREER_PRESENTATION_QA_MAX_TURNS = 4;
 
+// ── 発表後 Q&A 全体の最終評価 ────────────────────────────────────────
+//
+// ★ 本編プレゼン評価（CAREER_PRESENTATION_AXES / buildEvaluateInstruction）とは責務を分ける。
+//   本編は「発表そのもの」を 8 軸で評価する。こちらは **質疑応答での受け答えだけ**を評価し、
+//   本編評価の再掲・スコア再算出はしない（result.result は一切書き換えない）。
+//
+// Q&A 評価軸（4 軸）。key は安定識別子、label は表示名（本編 axes と同じ形）。
+export const CAREER_PRESENTATION_QA_AXES: Array<{ key: string; label: string; hint: string }> = [
+  { key: 'qaLogic', label: '回答の論理性', hint: '質問の意図を捉え、主張→根拠の筋が通っているか' },
+  { key: 'qaDirectness', label: '質問への直接性', hint: '聞かれたことに正面から答え、論点をずらしていないか' },
+  { key: 'qaEvidence', label: '根拠・具体性', hint: '数字・役割・行動・成果など具体に裏づけて答えているか' },
+  { key: 'qaConsistency', label: '発表本編との一貫性', hint: '発表で述べた主張と矛盾せず、深掘りに耐えているか' },
+];
+
+/**
+ * Q&A 最終評価の user プロンプト。JSON {overallComment, axes, goodPoints, improvements, nextPractice} を要求。
+ *
+ * ★ 入力は「発表の文字起こし」＋「質疑応答の全ターン」。turns には **最後のユーザー回答まで**が
+ *   含まれている前提（route が countQaAnswers >= 1 を検証し、client は確定済み配列を送る）。
+ * ★ 総合点・ランクは AI に出させない（server が 4 軸から決定論で算出する）。
+ *   本編評価・ES・GD と同じ authority 分離。
+ */
+export function buildQaFinalUserPrompt(params: {
+  theme: string;
+  transcript: string;
+  turns: CareerPresentationQaTurn[];
+  config?: CareerPresentationConfig | null;
+}): string {
+  const { theme, transcript, turns, config } = params;
+  const axisList = CAREER_PRESENTATION_QA_AXES.map(
+    (a) => `    { "key": "${a.key}", "label": "${a.label}", "score": 0〜100の整数, "comment": "${a.hint}に関する具体的な所見（1文・60字以内）" }`,
+  ).join(',\n');
+  const jobEmphasis = buildJobTypeEmphasisLine(config?.jobType);
+  const lines: string[] = [
+    'これはプレゼン発表後の質疑応答（想定: 採用担当からの質問）が終了した後の、**質疑応答全体の最終評価**です。',
+    `お題: ${theme || '（未入力）'}`,
+    '',
+    '発表の文字起こし:',
+    transcript || '（発表内容が空です）',
+    '',
+    '質疑応答の全記録（これが評価対象です）:',
+    buildQaTranscript(turns),
+    '',
+    '# 出力形式（厳守）',
+    '学生の**回答（質疑応答での受け答え）**だけを評価してください。発表本編の評価は別途行っているため、ここでは再掲しません。',
+    jobEmphasis ? `${jobEmphasis} この職種観点は改善アドバイスにも反映する。` : '',
+    '評価軸（axes）は以下の4軸すべてを、それぞれ 0〜100 の整数で採点し、key/label は指定どおりにしてください。',
+    '★ 総合点（totalScore）とランク（rank）は出力しないでください。4軸のスコアから自動的に算出されます。',
+    '★ そのため、4軸それぞれの採点が総合評価そのものになります。印象で甘くつけず、軸ごとに根拠をもって採点してください。',
+    'overallComment は質疑応答全体の総評を2文で。回答ごとの逐次コメントの羅列にしない。',
+    'goodPoints・improvements・nextPractice は各2〜3個・1要素1文（40字以内）で入れ、空配列にしない。',
+    'improvements は「どの質問への回答が、なぜ弱かったか」が分かる具体的な指摘にする。テンプレ文を避ける。',
+    'nextPractice は次回の質疑応答に向けて何を準備・改善すべきかの行動アドバイスにする。',
+    '人格否定はせず、指摘は回答内容にのみ向ける。事実確認が必要な企業情報は断定しない。',
+    '出力は次の JSON オブジェクトのみ（前後に説明文やコードブロック記号を付けない）:',
+    '',
+    '{',
+    '  "overallComment": string,',
+    '  "axes": [',
+    axisList,
+    '  ],',
+    '  "goodPoints": string[],',
+    '  "improvements": string[],',
+    '  "nextPractice": string[]',
+    '}',
+  ];
+  return lines.filter((l) => l !== '').join('\n');
+}
+
 // Q&A の質問生成 user プロンプト（kickoff / followup 兼用）。JSON {reaction, question} を要求。
 export function buildQaUserPrompt(params: {
   theme: string;

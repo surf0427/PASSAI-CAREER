@@ -138,6 +138,32 @@ export type CareerPresentationQaTurn = {
   reaction?: string;
 };
 
+// 発表後 Q&A（質疑応答）全体の最終評価。
+//
+// ★ 責務分離: 本編プレゼンの評価（CareerPresentationFinalResult）とは別物。
+//   本編は「発表そのもの」を 8 軸で見るが、こちらは「質疑応答での受け答え」だけを 4 軸で見る。
+//   そのため軸・出力項目は意図的に軽量（Q&A は本編評価の再掲をしない）。
+//
+// ★ authority 分離は本編・ES・GD と同じ契約:
+//   AI が出すのは axes（各 0〜100）だけで、totalScore は server が軸の平均から、
+//   rank は totalScore から決定論で導出する（AI の自己申告は採用しない）。
+export type CareerPresentationQaReview = {
+  // 総合スコア（0〜100）。server が axes から算出。
+  totalScore: number;
+  // 総合ランク（S/A/B/C/D）。server が totalScore から算出。
+  rank: CareerPresentationRank;
+  // 質疑応答全体の総評（数文）。
+  overallComment: string;
+  // 評価軸別スコア（論理性 / 直接性 / 根拠・具体性 / 発表本編との一貫性）。
+  axes: CareerPresentationAxisScore[];
+  // 良かった点。
+  goodPoints: string[];
+  // 改善すべき点。
+  improvements: string[];
+  // 次回に向けた改善アドバイス。
+  nextPractice: string[];
+};
+
 // 進行中 / 完了済みのプレゼンセッション（localStorage: careerPresentationSessions）。
 export type CareerPresentationSession = {
   id: string;
@@ -173,4 +199,8 @@ export type CareerPresentationResult = {
   result: CareerPresentationFinalResult;
   // 発表後に練習した質疑応答（任意。未実施なら空 or 省略）。
   qa?: CareerPresentationQaTurn[];
+  // 質疑応答が最後まで終わったときの最終評価（任意）。
+  //   ★ optional。Q&A 未実施 / 途中終了 / 本 field 追加前の旧ログには存在しないため、
+  //     読み取り側は欠損を前提に扱うこと（欠損＝最終評価なしで正常）。
+  qaReview?: CareerPresentationQaReview;
 };
