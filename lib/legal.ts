@@ -2,19 +2,27 @@
 // 問い合わせ窓口 / お問い合わせページ / 運営者情報ページは、表記の二重管理を避ける
 // ため本ファイルを single source として import する。
 //
-// 価格は lib/billing/plans.ts の priceJpy を正とし、ここでは表示用の文言だけを
-// 組み立てる（金額そのものを再定義しない）。
+// 価格・サービス内容（法定表示）は lib/careerPricing.ts を正とし、ここでは
+// 表示用の文言を組み立て直さない（金額そのものを再定義しない）。
+//
+// ★ この deployment が販売しているのは PASSAI CAREER（新卒就活向け）のみ。
+//   受験版 catalog（lib/billing/plans.ts の PLANS / priceJpy）を法定表示へ
+//   参照しないこと。以前ここが受験版の Basic ¥2,980 / Premium ¥4,980 を
+//   販売価格として表示しており、実際に売っている商品と食い違っていた。
 
-import { PLANS } from '@/lib/billing/plans';
+import {
+  CAREER_PUBLIC_SALES_PRICE_LABEL,
+  CAREER_PUBLIC_SERVICE_DESCRIPTION,
+} from '@/lib/careerPricing';
 
 export const BUSINESS_NAME = 'PASSAI';
 export const OPERATOR_NAME = '窪田 慶大';
 export const CONTACT_EMAIL = 'passai.jp@gmail.com';
+
 // ★ 特定商取引法に基づく表記（/legal/commerce）の「サービス内容」欄。
-//   直下に SALES_PRICE_LABEL（Basic / Premium）が並ぶ＝**有料で販売している役務**の
-//   法定表示であるため、現在課金対象になっているサービスの内容から動かさないこと。
-//   PASSAI CAREER は決済導線が無く販売対象ではないため、ここには含めない。
-export const SERVICE_DESCRIPTION = '総合型選抜・推薦入試対策AIサービス';
+//   直下に SALES_PRICE_LABEL が並ぶ＝**有料で販売している役務**の法定表示であるため、
+//   現在課金対象になっているサービス（PASSAI CAREER）の内容と必ず一致させること。
+export const SERVICE_DESCRIPTION = CAREER_PUBLIC_SERVICE_DESCRIPTION;
 
 // 運営者情報（/about）の「サービス内容」欄。
 //   SERVICE_DESCRIPTION とは用途が異なる（法定表示ではなく、事業者が公開・提供して
@@ -26,13 +34,5 @@ export const OPERATOR_SERVICES_DESCRIPTION =
 // 所在地・電話番号は特定商取引法に基づき、請求時に遅滞なく開示する運用とする。
 export const DISCLOSURE_ON_REQUEST = '請求があった際に遅滞なく開示いたします。';
 
-const formatJpy = (amount: number) => `${amount.toLocaleString('ja-JP')}円`;
-
-// 各プランの「<ラベル> 月額<金額>（税込）」表記。金額は plans.ts の priceJpy 由来。
-export const PLAN_PRICE_LABELS: Record<keyof typeof PLANS, string> = {
-  basic: `${PLANS.basic.label} 月額${formatJpy(PLANS.basic.priceJpy)}（税込）`,
-  premium: `${PLANS.premium.label} 月額${formatJpy(PLANS.premium.priceJpy)}（税込）`,
-};
-
-// 特商法ページ「販売価格」欄に表示する 1 行表記。
-export const SALES_PRICE_LABEL = `${PLAN_PRICE_LABELS.basic} / ${PLAN_PRICE_LABELS.premium}`;
+// 特商法ページ「販売価格」欄に表示する 1 行表記（単一プラン）。
+export const SALES_PRICE_LABEL = CAREER_PUBLIC_SALES_PRICE_LABEL;

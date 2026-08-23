@@ -4,7 +4,12 @@
  * - Stripe Customer Portal 設定 / 本番審査で必要となる「特商法表記 URL」。
  *   URL は /legal/commerce で固定（移設しない）。
  * - 事業者情報・連絡先・価格は lib/legal.ts に集約し、二重管理を避ける。
- *   価格は lib/billing/plans.ts の priceJpy を single source として参照する。
+ *   価格・サービス内容は lib/careerPricing.ts を single source として参照する。
+ *
+ * ★ この deployment が販売している役務は **PASSAI CAREER（新卒就活向け）のみ**。
+ *   本ページは法定表示なので、必ずその商品・その価格と一致させること。
+ *   受験版（総合型選抜・推薦入試対策 / Basic ¥2,980 / Premium ¥4,980）の
+ *   内容をここへ書かない・参照しない。
  *
  * 既存の /privacy /terms と同じレイアウト (max-w-3xl / PageHeader / 戻る Link)
  * に揃える。
@@ -25,9 +30,9 @@ import {
 } from '@/lib/legal';
 
 export const metadata: Metadata = {
-  title: '特定商取引法に基づく表記 | PASSAI',
+  title: '特定商取引法に基づく表記 | PASSAI CAREER',
   description:
-    'PASSAI（運営責任者 窪田 慶大）の特定商取引法に基づく表記です。販売価格・支払方法・サービス提供時期・解約方法・返金・動作環境について記載しています。',
+    'PASSAI（運営責任者 窪田 慶大）が提供する PASSAI CAREER の特定商取引法に基づく表記です。販売価格・支払方法・サービス提供時期・解約方法・返金・動作環境について記載しています。',
 };
 
 export default function CommercePage() {
@@ -71,8 +76,9 @@ export default function CommercePage() {
             決済完了後ただちにご利用いただけます。
           </CommerceRow>
           <CommerceRow label="解約方法">
-            マイページの「請求情報を管理」（Stripe Customer Portal）からいつでも
-            解約のお手続きが可能です。
+            マイページ（/career/mypage）の「契約を管理」から Stripe カスタマーポータルへ
+            進み、いつでも解約のお手続きが可能です。解約後も、お支払い済みの期間の
+            末日までご利用いただけます。
           </CommerceRow>
           <CommerceRow label="返品・返金">
             サービスの性質上、購入後の返金には対応いたしかねます。
@@ -84,8 +90,8 @@ export default function CommercePage() {
 
         <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm leading-relaxed text-amber-900">
-            本サービスは生成AIを利用した受験サポートサービスです。特定の学校への
-            合格その他の結果を保証するものではなく、AIが生成する添削・アドバイス等の
+            本サービスは生成AIを利用した就職活動サポートサービスです。採用選考の通過・
+            内定その他の結果を保証するものではなく、AIが生成する添削・アドバイス等の
             出力の正確性・完全性についても保証いたしません。最終的なご判断は利用者
             ご自身の責任で行ってください。
           </p>

@@ -558,9 +558,32 @@ console.log('[9] session continuity across Stripe checkout');
     'proxy は redirect / 401 を返さない（認可判定を二重化しない）',
   );
   check(/catch/.test(mw), 'proxy は fail-open（CAREER 全体を落とさない）');
+  // ★ proxy は 2 つの役割を持つ:
+  //     (a) CAREER の Supabase SSR session 更新
+  //     (b) deployment の公開面の境界（CAREER / 共通ページ以外を 404 にする）
+  //   (b) のために matcher は CAREER 名前空間より広い。したがってここで検査すべきは
+  //   「matcher の literal」ではなく **「session 更新が CAREER 名前空間だけで走ること」**
+  //   （＝受験版の認証 cookie に触れない）という本来の不変条件である。
+  const careerGuardAt = mw.indexOf('isCareerNamespace(pathname)');
+  const supabaseAt = mw.indexOf('createServerClient(');
   check(
-    /matcher: \['\/career\/:path\*', '\/api\/career\/:path\*'\]/.test(mw),
-    'matcher は CAREER 名前空間だけ（受験版の認証に触れない）',
+    careerGuardAt >= 0 && supabaseAt >= 0 && careerGuardAt < supabaseAt,
+    'session 更新は CAREER 名前空間だけ（受験版の認証に触れない）',
+  );
+  check(
+    /CAREER_PREFIXES = \['\/career', '\/api\/career'\]/.test(mw),
+    'CAREER 名前空間の定義は /career と /api/career だけ',
+  );
+  // 公開面の境界は allowlist（fail-closed）で、判定表は専用 module が単独で持つ。
+  check(
+    /isAllowedCareerDeploymentPath\(pathname\)/.test(mw) &&
+      /careerDeploymentSurface/.test(mw),
+    '公開面の allowlist を lib/careerDeploymentSurface.ts に委譲している',
+  );
+  // matcher は Next 内部配信物・静的ファイルを素通しする（全画面 404 を防ぐ）。
+  check(
+    /_next\/static/.test(mw) && /_next\/image/.test(mw),
+    'matcher が Next の内部配信物を除外している',
   );
   check(/WEBHOOK_PATH/.test(mw), '署名付き webhook では何もしない（raw body に触れない）');
   check(

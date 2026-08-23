@@ -4,12 +4,23 @@
 //
 // 回答は必ず実装に一致させること（推測で書かない）。根拠:
 //   - 機能一覧            … app/career/home/page.tsx の FEATURES
-//   - 開始導線            … /career/profile（基本情報入力・ログイン不要）→ /career/home
-//   - ログイン必須の範囲  … GD の公開部屋 / 友達とプレイ（app/career/gd/page.tsx）
+//   - 開始導線            … LP の「始める」→ /career/pricing → 登録 → Stripe Checkout →
+//                            /career/profile（基本情報）→ /career/home
+//   - ログイン / 契約必須  … lib/careerBilling/aiAccess.ts の requireCareerAiAccess。
+//                            CAREER の AI 本実行はすべて「ログイン済み member + 有効な契約」が必要
+//                            （未ログイン 401 / 未契約 402）。2026-08-21 の商品決定で、
+//                            以前の「guest でも AI を実行できる」仕様は廃止された。
+//   - 料金                … lib/careerPricing.ts（単一の有料プラン。表示は本ファイルからも参照）
 //   - 横断コンテキスト    … lib/careerMemory/selector.ts（各機能の入力を他機能の生成に渡す）
 //   - ES の設計思想       … app/career/es/page.tsx（AI は代筆せず添削・深掘りを担当）
-//   - 保存先              … 各機能の *Storage.ts（localStorage canonical）
-//   - 課金                … /career 配下は PlanGate の保護対象外・career 側に決済導線なし
+//   - 保存先              … 各機能の *Storage.ts（localStorage canonical）＋ member は
+//                            career_* テーブルへ durable mirror され、ログイン時に restore される
+//                            （lib/careerSourceData / lib/careerSourceSync）
+
+import {
+  CAREER_PUBLIC_MONTHLY_PRICE_LABEL,
+  CAREER_PUBLIC_PRODUCT_NAME,
+} from '@/lib/careerPricing';
 
 const FAQ_ITEMS: { q: string; a: string }[] = [
   {
@@ -42,11 +53,11 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: 'ログインは必要ですか？',
-    a: '基本情報の入力から、ログインなしで始められます。\nメールアドレスによるログインが必要なのは、GD練習の「公開GD部屋」「友達とプレイ」など、他のユーザーと一緒に行う機能です。',
+    a: 'はい。AI機能をご利用いただくには、メールアドレスでのログインと、有効な利用プランのご契約が必要です。\nパスワードは不要で、入力したメールアドレスに届く確認コードでログインできます。ご登録後、お支払いが完了するとすべての機能をご利用いただけます。',
   },
   {
     q: '利用料金はいくらですか？',
-    a: '現時点のPASSAI CAREERには、有料プランや決済のご案内はありません。各機能はそのままご利用いただけます。\n料金プランを導入する場合は、事前にサイト上でご案内します。',
+    a: `${CAREER_PUBLIC_PRODUCT_NAME}は${CAREER_PUBLIC_MONTHLY_PRICE_LABEL}の単一プランです。プランの選択や上位プランはありません。\nお支払いはクレジットカード（Stripe）で、料金プランのページからお申し込みいただけます。解約はマイページの「契約を管理」からいつでも可能です。`,
   },
   {
     q: 'スマートフォンでも使えますか？',
@@ -54,7 +65,7 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
   },
   {
     q: '入力した内容はどこに保存されますか？',
-    a: '入力内容や結果は、お使いのブラウザ内に保存されます。\nそのため、別の端末やブラウザに切り替えると、これまでの内容は引き継がれません。ブラウザのデータを削除すると保存内容も消えるためご注意ください。',
+    a: '入力内容や結果は、まずお使いのブラウザ内に保存されます。\nログイン中は、対応している保存データがアカウントにも保存され、同じアカウントでログインすれば別の端末やブラウザでも引き継げます。\nログインせずにご利用の場合や、対応していないデータは、その端末のブラウザにのみ残ります。ブラウザのデータを削除すると、その端末の保存内容は消えるためご注意ください。',
   },
 ];
 
