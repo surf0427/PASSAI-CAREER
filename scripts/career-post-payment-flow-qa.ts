@@ -39,6 +39,7 @@ import {
   type CareerAccessState,
 } from '../lib/careerRouting/destination';
 import { resolveCareerOriginFromHeaders } from '../lib/careerBilling/originPolicy';
+import { CAREER_PRODUCTION_ORIGIN, CAREER_PRODUCTION_HOST } from '../lib/brand';
 import type { CareerProfile } from '../types/careerProfile';
 
 const ROOT = process.cwd();
@@ -459,17 +460,34 @@ console.log('[9] session continuity across Stripe checkout');
 
   // --- 10/25: 戻り先は「今ユーザーがいる host」。Preview / Production の取り違えを起こさない ---
   //   ★ 静的検査ではなく **実入力の unit test** で固定する（ここがズレると session を失う）。
-  const CANONICAL = 'https://passai-career.vercel.app';
+  // 本番 canonical は独自ドメイン（lib/brand.ts が正本）。旧 Vercel deployment URL は
+  // Vercel 側に残り続けるため、「旧 host で決済を始めた人」も壊さないことを併せて固定する。
+  const CANONICAL = CAREER_PRODUCTION_ORIGIN;
+  const LEGACY_VERCEL_HOST = 'passai-career.vercel.app';
   const PREVIEW_HOST = 'passai-career-abc123-projects.vercel.app';
 
+  check(
+    CANONICAL === 'https://passaicareer.jp' && CAREER_PRODUCTION_HOST === 'passaicareer.jp',
+    '本番 canonical origin は独自ドメイン https://passaicareer.jp',
+  );
   // 本番 canonical host からの決済 → 同じ canonical host へ返る。
   check(
     resolveCareerOriginFromHeaders({
-      forwardedHost: 'passai-career.vercel.app',
+      forwardedHost: CAREER_PRODUCTION_HOST,
       forwardedProto: 'https',
       configuredAppUrl: CANONICAL,
     }) === CANONICAL,
-    '本番 host からの決済は同じ本番 host へ戻る',
+    '本番 host（独自ドメイン）からの決済は同じ本番 host へ戻る',
+  );
+  // ★ ドメイン移行の本体: 旧 Vercel host で決済を始めた browser を新ドメインへ飛ばさない。
+  //   飛ばすと cookie（host 単位）が付かず、決済直後に 401 → 再ログインになる。
+  check(
+    resolveCareerOriginFromHeaders({
+      forwardedHost: LEGACY_VERCEL_HOST,
+      forwardedProto: 'https',
+      configuredAppUrl: CANONICAL,
+    }) === `https://${LEGACY_VERCEL_HOST}`,
+    '旧 Vercel host からの決済は旧 host へ戻る（canonical へ強制送還しない）',
   );
   // ★ 回帰の本体: preview host で認証したユーザーを canonical host へ飛ばさない。
   check(

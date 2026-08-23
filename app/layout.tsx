@@ -4,7 +4,7 @@ import { Header } from "@/app/components/Header";
 import { DevValidationStatsHook } from "@/app/components/DevValidationStatsHook";
 import { AuthProvider } from "@/app/components/AuthProvider";
 import { PlanGate } from "@/app/components/PlanGate";
-import { BRAND_NAME } from "@/lib/brand";
+import { BRAND_NAME, CAREER_PRODUCTION_ORIGIN } from "@/lib/brand";
 
 // ── フォントについて（next/font を意図的に使っていない理由）─────────────────
 //
@@ -30,6 +30,12 @@ import { BRAND_NAME } from "@/lib/brand";
 // （GD / 企業マッチングは既定 OFF。metadata は静的なので flag に追従できず、OFF のときに
 //  「使える」と読める記述が検索結果・SNS プレビューへ出てしまうため常時提供分だけを書く）。
 export const metadata: Metadata = {
+  // 公開 canonical origin（独自ドメイン）。metadata 内の相対 URL はここを基準に
+  // 絶対化される。Next の既定は VERCEL_URL（deployment ごとに変わる）なので、
+  // 明示しないと preview の一時 URL が OGP 等に混ざりうる。
+  // ★ runtime の遷移先（Stripe 戻り先 / auth 着地）はここを使わない。
+  //   それらは request を配信した host から組む（lib/careerBilling/originPolicy.ts）。
+  metadataBase: new URL(CAREER_PRODUCTION_ORIGIN),
   title: `${BRAND_NAME} CAREER`,
   description:
     "新卒就活の活動整理・自己分析・就活軸整理・企業研究・ES・面接練習・プレゼン対策をAIでサポートする就活サービスです。入力した内容は次の対策にも引き継がれます。",

@@ -6,7 +6,8 @@
  * ★★ ここは「認証セッションの継続性」を決める箇所である ★★
  *
  *   Supabase の auth cookie は **host 単位**で保存される（Domain 属性を付けていないため
- *   `passai-career.vercel.app` の cookie は `passai-career-xxxx.vercel.app` へは送られない）。
+ *   本番 `passaicareer.jp` の cookie は preview の `passai-career-xxxx.vercel.app` へも、
+ *   旧 deployment URL `passai-career.vercel.app` へも送られない）。
  *   したがって Stripe の戻り先 host が「決済を始めた host」と違うと、
  *
  *       決済前: authenticated（cookie あり）

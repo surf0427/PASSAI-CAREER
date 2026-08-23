@@ -18,6 +18,9 @@
  *     - success ページは 30 秒ポーリングして「反映に時間がかかっています」で終わる
  *   コードは全て正常で、設定だけが誤っているため **コードの QA では検知できない**。
  *   この種の設定ミスを 1 コマンドで可視化するのが本 script の役割。
+ *   （上記 URL は事故当時のもの。本番 canonical は現在 https://passaicareer.jp。
+ *     旧 deployment URL 宛の endpoint でも同じ deployment に届くため、判定は
+ *     **host ではなく path** で行い、host は INFO として表示するだけにしている。）
  *
  * ── 安全性 ──────────────────────────────────────────────────────────────
  *   - 呼ぶのは GET /v1/webhook_endpoints だけ。**write API を一切呼ばない**。
@@ -31,6 +34,8 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { CAREER_PRODUCTION_HOST } from '../lib/brand';
 
 /** CAREER webhook handler の canonical path（app/api/career/billing/webhook/route.ts）。 */
 const CAREER_WEBHOOK_PATH = '/api/career/billing/webhook';
@@ -117,7 +122,7 @@ async function main() {
     }
     console.log('');
     console.log(`  → 対処: Stripe Dashboard → Developers → Webhooks で URL を`);
-    console.log(`         https://<本番ホスト>${CAREER_WEBHOOK_PATH} に修正してください。`);
+    console.log(`         https://${CAREER_PRODUCTION_HOST}${CAREER_WEBHOOK_PATH} に修正してください。`);
     console.log('         ルート（/）宛のままだと handler が呼ばれず、決済しても');
     console.log('         career_subscriptions が同期されません（paid が永久に false）。');
   }
@@ -130,6 +135,17 @@ async function main() {
       /* ignore */
     }
     check(e.status === 'enabled', `${host}: endpoint が enabled`);
+    // 独自ドメイン移行（passaicareer.jp）の観測。旧 Vercel deployment URL 宛でも
+    // 同じ deployment に届くため **FAIL にはしない**（署名 secret は endpoint 単位なので、
+    // 動いている endpoint を無闇に作り直すと配送が落ちる）。
+    // 移すときは「新 endpoint を追加 → live 配送成功を確認 → 旧 endpoint を無効化」の順。
+    if (host !== CAREER_PRODUCTION_HOST) {
+      console.log(
+        `  INFO  ${host}: 本番 canonical host（${CAREER_PRODUCTION_HOST}）宛ではない。` +
+          '旧 deployment URL 宛でも配送は届くが、移行するなら新 endpoint 追加 →' +
+          ' 配送成功確認 → 旧 endpoint 無効化 の順で（signing secret が別になる）。',
+      );
+    }
     for (const type of EXPECTED_EVENTS) {
       check(
         e.enabled_events.includes(type) || e.enabled_events.includes('*'),

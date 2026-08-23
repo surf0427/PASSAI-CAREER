@@ -4,7 +4,8 @@
  * PASSAI — ログイン公開 env の "build inline 実効性" と "no-env の誤分類" を守る guard。
  *
  * 背景（2026-08-14 production login incident）:
- *   production（passai-career.vercel.app）で「ログインコードを送る」が
+ *   production（当時の deployment URL passai-career.vercel.app。本番 canonical は現在
+ *   https://passaicareer.jp）で「ログインコードを送る」が
  *   「ストレージに接続できません。少し時間をおいて再度お試しください。」で失敗していた。
  *   真因は storage/DB/OTP/email ではなく **Vercel Production build に NEXT_PUBLIC_SUPABASE_URL /
  *   NEXT_PUBLIC_SUPABASE_ANON_KEY が無かったこと**。Next.js は client bundle へ公開 env を

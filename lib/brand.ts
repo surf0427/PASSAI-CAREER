@@ -1,3 +1,27 @@
 // プロダクト名は将来的に変わりうるため 1 箇所に集約する。
 // 表示名（ヘッダー / metadata / フッター / 通知文など）はここから import する。
 export const BRAND_NAME = 'PASSAI';
+
+/**
+ * PASSAI CAREER 本番の **canonical origin**（独自ドメイン）。
+ *
+ * ── これは何で、何ではないか ────────────────────────────────────────────
+ *   「この site の公開 URL を 1 つ挙げるならどれか」の唯一の定義。用途は
+ *     - metadata の基準 origin（metadataBase）
+ *     - 運用点検 script が「本番を指しているか」を説明するときの表示基準
+ *   に限る。
+ *
+ *   ★ runtime の遷移先 origin をここから組んではいけない ★
+ *   Stripe の success_url / cancel_url / return_url と auth の戻り先は
+ *   **その request を実際に配信した host** から組む（lib/careerBilling/originPolicy.ts）。
+ *   Supabase の auth cookie は host 単位で保存されるため、canonical へ寄せてしまうと
+ *   preview deployment で認証したユーザーが本番 host に着地して session を失う。
+ *
+ * 旧 Vercel origin（https://passai-career.vercel.app）は Vercel 側の deployment URL
+ * として当面残る。到達性の維持と webhook の後方互換のために消さないが、
+ * 「公開 URL」としてはこの定数だけを正本にする。
+ */
+export const CAREER_PRODUCTION_ORIGIN = 'https://passaicareer.jp';
+
+/** CAREER_PRODUCTION_ORIGIN の host 部分（`passaicareer.jp`）。 */
+export const CAREER_PRODUCTION_HOST = 'passaicareer.jp';
