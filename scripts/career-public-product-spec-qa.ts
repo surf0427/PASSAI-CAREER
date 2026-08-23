@@ -15,6 +15,7 @@
  *   [D] 利用上限 — 10/10/10/8/5/5/5 を quota の正本から引いて購入前に開示
  *   [E] 文言 — 「ログインなし」等の stale copy が到達可能な画面に残っていない
  *   [F] Landing — LP の提供表現が Pricing / server flag と一致する（過剰な約束をしない）
+ *   [G] 静的な公開ページ（/about・LP metadata）が flag 依存機能を断定しない
  *
  * 使い方: npx tsx --tsconfig tsconfig.realtime-test.json scripts/career-public-product-spec-qa.ts
  */
@@ -476,6 +477,46 @@ console.log('[F] Landing — LP の提供表現が Pricing / flag と一致す�
     !/num="0[1-8]"/.test(flowSrc),
     'カード番号を JSX に直書きしていない',
   );
+}
+
+console.log('');
+
+// ═══════════════════════════════════════════════════════════════
+console.log('[G] 静的な公開ページ — flag で停止しうる機能を断定しない');
+// ═══════════════════════════════════════════════════════════════
+{
+  // ★ flag に追従できない（＝ server flag を読まない）静的な公開ページは、
+  //   OFF のときに嘘にならないよう **常時提供の機能だけ**を書く。
+  //   過少表示（ON なのに書いていない）は不整合ではないので許容する。
+  const STATIC_PUBLIC_PAGES = [
+    'app/about/page.tsx',
+    // LP の <meta description>（静的 export なので flag に追従できない）。
+    'app/layout.tsx',
+  ];
+  // flag で停止しうる機能の呼び名。
+  const GATED_FEATURE_WORDS = ['GD', 'グループディスカッション', '企業マッチング'];
+
+  for (const rel of STATIC_PUBLIC_PAGES) {
+    check(existsSync(join(ROOT, rel)), `${rel} が存在する`);
+    const code = codeOf(read(rel));
+    for (const word of GATED_FEATURE_WORDS) {
+      check(
+        !code.includes(word),
+        `${rel}: 表示テキストが「${word}」を断定的に提供機能として書かない`,
+      );
+    }
+    // 動的化していないこと（このページは flag を読まない前提で「書かない」側に倒す）。
+    check(
+      !/isCareerGdEnabled|isCareerCompanyMatchingEnabled/.test(code),
+      `${rel}: server flag に依存しない静的ページのまま`,
+    );
+  }
+
+  // 常時提供の機能はそのまま書かれていてよい（過剰に削っていないことの確認）。
+  const aboutCode = codeOf(read('app/about/page.tsx'));
+  for (const always of ['自己分析', '面接練習', 'プレゼン対策']) {
+    check(aboutCode.includes(always), `app/about/page.tsx: 常時提供の「${always}」は記載を維持`);
+  }
 }
 
 console.log('');

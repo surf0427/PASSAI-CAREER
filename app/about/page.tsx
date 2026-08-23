@@ -17,6 +17,12 @@ import {
 // 提供しているサービスを併記する。
 // 「サービス内容」欄は OPERATOR_SERVICES_DESCRIPTION（案内用）を使う。特商法ページの
 // SERVICE_DESCRIPTION（有料販売している役務の法定表示）とは意図的に別定義。
+//
+// ★ 機能を列挙するときは **feature flag で停止しうる機能を名指ししない**
+//   （GD / 企業マッチングは既定 OFF）。本ページは事業者説明であり flag に追従する
+//   動的ページにはしない方針なので、常時提供の機能だけを書いて OFF でも正しい文にする。
+//   GD が ON のときに About へ書いていないのは過少表示であって不整合ではない
+//   （LP / metadata と同じ規則。禁止しているのは提供していないものを断定すること）。
 
 export const metadata: Metadata = {
   title: '運営者情報 | PASSAI',
@@ -44,7 +50,7 @@ export default function AboutPage() {
           </p>
           <p>
             PASSAI CAREERでは、活動整理・自己分析・就活軸整理・企業研究・ES作成・
-            面接練習・GD練習・プレゼン対策を1つの流れで進められます。
+            面接練習・プレゼン対策を1つの流れで進められます。
           </p>
 
           <div className="space-y-5">
