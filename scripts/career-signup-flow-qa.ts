@@ -777,13 +777,36 @@ console.log('[11] account lifecycle と「登録 ≠ 課金」');
     writers.length === 1 && writers[0] === join('lib', 'careerBilling', 'subscription.ts'),
     `11: career_subscriptions を書くのは同期関数 1 つだけ（実際: ${writers.join(', ') || 'なし'}）`,
   );
+  // ★ 同期関数を起動できる app/ 側の入口は **信頼された server 経路だけ**であること。
+  //   STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING で入口が 2 つになった:
+  //     1. 署名付き webhook（Stripe 署名検証済み）
+  //     2. reconcile cron（CRON_SECRET 認証・Stripe を正として drift を修復する）
+  //   どちらも guest からは叩けない。ページ / 公開 API / client からは呼べないままである
+  //   ことを引き続き固定する（＝ 入口が増えても「誰でも書ける」にはなっていない）。
+  const SYNC_ENTRYPOINTS = [
+    join('app', 'api', 'career', 'billing', 'webhook', 'route.ts'),
+    join('app', 'api', 'cron', 'career-reconcile-subscriptions', 'route.ts'),
+  ];
   const syncImporters = walkTs(join(ROOT, 'app'))
-    .filter((f) => /syncCareerSubscriptionFromStripe/.test(codeOf(readFileSync(f, 'utf8'))))
-    .map((f) => f.slice(ROOT.length + 1));
+    .filter((f) =>
+      /syncCareerSubscription(FromStripe|ById)|reconcileCareerSubscriptions/.test(
+        codeOf(readFileSync(f, 'utf8')),
+      ),
+    )
+    .map((f) => f.slice(ROOT.length + 1))
+    .sort();
   check(
-    syncImporters.length === 1 &&
-      syncImporters[0] === join('app', 'api', 'career', 'billing', 'webhook', 'route.ts'),
-    `11: その同期関数を呼ぶのは署名付き webhook だけ（実際: ${syncImporters.join(', ') || 'なし'}）`,
+    syncImporters.length === SYNC_ENTRYPOINTS.length &&
+      SYNC_ENTRYPOINTS.every((p) => syncImporters.includes(p)),
+    `11: 同期を起動できるのは署名付き webhook と reconcile cron だけ（実際: ${syncImporters.join(', ') || 'なし'}）`,
+  );
+  // 増えた側（cron）が無認証で叩けないこと。
+  const reconcileCronSrc = codeOf(
+    readFileSync(join(ROOT, 'app/api/cron/career-reconcile-subscriptions/route.ts'), 'utf8'),
+  );
+  check(
+    /CRON_SECRET/.test(reconcileCronSrc) && /status:\s*401/.test(reconcileCronSrc),
+    '11: reconcile cron は CRON_SECRET 認証（guest から subscription を書けない）',
   );
 
   // ── 27-10 / 18: paid になって初めて基本情報へ進む ──

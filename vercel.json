@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/gd-cleanup",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/career-reconcile-subscriptions",
+      "schedule": "0 19 * * *"
     }
   ]
 }

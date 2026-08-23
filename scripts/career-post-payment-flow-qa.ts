@@ -179,9 +179,17 @@ console.log('[2] webhook security & idempotency');
   ]) {
     check(src.includes(`'${t}'`), `event ${t} を受け取る`);
   }
+  // ★ 権利の同期経路は subscription.* からの 1 本のまま。
+  //   STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING 以降、webhook は event payload の snapshot を
+  //   保存せず **subscription id を渡して Stripe の現在値を取り直す**（配送順序が保証されず、
+  //   古い event が active → incomplete へ巻き戻すため）。関数名はその by-id 版になる。
   check(
-    /syncCareerSubscriptionFromStripe\(/.test(src),
-    '権利の同期は subscription.* から syncCareerSubscriptionFromStripe 1 本',
+    /syncCareerSubscriptionById\(/.test(src),
+    '権利の同期は subscription.* から syncCareerSubscriptionById 1 本',
+  );
+  check(
+    /subscriptionId:\s*sub\.id/.test(src),
+    'webhook は event payload ではなく subscription id を渡す（stale rollback 防止）',
   );
   // checkout.session.completed は観測のみ（ここで権利を与えない）。
   const completedAt = src.indexOf("case 'checkout.session.completed'");

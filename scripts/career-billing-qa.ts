@@ -410,9 +410,22 @@ console.log('[5] webhook security & idempotency contract');
   ]) {
     check(src.includes(t), `event '${t}' を扱う`);
   }
+  // ★ subscription.* は同期処理へ dispatch する。
+  //   STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING 以降、webhook は event payload を
+  //   そのまま保存せず **subscription id を渡して Stripe の現在 snapshot を取り直す**
+  //   （配送順序が保証されないため）。したがって dispatch 先は by-id 版になる。
   check(
-    /syncCareerSubscriptionFromStripe\(/.test(src),
-    'subscription.* は同期処理へ dispatch する',
+    /syncCareerSubscriptionById\(/.test(src),
+    'subscription.* は同期処理へ dispatch する（現在 snapshot を取り直す by-id 版）',
+  );
+  check(
+    /subscriptionId:\s*sub\.id/.test(src) &&
+      !/syncCareerSubscriptionFromStripe\(\s*\{\s*admin/.test(src),
+    'webhook は event payload の snapshot をそのまま保存しない（stale rollback 防止）',
+  );
+  check(
+    /stripe-missing/.test(src) && /stripe-error/.test(src),
+    'Stripe retrieve の missing / error を区別して扱う',
   );
   // permanent / transient の区別。
   check(/transient-error/.test(src) && /permanent-error/.test(src), 'transient / permanent の失敗を区別する');

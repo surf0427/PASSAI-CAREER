@@ -43,7 +43,9 @@ export type CareerStripeOperation =
   | 'prices.retrieve'
   | 'customers.create'
   | 'checkout.sessions.create'
-  | 'billingPortal.sessions.create';
+  | 'billingPortal.sessions.create'
+  // webhook / reconcile が subscription の現在 snapshot を取り直すときの読み取り。
+  | 'subscriptions.retrieve';
 
 /** Stripe error から安全に取り出せるフィールドだけを写した形。 */
 export type SafeStripeFailure = {

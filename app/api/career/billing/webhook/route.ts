@@ -46,7 +46,7 @@ import {
   currentExpectedStripeLivemode,
   currentStripeRuntimeEnv,
 } from '@/lib/stripe/environment';
-import { syncCareerSubscriptionFromStripe } from '@/lib/careerBilling/subscription';
+import { syncCareerSubscriptionById } from '@/lib/careerBilling/subscription';
 import { isUndefinedTable } from '@/lib/careerBilling/customer';
 
 export const runtime = 'nodejs';
@@ -230,9 +230,16 @@ async function dispatch(input: {
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
+        // ★ 順序保証（STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING）:
+        //   event.data.object は「その event が作られた瞬間」の snapshot。Stripe は
+        //   webhook の配送順序を保証しないため、これをそのまま保存すると
+        //   遅れて届いた古い event が新しい状態を巻き戻す（active → incomplete）。
+        //   そこで event からは **subscription id だけ**を取り、値は Stripe から
+        //   取り直した現在の snapshot を保存する。到着順に依存しなくなる。
+        //   （deleted も同様。retrieve は canceled を返すので復活しない。）
         const sub = event.data.object as Stripe.Subscription;
         return mapSyncResult(
-          await syncCareerSubscriptionFromStripe({ admin: supabase, sub }),
+          await syncCareerSubscriptionById({ admin: supabase, subscriptionId: sub.id }),
         );
       }
 
@@ -269,11 +276,24 @@ async function dispatch(input: {
 }
 
 function mapSyncResult(
-  result: Awaited<ReturnType<typeof syncCareerSubscriptionFromStripe>>,
+  result: Awaited<ReturnType<typeof syncCareerSubscriptionById>>,
 ): DispatchResult {
   switch (result.kind) {
     case 'ok':
       return { kind: 'handled' };
+    // Stripe 上に無い。**DB 行は消さない**（破壊的処理をしない）。retry しても直らないので
+    // 200 で受け切り、error 列と log に残して運用で気付けるようにする。
+    case 'stripe-missing':
+      return {
+        kind: 'permanent-error',
+        message: `stripe_missing: subscription ${result.subscriptionId} not found on Stripe`,
+      };
+    // Stripe API の一時障害。DB は無変更なので Stripe に retry させる。
+    case 'stripe-error':
+      return {
+        kind: 'transient-error',
+        message: `stripe_error: could not retrieve subscription ${result.subscriptionId}`,
+      };
     // retry しても直らない（設定 / データ側の問題）。200 で受け切り error に記録する。
     case 'no-user-id':
       return {

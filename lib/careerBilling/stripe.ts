@@ -220,3 +220,67 @@ export async function getCareerPlanOffer(): Promise<CareerPlanOffer | null> {
     intervalCount: price.recurring?.interval_count ?? null,
   };
 }
+
+// ── Subscription の現在 snapshot 取得 ────────────────────────────────
+//
+// STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING。
+//
+// ★ なぜ webhook の event payload をそのまま信じないのか:
+//   Stripe は webhook の **配送順序を保証しない**。したがって
+//     T1 created(status=incomplete) → T2 updated(status=active)
+//   が
+//     updated(active) → created(incomplete)
+//   の順に届きうる。event payload は「その event が作られた瞬間の snapshot」なので、
+//   遅れて届いた古い payload をそのまま保存すると active → incomplete へ巻き戻り、
+//   課金済みユーザーの権利が消える。
+//
+//   `event.created` を watermark にする案もあるが、粒度が **秒**なので Checkout 直後の
+//   created / updated のように同一秒に並ぶ event を正しく順序付けられない
+//   （`<` だと古い方を通し、`<=` だと正当な更新を捨てる）。`evt_...` の id も単調ではない。
+//   ＝ timestamp ベースの guard では本質的に全順序を作れない。
+//
+//   そこで **event は「この subscription を見直せ」という通知としてだけ使い**、
+//   保存する値は必ず Stripe から取り直した現在の snapshot にする。
+//   こうすると到着順に依存しなくなる（何度どの順で届いても収束先は同じ）。
+//
+// ★ canceled は retrieve できる（Stripe は subscription を hard delete しない）ため、
+//   deleted event でも同じ経路で「現在 = canceled」を保存できる。古い active event が
+//   後から届いても retrieve は canceled を返すので、解約済みが active へ復活しない。
+export type CareerSubscriptionFetch =
+  | { kind: 'ok'; sub: Stripe.Subscription }
+  /** Stripe 上に存在しない（test データ削除 / key の取り違え等）。**破壊的処理はしない**。 */
+  | { kind: 'missing' }
+  /** 通信・権限・レート制限など。呼び出し側は retry させる。 */
+  | { kind: 'error' };
+
+/** Stripe API が resource_missing（404 相当）を示しているか。 */
+function isStripeResourceMissing(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; statusCode?: unknown; type?: unknown };
+  return (
+    e.code === 'resource_missing' ||
+    (e.statusCode === 404 && e.type === 'StripeInvalidRequestError')
+  );
+}
+
+/**
+ * subscription の **現在**の状態を Stripe から取得する（＝ billing truth）。
+ *
+ * webhook と reconcile の両方がこれを通す。ここが唯一の「Stripe を読む」入口。
+ */
+export async function retrieveCareerSubscription(
+  subscriptionId: string,
+): Promise<CareerSubscriptionFetch> {
+  try {
+    const sub = await getStripeClient().subscriptions.retrieve(subscriptionId);
+    return { kind: 'ok', sub };
+  } catch (err) {
+    if (isStripeResourceMissing(err)) {
+      // 実値（subscription id）は出さず、種別だけ残す。
+      devWarn('[careerBilling/stripe] subscription not found on Stripe');
+      return { kind: 'missing' };
+    }
+    logCareerStripeFailure('subscriptions.retrieve', err);
+    return { kind: 'error' };
+  }
+}

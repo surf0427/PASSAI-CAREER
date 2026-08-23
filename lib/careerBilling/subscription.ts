@@ -34,7 +34,11 @@ import 'server-only';
 import type Stripe from 'stripe';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { resolveCareerPlanValueFromPriceId } from './stripe';
+import {
+  resolveCareerPlanValueFromPriceId,
+  retrieveCareerSubscription,
+  type CareerSubscriptionFetch,
+} from './stripe';
 import { rememberCareerStripeCustomer } from './customer';
 import type { CareerSubscriptionPlanValue } from './plans';
 
@@ -109,6 +113,45 @@ export async function syncCareerSubscriptionFromStripe(input: {
 function unixSecondsToIso(seconds: number | null | undefined): string | null {
   if (seconds == null) return null;
   return new Date(seconds * 1000).toISOString();
+}
+
+// ── subscription id から「現在の Stripe truth」を同期する ─────────────
+//
+// STEP-CAREER-SUBSCRIPTION-SYNC-HARDENING。
+//
+// ★ webhook も reconcile も **この関数だけ**を使う（§24: mapping を 2 度書かない）。
+//   保存する値の作り方は上の syncCareerSubscriptionFromStripe が唯一の正本であり、
+//   本関数は「何を渡すか」（= event payload ではなく Stripe の現在 snapshot）を決めるだけ。
+//
+// ★ これが webhook の順序保証そのものになる:
+//   event は「この subscription を見直せ」という通知としてのみ使い、
+//   保存する内容は必ず取り直した現在値にするため、event の到着順に依存しない。
+//   古い event が遅れて届いても retrieve は最新を返すので巻き戻らない。
+
+export type CareerSyncByIdResult =
+  | CareerSyncResult
+  /** Stripe 上に subscription が無い。**行は消さない**（破壊的処理をしない）。 */
+  | { kind: 'stripe-missing'; subscriptionId: string }
+  /** Stripe API の一時障害。呼び出し側は retry させる（DB は無変更）。 */
+  | { kind: 'stripe-error'; subscriptionId: string };
+
+export async function syncCareerSubscriptionById(input: {
+  admin: SupabaseClient;
+  subscriptionId: string;
+  /** テスト用の注入点。既定は実 Stripe。 */
+  fetchSubscription?: (id: string) => Promise<CareerSubscriptionFetch>;
+}): Promise<CareerSyncByIdResult> {
+  const fetchSubscription = input.fetchSubscription ?? retrieveCareerSubscription;
+  const fetched = await fetchSubscription(input.subscriptionId);
+
+  if (fetched.kind === 'missing') {
+    return { kind: 'stripe-missing', subscriptionId: input.subscriptionId };
+  }
+  if (fetched.kind === 'error') {
+    return { kind: 'stripe-error', subscriptionId: input.subscriptionId };
+  }
+
+  return syncCareerSubscriptionFromStripe({ admin: input.admin, sub: fetched.sub });
 }
 
 async function resolveCareerUserId(input: {
