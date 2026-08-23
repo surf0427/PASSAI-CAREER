@@ -57,8 +57,14 @@ import {
   IS_VALID_IT_SKILL_LEVEL,
   IS_VALID_LANGUAGE_LEVEL,
 } from './careerActivityCategories';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
-const STORAGE_KEY = 'careerActivityData';
+function STORAGE_KEY(): string {
+  return careerStorageKey('careerActivityData');
+}
 
 // Dedup gate — 同一内容の re-save を抑制（受験版と同設計）。canonical は localStorage。
 let lastSavedJson: string | undefined;
@@ -389,7 +395,7 @@ export function normalizeCareerActivity(raw: unknown): CareerActivity {
 
 // localStorage から読む。未保存 / 壊れていれば null（呼び出し側で空フォームを出す）。
 export function loadActivityData(): CareerActivity | null {
-  const raw = safeGetStorage<unknown>(STORAGE_KEY, null);
+  const raw = safeGetStorage<unknown>(STORAGE_KEY(), null);
   if (raw == null) return null;
   const value = normalizeCareerActivity(raw);
   // ロード直後の最初の autosave が同一内容なら no-op になるよう cache を同期する。
@@ -403,12 +409,12 @@ export function saveActivityData(data: CareerActivity): void {
   const json = JSON.stringify(normalized);
   if (json === lastSavedJson) return;
   lastSavedJson = json;
-  safeSetStorage(STORAGE_KEY, normalized);
+  safeSetStorage(STORAGE_KEY(), normalized);
 }
 
 export function clearActivityData(): void {
   lastSavedJson = undefined;
-  safeRemoveStorage(STORAGE_KEY);
+  safeRemoveStorage(STORAGE_KEY());
 }
 
 // readiness 判定。null / 全カテゴリ未入力なら false。

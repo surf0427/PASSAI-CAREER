@@ -2,6 +2,10 @@ import type { PersistedAnalyzeState } from '@/types/analysis';
 import type { SelfPR } from '@/types/selfPR';
 import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
 import { safeGetStorage, safeSetStorage, safeRemoveStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版（career）自己分析の localStorage 保存層。
 // 受験版 lib/analyzeStorage.ts / lib/selfPRStorage.ts / lib/selfAnalysisLogStorage.ts を
@@ -13,34 +17,40 @@ import { safeGetStorage, safeSetStorage, safeRemoveStorage } from '@/lib/storage
 // 本フェーズではハブ画面の「現在地」表示（読み取り）のみが対象。AI壁打ち（run/resume）は
 // 受験版 API（/api/summarize 等）に強く依存するため準備中で、これらのキーへ実データを
 // 書き込む経路はまだ存在しない（fresh user では常に空 = 現在地はすべて空表示）。
-const ANALYZE_KEY = 'careerAnalyzeState';
-const SELF_PR_KEY = 'careerSelfPRs';
-const SELF_ANALYSIS_LOG_KEY = 'careerSelfAnalysisLogs';
+function ANALYZE_KEY(): string {
+  return careerStorageKey('careerAnalyzeState');
+}
+function SELF_PR_KEY(): string {
+  return careerStorageKey('careerSelfPRs');
+}
+function SELF_ANALYSIS_LOG_KEY(): string {
+  return careerStorageKey('careerSelfAnalysisLogs');
+}
 
 export function saveAnalyzeState(state: PersistedAnalyzeState): void {
-  safeSetStorage(ANALYZE_KEY, state);
+  safeSetStorage(ANALYZE_KEY(), state);
 }
 export function loadAnalyzeState(): PersistedAnalyzeState | null {
-  return safeGetStorage<PersistedAnalyzeState | null>(ANALYZE_KEY, null);
+  return safeGetStorage<PersistedAnalyzeState | null>(ANALYZE_KEY(), null);
 }
 export function clearAnalyzeState(): void {
-  safeRemoveStorage(ANALYZE_KEY);
+  safeRemoveStorage(ANALYZE_KEY());
 }
 
 export function loadSelfPRs(): SelfPR[] {
-  return safeGetStorage<SelfPR[]>(SELF_PR_KEY, []);
+  return safeGetStorage<SelfPR[]>(SELF_PR_KEY(), []);
 }
 export function saveSelfPRs(entries: SelfPR[]): void {
-  safeSetStorage(SELF_PR_KEY, entries);
+  safeSetStorage(SELF_PR_KEY(), entries);
 }
 
 // 就活版 自己分析AI の結果ログ（careerSelfAnalysisLogs）。
 // 型は就活版専用の CareerSelfAnalysisLog（受験版 SelfAnalysisLog とは別レーン）。
 export function loadSelfAnalysisLogs(): CareerSelfAnalysisLog[] {
-  return safeGetStorage<CareerSelfAnalysisLog[]>(SELF_ANALYSIS_LOG_KEY, []);
+  return safeGetStorage<CareerSelfAnalysisLog[]>(SELF_ANALYSIS_LOG_KEY(), []);
 }
 export function saveSelfAnalysisLogs(logs: CareerSelfAnalysisLog[]): void {
-  safeSetStorage(SELF_ANALYSIS_LOG_KEY, logs);
+  safeSetStorage(SELF_ANALYSIS_LOG_KEY(), logs);
 }
 
 // 1 件を先頭に追記して保存する（最新が先頭）。run 画面から利用する。

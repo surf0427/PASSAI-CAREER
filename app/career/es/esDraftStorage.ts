@@ -5,13 +5,19 @@ import {
 } from '@/types/careerEs';
 import { normalizeSelectedMaterials } from '@/lib/careerEs/materialCandidates';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版 ES「作成中ドラフト」の localStorage 保存層（正式ログ careerEsLogs とは別ストア）。
 //   - 未完成の深掘りQ&A・材料整理メモ・執筆中本文を保存し、途中離脱→再開を可能にする。
 //   - careerEsLogs には未完成状態を書かない（横断機能・履歴への露出防止）。
 //   - owner（member=userId / guest=null）単位で分離し、他ユーザーの draft を復元しない。
 //   - schemaVersion 不一致・壊れた draft は読み込み時に安全に破棄する（fail-safe）。
-const ES_DRAFT_KEY = 'careerEsDrafts';
+function ES_DRAFT_KEY(): string {
+  return careerStorageKey('careerEsDrafts');
+}
 
 // 端末あたりの draft 上限（LRU）。作成中の一時データなので控えめに保つ。
 const MAX_DRAFTS = 20;
@@ -92,13 +98,13 @@ function normalizeDraft(raw: unknown): CareerEsDraft | null {
 // 全 draft を読む（内部用・全 owner 混在。壊れた要素は除去）。
 // localStorage JSON parse error は safeGetStorage が握るため、ここは配列前提で防御する。
 function loadAllDrafts(): CareerEsDraft[] {
-  const raw = safeGetStorage<unknown[]>(ES_DRAFT_KEY, []);
+  const raw = safeGetStorage<unknown[]>(ES_DRAFT_KEY(), []);
   if (!Array.isArray(raw)) return [];
   return raw.map(normalizeDraft).filter((d): d is CareerEsDraft => d !== null);
 }
 
 function saveAllDrafts(drafts: CareerEsDraft[]): void {
-  safeSetStorage(ES_DRAFT_KEY, drafts.slice(0, MAX_DRAFTS));
+  safeSetStorage(ES_DRAFT_KEY(), drafts.slice(0, MAX_DRAFTS));
 }
 
 // 指定 owner の draft を更新日時の新しい順に返す。

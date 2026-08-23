@@ -1,22 +1,28 @@
 import type { CareerProfile } from '@/types/careerProfile';
 import type { SchoolPreference } from '@/types/basicInfo';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版（career）基本情報＝プロフィールの localStorage キー。
 // 受験版（lib/basicInfoStorage.ts の 'basicFormData'）とは別キーにして、
 // 就活データが受験版のストレージ／テーブルへ混入しないよう独立させる。
-const STORAGE_KEY = 'careerBasicFormData';
+function STORAGE_KEY(): string {
+  return careerStorageKey('careerBasicFormData');
+}
 
 // 関数名は loadBasicInfo / saveBasicInfo のまま維持する（career 配下の多数の消費側が
 // この名前で import 済みのため、import churn を避ける）。扱う型のみ CareerProfile に変更。
 // Phase1 同様、受験版テーブルへの書き込み（Supabase mirror / DB dualWrite）は行わず、
 // canonical な localStorage 保存のみとする（DB 連携は後続フェーズ）。
 export function saveBasicInfo(data: CareerProfile): void {
-  safeSetStorage(STORAGE_KEY, data);
+  safeSetStorage(STORAGE_KEY(), data);
 }
 
 export function loadBasicInfo(): CareerProfile | null {
-  const raw = safeGetStorage<CareerProfile | null>(STORAGE_KEY, null);
+  const raw = safeGetStorage<CareerProfile | null>(STORAGE_KEY(), null);
   if (!raw) return null;
   return normalizeCareerProfile(raw);
 }

@@ -11,10 +11,16 @@ import type {
   CompanyEventType,
 } from '@/types/careerCompanyResearch';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版（career）企業研究AIの結果ログ localStorage 保存層。
 // 受験版とは別レーンの就活版専用キー: 'careerCompanyResearchLogs'。
-const COMPANY_RESEARCH_LOG_KEY = 'careerCompanyResearchLogs';
+function COMPANY_RESEARCH_LOG_KEY(): string {
+  return careerStorageKey('careerCompanyResearchLogs');
+}
 
 // ── 防御的 normalize ヘルパー ───────────────────────────────────────
 
@@ -224,7 +230,7 @@ function normalizeLog(raw: unknown): CareerCompanyResearchLog | null {
 // ── 公開 API ──────────────────────────────────────────────────────
 
 export function loadCompanyResearchLogs(): CareerCompanyResearchLog[] {
-  const raw = safeGetStorage<unknown[]>(COMPANY_RESEARCH_LOG_KEY, []);
+  const raw = safeGetStorage<unknown[]>(COMPANY_RESEARCH_LOG_KEY(), []);
   if (!Array.isArray(raw)) return [];
   return raw
     .map(normalizeLog)
@@ -237,7 +243,7 @@ export function loadCompanyResearchLog(id: string): CareerCompanyResearchLog | n
 }
 
 export function saveCompanyResearchLogs(logs: CareerCompanyResearchLog[]): void {
-  safeSetStorage(COMPANY_RESEARCH_LOG_KEY, logs);
+  safeSetStorage(COMPANY_RESEARCH_LOG_KEY(), logs);
 }
 
 // 1 件を先頭に追記して保存する（最新が先頭）。do 画面の新規保存から利用する。

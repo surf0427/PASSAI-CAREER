@@ -16,8 +16,14 @@ import type {
   CareerCompanyApplication,
   CareerCompanyApplicationDefaults,
 } from '@/types/careerCompanyApplication';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
-const APPLICATION_KEY = 'careerCompanyApplications';
+function APPLICATION_KEY(): string {
+  return careerStorageKey('careerCompanyApplications');
+}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -68,7 +74,7 @@ function normalizeApplication(raw: unknown): CareerCompanyApplication | null {
 }
 
 function loadAll(): Record<string, CareerCompanyApplication> {
-  const raw = safeGetStorage<unknown>(APPLICATION_KEY, {});
+  const raw = safeGetStorage<unknown>(APPLICATION_KEY(), {});
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Record<string, CareerCompanyApplication> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -133,7 +139,7 @@ export function saveCompanyApplication(
     if (typeof next[key] === 'string' && next[key]!.trim() === '') delete next[key];
   }
   all[id] = next;
-  safeSetStorage(APPLICATION_KEY, all);
+  safeSetStorage(APPLICATION_KEY(), all);
 }
 
 /** 応募文脈を削除する。 */
@@ -143,5 +149,5 @@ export function deleteCompanyApplication(companyId: string): void {
   const all = loadAll();
   if (!(id in all)) return;
   delete all[id];
-  safeSetStorage(APPLICATION_KEY, all);
+  safeSetStorage(APPLICATION_KEY(), all);
 }

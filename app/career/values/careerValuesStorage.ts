@@ -10,6 +10,10 @@ import {
 } from '@/types/careerValues';
 import { CAREER_VALUES_OPTION_SETS } from './careerValuesCategories';
 import { safeGetStorage, safeSetStorage, safeRemoveStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版（career）「就活軸整理」の localStorage 保存層（canonical）。
 //
@@ -17,7 +21,9 @@ import { safeGetStorage, safeSetStorage, safeRemoveStorage } from '@/lib/storage
 // localStorage を正本（canonical）とし、ログイン済みユーザーのみ Supabase 永続ミラー
 // （lib/supabase/careerValues.ts）へ best-effort で同期する。受験版キーとは別キーで
 // 分離し、受験版データへ混入させない。
-const STORAGE_KEY = 'careerValues';
+function STORAGE_KEY(): string {
+  return careerStorageKey('careerValues');
+}
 
 // 不明・壊れた値を捨てて、型・選択肢を正規化する。
 //   - selections: 各カテゴリで「正規な選択肢集合に含まれる文字列」だけを残す（重複も除去）。
@@ -74,7 +80,7 @@ function normalizeNotes(raw: unknown): CareerValuesNotes {
 
 // localStorage から読む。未保存 / 壊れている場合は null を返す（呼び出し側で空フォームを出す）。
 export function loadCareerValues(): CareerValues | null {
-  const raw = safeGetStorage<unknown>(STORAGE_KEY, null);
+  const raw = safeGetStorage<unknown>(STORAGE_KEY(), null);
   if (raw == null) return null;
   return normalizeCareerValues(raw);
 }
@@ -83,12 +89,12 @@ export function loadCareerValues(): CareerValues | null {
 // （Supabase ミラーと同一タイムスタンプを共有できるよう、呼び出し側から渡す）。
 export function saveCareerValues(values: CareerValues): CareerValues {
   const normalized = normalizeCareerValues(values);
-  safeSetStorage(STORAGE_KEY, normalized);
+  safeSetStorage(STORAGE_KEY(), normalized);
   return normalized;
 }
 
 export function clearCareerValues(): void {
-  safeRemoveStorage(STORAGE_KEY);
+  safeRemoveStorage(STORAGE_KEY());
 }
 
 // 「すべて空か」を判定する（未入力保存の許可とは別に、表示・同期判断に使えるユーティリティ）。

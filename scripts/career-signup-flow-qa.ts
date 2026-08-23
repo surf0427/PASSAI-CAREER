@@ -388,8 +388,11 @@ console.log('[7] 重複作成が無い（料金 / checkout / 基本情報 / prof
 
   // 基本情報入力フォームは既存の 1 実装だけ（同じ目的の onboarding 画面を重複作成しない）。
   const careerPages = walk(join(ROOT, 'app/career'));
+  // 所有者名前空間の導入（lib/careerStorage/owner.ts）で、キーは定数ではなく
+  // `careerStorageKey('careerBasicFormData')` 経由の解決になった。
+  // 検証の意図（canonical storage の所有 module は 1 つだけ）は変えず、パターンだけ追従させる。
   const storageOwners = careerPages.filter((f) =>
-    /STORAGE_KEY = 'careerBasicFormData'/.test(codeOf(readFileSync(f, 'utf8'))),
+    /careerStorageKey\('careerBasicFormData'\)/.test(codeOf(readFileSync(f, 'utf8'))),
   );
   check(
     storageOwners.length === 1 && storageOwners[0].endsWith(join('profile', 'profileStorage.ts')),

@@ -14,8 +14,14 @@
 
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
 import type { CareerCompanyDirectoryEntry } from '@/types/careerCompanyIdentity';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
-const DIRECTORY_KEY = 'careerCompanyDirectory';
+function DIRECTORY_KEY(): string {
+  return careerStorageKey('careerCompanyDirectory');
+}
 
 /** キャッシュ上限（LRU）。表示用途なので控えめに保つ。 */
 const MAX_ENTRIES = 60;
@@ -33,7 +39,7 @@ function normalizeEntry(raw: unknown): CareerCompanyDirectoryEntry | null {
 
 /** 最近使った順（新しい順）で返す。壊れた要素は捨てる。 */
 export function loadCompanyDirectory(): CareerCompanyDirectoryEntry[] {
-  const raw = safeGetStorage<unknown[]>(DIRECTORY_KEY, []);
+  const raw = safeGetStorage<unknown[]>(DIRECTORY_KEY(), []);
   if (!Array.isArray(raw)) return [];
   return raw
     .map(normalizeEntry)
@@ -64,14 +70,14 @@ export function touchCompanyInDirectory(companyId: string, displayName: string):
     displayName: name || previous?.displayName || '',
     lastUsedAt: now,
   };
-  safeSetStorage(DIRECTORY_KEY, [entry, ...rest].slice(0, MAX_ENTRIES));
+  safeSetStorage(DIRECTORY_KEY(), [entry, ...rest].slice(0, MAX_ENTRIES));
 }
 
 /** キャッシュから 1 件外す（企業が見つからなくなった場合の掃除）。 */
 export function removeCompanyFromDirectory(companyId: string): void {
   if (!companyId) return;
   safeSetStorage(
-    DIRECTORY_KEY,
+    DIRECTORY_KEY(),
     loadCompanyDirectory().filter((e) => e.companyId !== companyId),
   );
 }

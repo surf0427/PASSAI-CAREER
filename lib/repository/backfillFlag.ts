@@ -95,7 +95,12 @@ export type BackfillFeature =
   | 'careerGdSoloResultsRestore';
 
 // backfill ロジックの世代。ロジックを変えて再 backfill させたいときに +1 する。
-export const BACKFILL_VERSION = 1;
+//
+// v2（account switch 隔離）: career canonical を所有者名前空間へ分離したため、
+//   v1 時代の完了記録は「共有名前空間に対する完了」であって新名前空間には対応しない。
+//   世代を上げて上り backfill / 下り restore を 1 度だけ再実行させ、各 member の
+//   名前空間を **自分の mirror から** 復元する（restore は merge-only・upsert は冪等なので無害）。
+export const BACKFILL_VERSION = 2;
 
 type BackfillEntry = {
   version: number;

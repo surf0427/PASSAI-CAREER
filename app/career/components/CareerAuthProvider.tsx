@@ -54,6 +54,14 @@ import {
   type CareerAccount,
 } from '@/lib/careerSupabase/account';
 
+// canonical storage の所有者境界（account switch 隔離）。
+//   identity は **必ず** resolveCareerSession（auth）由来の userId を渡す。
+import { setCareerStorageOwner } from '@/lib/careerStorage/owner';
+import { claimLegacyCareerDataOnce } from '@/lib/careerStorage/legacyClaim';
+// 所有者が変わったら、購読中の view（マイページ等）に canonical を読み直させる
+//   ＝ 切替前アカウントの値が React 側に残らないようにする。
+import { notifyCanonicalSnapshotChanged } from '@/app/career/mypage/canonicalSnapshotStore';
+
 export type CareerAuthStatus = 'loading' | 'guest' | 'member';
 
 export type CareerUser = {
@@ -93,6 +101,8 @@ export function CareerAuthProvider({ children }: { children: ReactNode }) {
 
     if (session.kind === 'no-env' || session.kind === 'guest') {
       // env 未設定でも guest として扱い、既存機能（localStorage）は素通しさせる。
+      // 所有者を guest へ戻す（session 切れ・別タブでのログアウト後もここを通る）。
+      if (setCareerStorageOwner(null)) notifyCanonicalSnapshotChanged();
       setStatus('guest');
       setUser(null);
       setAccountState(null);
@@ -101,6 +111,16 @@ export function CareerAuthProvider({ children }: { children: ReactNode }) {
 
     // member（is_anonymous !== true の永続ユーザー）。session が残っていれば
     // 自動で member になる（2 回目以降の自動ログイン）。
+    // ── canonical の所有者を確定させる（backfill / restore より前）────────────
+    //   これ以降 localStorage の読み書きは **この userId の名前空間**にだけ向かう。
+    //   ここを通す前に backfill させないことが、他アカウントのデータを自分として
+    //   Supabase へ upload させないための構造的な保証。
+    if (setCareerStorageOwner(session.userId)) notifyCanonicalSnapshotChanged();
+
+    // 名前空間導入前の legacy データは、この端末に他 account の利用履歴が無いときだけ
+    // 自分の名前空間へ移す（証明できないものは移さない）。詳細は legacyClaim.ts。
+    claimLegacyCareerDataOnce(session.userId);
+
     setUser({ id: session.userId, email: session.email });
 
     // account 行を **確定させてから** member に切り替える。ensureCareerAccount で
@@ -169,6 +189,9 @@ export function CareerAuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await signOutCareer();
+    // 所有者を guest へ戻すだけ。**どのアカウントの canonical も削除しない**
+    //   （同じユーザーが再ログインすれば自分の名前空間がそのまま戻る）。
+    if (setCareerStorageOwner(null)) notifyCanonicalSnapshotChanged();
     setStatus('guest');
     setUser(null);
     setAccountState(null);

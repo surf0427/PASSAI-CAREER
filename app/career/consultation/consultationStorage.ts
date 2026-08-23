@@ -10,8 +10,14 @@ import type {
   CareerConsultationThread,
   CareerConsultationMessage,
 } from '@/types/careerConsultation';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
-const STORAGE_KEY = 'careerConsultationLogs';
+function STORAGE_KEY(): string {
+  return careerStorageKey('careerConsultationLogs');
+}
 const MAX_THREADS = 50;
 const MAX_MESSAGES_PER_THREAD = 200;
 
@@ -35,7 +41,7 @@ export function deriveThreadTitle(firstUserMessage: string): string {
 }
 
 export function loadConsultationThreads(): CareerConsultationThread[] {
-  const raw = safeGetStorage<CareerConsultationThread[] | null>(STORAGE_KEY, null);
+  const raw = safeGetStorage<CareerConsultationThread[] | null>(STORAGE_KEY(), null);
   return Array.isArray(raw) ? raw : [];
 }
 
@@ -51,7 +57,7 @@ export function saveConsultationThreads(threads: CareerConsultationThread[]): vo
     }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, MAX_THREADS);
-  safeSetStorage(STORAGE_KEY, trimmed);
+  safeSetStorage(STORAGE_KEY(), trimmed);
 }
 
 export function createThread(): CareerConsultationThread {

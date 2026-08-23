@@ -9,14 +9,22 @@ import type {
   GdBehaviorTrait,
 } from '@/types/careerGd';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // 就活版（career）GD の localStorage 保存層。
 // 受験版とは完全に分離する（キーは career プレフィックス）。
 //   - セッション（会話状態）: 'careerGdSessions'
 //   - 最終結果（評価ログ）  : 'careerGdResults'
 // DB / Supabase / usage には一切接続しない（localStorage のみ / Phase1）。
-const SESSIONS_KEY = 'careerGdSessions';
-const RESULTS_KEY = 'careerGdResults';
+function SESSIONS_KEY(): string {
+  return careerStorageKey('careerGdSessions');
+}
+function RESULTS_KEY(): string {
+  return careerStorageKey('careerGdResults');
+}
 
 const GRADES: GdCompanyGrade[] = ['S', 'A', 'B', 'C', 'D'];
 const TRAITS: GdBehaviorTrait[] = [
@@ -255,12 +263,12 @@ export function normalizeCareerGdResult(raw: unknown): CareerGdResult | null {
 // ── セッション ────────────────────────────────────────────────────
 
 export function loadGdSessions(): CareerGdSession[] {
-  const raw = safeGetStorage<unknown[]>(SESSIONS_KEY, []);
+  const raw = safeGetStorage<unknown[]>(SESSIONS_KEY(), []);
   return raw.map(normalizeSession).filter((s): s is CareerGdSession => s !== null);
 }
 
 export function saveGdSessions(sessions: CareerGdSession[]): void {
-  safeSetStorage(SESSIONS_KEY, sessions);
+  safeSetStorage(SESSIONS_KEY(), sessions);
 }
 
 // id があれば置換、無ければ先頭に追加（最新が先頭）。
@@ -286,12 +294,12 @@ export function getInProgressGdSession(): CareerGdSession | null {
 // ── 最終結果 ──────────────────────────────────────────────────────
 
 export function loadGdResults(): CareerGdResult[] {
-  const raw = safeGetStorage<unknown[]>(RESULTS_KEY, []);
+  const raw = safeGetStorage<unknown[]>(RESULTS_KEY(), []);
   return raw.map(normalizeCareerGdResult).filter((r): r is CareerGdResult => r !== null);
 }
 
 export function saveGdResults(results: CareerGdResult[]): void {
-  safeSetStorage(RESULTS_KEY, results);
+  safeSetStorage(RESULTS_KEY(), results);
 }
 
 export function appendGdResult(result: CareerGdResult): void {

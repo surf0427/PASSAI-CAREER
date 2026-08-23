@@ -19,8 +19,14 @@ import type {
   GdTheme,
 } from '@/types/careerGd';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
-const KEY = 'careerGdRoomLogs';
+function KEY(): string {
+  return careerStorageKey('careerGdRoomLogs');
+}
 
 const GRADES: GdCompanyGrade[] = ['S', 'A', 'B', 'C', 'D'];
 
@@ -180,14 +186,14 @@ function sortNewestFirst(logs: CareerGdRoomLog[]): CareerGdRoomLog[] {
 }
 
 export function loadGdRoomLogs(): CareerGdRoomLog[] {
-  const raw = safeGetStorage<unknown[]>(KEY, []);
+  const raw = safeGetStorage<unknown[]>(KEY(), []);
   const logs = raw.map(normalizeGdRoomLog).filter((l): l is CareerGdRoomLog => l !== null);
   // 新しい順（createdAt 降順）。
   return sortNewestFirst(logs);
 }
 
 export function saveGdRoomLogs(logs: CareerGdRoomLog[]): void {
-  safeSetStorage(KEY, logs);
+  safeSetStorage(KEY(), logs);
 }
 
 // roomId で重複排除して upsert（同じ room を再閲覧しても二重登録しない）。最新を先頭に。

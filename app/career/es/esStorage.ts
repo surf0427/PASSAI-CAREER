@@ -11,6 +11,10 @@ import {
   normalizeCareerEsResult,
 } from '@/lib/careerEs/resultShape';
 import { safeGetStorage, safeSetStorage } from '@/lib/storage/safeStorage';
+// 所有者名前空間（account switch 隔離）。guest は従来キーのまま、member は所有者 suffix 付き。
+// ★ 定数ではなく **呼び出しのたびに** 解決する（module 読み込み時に固定すると、
+//   後からログイン/ログアウトしても古い名前空間を掴み続けるため）。
+import { careerStorageKey } from '@/lib/careerStorage/owner';
 
 // SSR / 旧 runtime fallback 付き UUID（run 画面と同方針）。
 export function newEsId(): string {
@@ -78,7 +82,9 @@ export function createEsWorkspaceLog(params: {
 // 受験版（志望理由書 statement 系）の保存キーとは完全に分離する。
 //   - 受験版とは別レーンの就活版専用キー: 'careerEsLogs'
 // これにより受験版と就活版のデータが相互に混入しない。
-const ES_LOG_KEY = 'careerEsLogs';
+function ES_LOG_KEY(): string {
+  return careerStorageKey('careerEsLogs');
+}
 
 // 壊れた / 旧スキーマのログを防御的に正規化する。
 //   - 既存の必須フィールド（id / createdAt / userInput / result）は維持。
@@ -145,13 +151,13 @@ function normalizeEsLog(raw: unknown): CareerEsLog | null {
 }
 
 export function loadEsLogs(): CareerEsLog[] {
-  const raw = safeGetStorage<unknown[]>(ES_LOG_KEY, []);
+  const raw = safeGetStorage<unknown[]>(ES_LOG_KEY(), []);
   if (!Array.isArray(raw)) return [];
   return raw.map(normalizeEsLog).filter((l): l is CareerEsLog => l !== null);
 }
 
 export function saveEsLogs(logs: CareerEsLog[]): void {
-  safeSetStorage(ES_LOG_KEY, logs);
+  safeSetStorage(ES_LOG_KEY(), logs);
 }
 
 // 1 件を先頭に追記して保存する（最新が先頭）。run 画面から利用する。
