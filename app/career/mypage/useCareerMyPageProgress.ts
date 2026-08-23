@@ -1,15 +1,22 @@
 'use client';
 
-// PASSAI CAREER — マイページ進度の取得（server 優先・端末 canonical フォールバック）。
+// PASSAI CAREER — マイページ進度の取得（端末 canonical 権威・server は欠けている機能だけ補完）。
 //
-//   member          → GET /api/career/mypage/progress（auth session + RLS で本人の行だけ）
-//   guest / 取得不可 → この端末の Layer 1 canonical（既にページが読んでいる bundle）
+//   端末の Layer 1 canonical（既にページが読んでいる bundle）を **権威**として表示し、
+//   member では GET /api/career/mypage/progress（auth session + RLS で本人の行だけ）を併せて読み、
+//   **canonical が空の機能だけ** server（＝他端末由来）で埋める。
 //
-// なぜ 2 経路あるか:
-//   就活版の solo 機能は **端末 localStorage が canonical**、Supabase は member の durable mirror
-//   という既存構造（Data Spine Layer 1）。server だけを見ると guest は常に空、mirror 同期前の
-//   member も一時的に空になり「実績が消えた」ように見える。逆に端末だけを見ると別端末の履歴が
-//   出ない。そこで **server を優先し、確定できない/空のときだけ端末 canonical へ倒す**。
+// なぜ canonical が権威か（推測ではなく既存実装の帰結）:
+//   この 4 Source は authority class 1 = device_canonical_mirrored
+//   （lib/careerSourceData/types.ts の CAREER_SOURCE_AUTHORITY）。各機能は保存時にまず
+//   localStorage へ書き、Supabase へは member のときだけ fire-and-forget で upsert する
+//   （lib/supabase/career*.ts・失敗は再試行しない）。ログイン時に careerBackfill（上り）→
+//   careerRestore（下り・id merge / local 優先）が他端末由来の行を localStorage へ取り込む。
+//   ⇒ 定常状態で device ⊇ server。server を優先すると、localStorage を読む ES 履歴 /
+//     面接履歴より **少ない件数**をマイページだけが表示することになる。
+//
+// 判定は lib/careerMyPageProgress/progress.ts の selectCareerMyPageProgress（純関数）に集約し、
+// ここには置かない。
 //
 // ★ どちらの経路でも数値を作るのは同じ純関数（buildCareerMyPageProgress）。
 //   経路ごとに数え方が変わらないようにするため、集計をここに書かない。
@@ -23,17 +30,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useCareerAuth } from '@/app/career/components/CareerAuthProvider';
 import {
   buildCareerMyPageProgress,
-  isCareerMyPageProgressEmpty,
+  selectCareerMyPageProgress,
+  type CareerMyPageProgressPick,
 } from '@/lib/careerMyPageProgress/progress';
-import type {
-  CareerMyPageProgress,
-  CareerMyPageProgressSource,
-} from '@/lib/careerMyPageProgress/types';
+import type { CareerMyPageProgress } from '@/lib/careerMyPageProgress/types';
 import type { CareerSourceBundle } from '@/lib/careerSourceData/types';
 
 export type CareerMyPageProgressView = {
   progress: CareerMyPageProgress | null;
-  source: CareerMyPageProgressSource | null;
+  source: CareerMyPageProgressPick | null;
   /** server 問い合わせ中（端末 canonical は既にあるが、確定を待っている状態）。 */
   loading: boolean;
 };
@@ -97,22 +102,12 @@ export function useCareerMyPageProgress(bundle: CareerSourceBundle | null): Care
   return useMemo<CareerMyPageProgressView>(() => {
     // 現在のログインユーザーの応答だけを採用する（切替直後の取り違えを構造的に防ぐ）。
     const fresh = cache && cache.key === userKey && userKey !== '';
+    // ★ null は「0 件」ではなく **未確定**（未ログイン / 取得失敗 / 応答待ち）。
+    //   selectCareerMyPageProgress は null を 0 件として扱わない。
     const serverProgress = fresh ? cache.progress : null;
     const loading = userKey !== '' && !fresh;
 
-    // server が本人の実績を返せたならそれを正とする（別端末の履歴も含まれる）。
-    // server が「空」を返した場合だけ端末 canonical に倒す（mirror 未同期の取りこぼし対策）。
-    if (serverProgress && !isCareerMyPageProgressEmpty(serverProgress)) {
-      return { progress: serverProgress, source: 'server', loading: false };
-    }
-    if (deviceProgress && !isCareerMyPageProgressEmpty(deviceProgress)) {
-      return { progress: deviceProgress, source: 'device', loading };
-    }
-    // どちらも空。server 応答があればそれを、無ければ端末側を「0 件」として表示する。
-    return {
-      progress: serverProgress ?? deviceProgress,
-      source: serverProgress ? 'server' : deviceProgress ? 'device' : null,
-      loading,
-    };
+    const { progress, source } = selectCareerMyPageProgress(deviceProgress, serverProgress);
+    return { progress, source, loading };
   }, [cache, userKey, deviceProgress]);
 }

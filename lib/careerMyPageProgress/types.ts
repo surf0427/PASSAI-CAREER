@@ -69,9 +69,6 @@ export type CareerMyPageProgress = {
   presentation: CareerGrowthSeries;
 };
 
-/** 表示中の数値がどこ由来か（UI の注記に使う。値そのものは同じ純関数が作る）。 */
-export type CareerMyPageProgressSource = 'server' | 'device';
-
 export const EMPTY_CAREER_GROWTH_SERIES: CareerGrowthSeries = {
   history: [],
   latestScore: null,

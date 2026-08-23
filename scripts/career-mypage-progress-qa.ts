@@ -17,6 +17,9 @@
  *   6. 実施回数の単位（評価が無い実施も回数には数える）
  *   7. server / 端末 canonical の両経路で同じ入力 → 同じ出力（同じ純関数を使っている保証）
  *   8. payload に本文・transcript・AI 全文が入らない
+ *   9. source of truth（selectCareerMyPageProgress）:
+ *      端末 canonical が権威・server は canonical が空の機能だけ補完・
+ *      「取得失敗(null)」を「0 件」として扱わない・アカウント切替で前ユーザー値を残さない
  *
  * 使い方: npx tsx scripts/career-mypage-progress-qa.ts
  * 終了コード: 全 assertion pass → 0 / 1 件でも失敗 → 1。
@@ -26,6 +29,7 @@ import {
   CAREER_SELF_UNDERSTANDING_AXES,
   buildCareerMyPageProgress,
   isCareerMyPageProgressEmpty,
+  selectCareerMyPageProgress,
 } from '@/lib/careerMyPageProgress/progress';
 import { EMPTY_CAREER_SOURCE_BUNDLE, type CareerSourceBundle } from '@/lib/careerSourceData/types';
 import type { CareerSelfAnalysisLog } from '@/types/careerSelfAnalysis';
@@ -376,6 +380,109 @@ section('7. payload に本文・transcript を含めない');
   check('7b プレゼン transcript が含まれない', !json.includes('文字起こし'));
   check('7c 面接 turns / 総評テキストが含まれない',
     !json.includes('長い面接 transcript') && !json.includes('総評'));
+}
+
+// ── 9. source of truth（端末 canonical 権威 / server 補完） ─────────
+
+section('9. source of truth');
+{
+  const withEs = (n: number, from = 0) =>
+    buildCareerMyPageProgress(
+      bundleOf({
+        esLogs: Array.from({ length: n }, (_, i) =>
+          esLog(`e${from + i}`, `2026-08-0${(i % 9) + 1}T00:00:00.000Z`, 60 + i),
+        ),
+      }),
+    );
+
+  // Case 1: DB 3 / local 3 → 3
+  {
+    const r = selectCareerMyPageProgress(withEs(3), withEs(3));
+    check('9a Case1 DB3/local3 → 3 件・canonical 由来', 
+      r.progress?.activity.esCount === 3 && r.source === 'device');
+  }
+
+  // Case 2: DB 3 / local 5 → 5（canonical を server で縮めない）
+  {
+    const r = selectCareerMyPageProgress(withEs(5), withEs(3));
+    check('9b Case2 DB3/local5 → 5（ES履歴など他画面と一致）',
+      r.progress?.activity.esCount === 5 && r.progress?.es.history.length === 5);
+  }
+
+  // Case 3: DB 0 / local 5 → 5
+  {
+    const r = selectCareerMyPageProgress(withEs(5), withEs(0));
+    check('9c Case3 DB0/local5 → 5', r.progress?.activity.esCount === 5);
+  }
+
+  // Case 4: fetch error（server=null）/ local 5 → 5。失敗を 0 件にしない
+  {
+    const r = selectCareerMyPageProgress(withEs(5), null);
+    check('9d Case4 取得失敗(null)は 0 件ではない → canonical 5', 
+      r.progress?.activity.esCount === 5 && r.source === 'device');
+  }
+
+  // Case 4b: fetch error + local も 0 → 0 件表示（捏造しない）
+  {
+    const r = selectCareerMyPageProgress(withEs(0), null);
+    check('9e Case4b 取得失敗 + canonical 0 → 0 件', r.progress?.activity.esCount === 0);
+  }
+
+  // Case 5: DB genuinely 0 / local 5 → 5（canonical が権威。mirror 未書き込みであって偽データではない）
+  {
+    const r = selectCareerMyPageProgress(withEs(5), withEs(0));
+    check('9f Case5 DB確定0/local5 → canonical 5 を表示', r.progress?.activity.esCount === 5);
+  }
+
+  // 別端末: canonical が空の機能だけ server で埋める
+  {
+    const device = buildCareerMyPageProgress(
+      bundleOf({ interviewResults: [interviewResult('i1', '2026-08-01T00:00:00.000Z', 70)] }),
+    );
+    const server = buildCareerMyPageProgress(
+      bundleOf({
+        esLogs: [esLog('remote', '2026-08-02T00:00:00.000Z', 80)],
+        interviewResults: [
+          interviewResult('i1', '2026-08-01T00:00:00.000Z', 70),
+          interviewResult('i2', '2026-08-03T00:00:00.000Z', 90),
+        ],
+      }),
+    );
+    const r = selectCareerMyPageProgress(device, server);
+    check('9g canonical が空の ES は server（他端末由来）で埋まる',
+      r.progress?.activity.esCount === 1 && r.progress?.es.history[0].id === 'remote');
+    check('9h canonical がある面接は server で縮まない（1 件のまま）',
+      r.progress?.activity.interviewCount === 1);
+    check('9i 機能ごとに採用元が違う場合は mixed', r.source === 'mixed');
+    check('9j 回数と系列の採用元が一致する',
+      r.progress?.activity.esCount === r.progress?.es.history.length &&
+      r.progress?.activity.interviewCount === r.progress?.interview.history.length);
+  }
+
+  // canonical 全空 + server あり → 全部 server
+  {
+    const r = selectCareerMyPageProgress(withEs(0), withEs(4));
+    check('9k canonical 全空なら server を採用（別端末ログイン直後）',
+      r.progress?.activity.esCount === 4 && r.source === 'server');
+  }
+
+  // Case 6: アカウント切替。B の応答が来る前に A の server 値を使い回さない
+  //   （hook は cache.key !== userKey を null 扱いにする＝ここでは server=null 相当）
+  {
+    const accountAServer = withEs(9);
+    const deviceShared = withEs(2);
+    const beforeBResponse = selectCareerMyPageProgress(deviceShared, null);
+    check('9l Case6 切替直後は前ユーザーの server 値を使わない',
+      beforeBResponse.progress?.activity.esCount === 2 &&
+      beforeBResponse.progress?.activity.esCount !== accountAServer.activity.esCount);
+  }
+
+  // device / server とも null → null（描画しない）
+  {
+    const r = selectCareerMyPageProgress(null, null);
+    check('9m 両方 null なら progress も null（0 件と断定しない）',
+      r.progress === null && r.source === null);
+  }
 }
 
 console.log(`\n結果: PASS ${passes} / FAIL ${failures}`);

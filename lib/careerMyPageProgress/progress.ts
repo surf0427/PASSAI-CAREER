@@ -244,7 +244,7 @@ export function buildCareerMyPageProgress(bundle: CareerSourceBundle): CareerMyP
   };
 }
 
-/** 表示するものが 1 つも無いか（server 結果が空のとき端末 canonical へ倒す判定に使う）。 */
+/** 表示するものが 1 つも無いか。 */
 export function isCareerMyPageProgressEmpty(progress: CareerMyPageProgress): boolean {
   const { activity } = progress;
   return (
@@ -253,6 +253,110 @@ export function isCareerMyPageProgressEmpty(progress: CareerMyPageProgress): boo
     activity.interviewCount === 0 &&
     activity.presentationCount === 0
   );
+}
+
+// ── 端末 canonical と server mirror の突き合わせ ─────────────────────
+//
+// PASSAI CAREER のこの 4 Source は **authority class 1 = device_canonical_mirrored**
+// （lib/careerSourceData/types.ts の CAREER_SOURCE_AUTHORITY）。つまり:
+//
+//   - canonical は端末の localStorage。各機能は保存時にまず localStorage へ書き、
+//     Supabase へは member のときだけ fire-and-forget で upsert する（失敗しても再試行しない）。
+//   - ログイン時に careerBackfill（上り）→ careerRestore（下り・id merge / **local 優先**）が走り、
+//     他端末由来の行は localStorage 側へ取り込まれる。
+//
+// したがって定常状態では **device ⊇ server** であり、server が device より少ないのは
+// 「mirror がまだ/もう追いついていない」場合である。ここで server を優先すると、
+// ES 履歴・面接履歴など localStorage を読む他画面より **少ない件数**をマイページが表示してしまう。
+//
+// そこで careerRestore と同じ方針を採る:
+//   その機能の canonical が **空のときだけ** server（他端末由来）で埋め、
+//   canonical があるならそれを表示する（canonical を server で縮めない）。
+export type CareerMyPageProgressPick = 'device' | 'server' | 'mixed';
+
+function pick<T>(deviceCount: number, serverCount: number, device: T, server: T): [T, boolean] {
+  const useServer = deviceCount === 0 && serverCount > 0;
+  return [useServer ? server : device, useServer];
+}
+
+/**
+ * 端末 canonical（device）と server aggregation（server）から表示用の進度を決める純関数。
+ * 機能ごとに独立して判定する（careerRestore が feature 単位で merge するのと同じ粒度）。
+ *
+ * server が null = 未ログイン / 取得失敗 / 未確定。**「0 件」ではない**ため、
+ * その場合は canonical をそのまま使う（失敗を 0 件として描かない）。
+ */
+export function selectCareerMyPageProgress(
+  device: CareerMyPageProgress | null,
+  server: CareerMyPageProgress | null,
+): { progress: CareerMyPageProgress | null; source: CareerMyPageProgressPick | null } {
+  if (!device) return server ? { progress: server, source: 'server' } : { progress: null, source: null };
+  if (!server) return { progress: device, source: 'device' };
+
+  const [selfAnalysis, sa] = pick(
+    device.activity.selfAnalysisCount,
+    server.activity.selfAnalysisCount,
+    device.selfAnalysis,
+    server.selfAnalysis,
+  );
+  const [es, esFromServer] = pick(
+    device.activity.esCount,
+    server.activity.esCount,
+    device.es,
+    server.es,
+  );
+  const [interview, ivFromServer] = pick(
+    device.activity.interviewCount,
+    server.activity.interviewCount,
+    device.interview,
+    server.interview,
+  );
+  const [presentation, prFromServer] = pick(
+    device.activity.presentationCount,
+    server.activity.presentationCount,
+    device.presentation,
+    server.presentation,
+  );
+
+  // どこ由来かのラベル。**データがある機能だけ**を数える
+  //   （両側とも 0 件の機能は device 扱いになるが、何も表示していないので判定に含めない）。
+  const counts: [boolean, number][] = [
+    [sa, sa ? server.activity.selfAnalysisCount : device.activity.selfAnalysisCount],
+    [esFromServer, esFromServer ? server.activity.esCount : device.activity.esCount],
+    [ivFromServer, ivFromServer ? server.activity.interviewCount : device.activity.interviewCount],
+    [
+      prFromServer,
+      prFromServer ? server.activity.presentationCount : device.activity.presentationCount,
+    ],
+  ];
+  const withData = counts.filter(([, count]) => count > 0);
+  const usedServer = withData.some(([fromServer]) => fromServer);
+  const usedDevice = withData.some(([fromServer]) => !fromServer);
+  const source: CareerMyPageProgressPick =
+    usedServer && usedDevice ? 'mixed' : usedServer ? 'server' : 'device';
+
+  return {
+    progress: {
+      // 回数は各系列の採用元と必ず揃える（「3 回」と言いながら 5 点描く不整合を作らない）。
+      activity: {
+        selfAnalysisCount: sa
+          ? server.activity.selfAnalysisCount
+          : device.activity.selfAnalysisCount,
+        esCount: esFromServer ? server.activity.esCount : device.activity.esCount,
+        interviewCount: ivFromServer
+          ? server.activity.interviewCount
+          : device.activity.interviewCount,
+        presentationCount: prFromServer
+          ? server.activity.presentationCount
+          : device.activity.presentationCount,
+      },
+      selfAnalysis,
+      es,
+      interview,
+      presentation,
+    },
+    source,
+  };
 }
 
 export { EMPTY_CAREER_GROWTH_SERIES };
