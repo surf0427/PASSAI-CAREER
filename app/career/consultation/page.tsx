@@ -2,18 +2,24 @@
 
 // PASSAI 就活版 — 就活相談AI（司令塔）チャット画面。
 //
-// 受験版 app/tutor の UX（チャット + スレッド履歴 + 相談例 + 次アクション）を踏襲しつつ、
+// UI は ChatGPT 型の 2 ペイン構成（左 Sidebar = 相談履歴 / 右 Main = 会話 + composer）。
 // 会話状態は localStorage（careerConsultationLogs）で保持し、生成はステートレス API
 // （/api/career/consultation）に委ねる。DB / 課金 / usage 非接続。
+// ★ 本ファイルの変更は presentation layer に限る。AI prompt / Data Spine / Company grounding /
+//   Event Signal の呼び出し順序（loader → fetch → recordCareerEvent）は不変。
 
-import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Card } from '@/components/ui/Card';
-import { PageHeader } from '@/components/ui/PageHeader';
-import { Button } from '@/components/ui/Button';
 import { LinkButton } from '@/components/ui/LinkButton';
-import { Textarea } from '@/components/ui/Textarea';
 import {
   actionFeatureHref,
   actionFeatureCta,
@@ -29,12 +35,7 @@ import { loadCompanyResearchLogs } from '@/app/career/company-research/companyRe
 import { loadGdResults } from '@/app/career/gd/gdStorage';
 import { loadGdRoomLogs } from '@/app/career/gd/gdRoomLogStorage';
 import { loadMatchingLogs } from '@/app/career/matching/matchingStorage';
-import { hasAnyActivity } from '@/app/career/activity/activityStorage';
-import {
-  buildConsultationStarters,
-  CONSULTATION_STARTER_QUERY,
-  type ConsultationDataFlags,
-} from '@/lib/careerConsultation/starterSuggestions';
+import { CONSULTATION_STARTER_QUERY } from '@/lib/careerConsultation/starterSuggestions';
 // P4-C: 横断 context 組み立ては lib/careerMemory/selector.ts へ抽出（出力 request body は byte 不変）。
 import { buildConsultationRequestContext } from '@/lib/careerMemory/selector';
 // buildLatestGdRoomSignals は下部の hasGdRoomSignals（UI注記）でも使うため引き続き import する。
@@ -69,27 +70,9 @@ const subscribeMount = () => () => {};
 const getMountedSnapshot = () => true;
 const getMountedServerSnapshot = () => false;
 
-// localStorage から、各機能データの有無フラグを算出する（初回相談テーマの出し分け用）。
-// 追加 API・DB には触れず、既存 load 関数の結果の有無だけを見る（トークンにも影響しない）。
-function computeConsultationDataFlags(): ConsultationDataFlags {
-  const profile = loadBasicInfo();
-  const values = loadCareerValues();
-  const hasValues =
-    !!values &&
-    Object.values(values.selections ?? {}).some((arr) => Array.isArray(arr) && arr.length > 0);
-  return {
-    hasProfile: !!profile && (profile.name ?? '').trim() !== '',
-    hasActivity: hasAnyActivity(loadActivityData()),
-    hasValues,
-    hasSelfAnalysis: loadSelfAnalysisLogs().length > 0,
-    hasMatching: loadMatchingLogs().length > 0,
-    hasEs: loadEsLogs().length > 0,
-    hasInterview: loadInterviewResults().length > 0,
-    hasGd: loadGdResults().length > 0,
-    hasPresentation: loadPresentationResults().length > 0,
-    hasCompanyResearch: loadCompanyResearchLogs().length > 0,
-  };
-}
+// ルート layout の fixed ヘッダー（h-14 = 56px）を差し引いた作業領域の高さ。
+// ページ全体は伸ばさず、この枠の中で conversation だけを scroll させる（二重 scroll を作らない）。
+const WORKSPACE_HEIGHT = 'h-[calc(100dvh-3.5rem)]';
 
 // 相談AIに渡す横断コンテキストを localStorage から組み立てる。
 // P4-C: load* はここ（page）に残し、組み立ては純関数 selector へ委譲する（request body は byte 不変）。
@@ -136,6 +119,11 @@ function CareerConsultationInner() {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Mobile 用 drawer（Desktop では常時表示のため未使用）。
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   // threads 変更を localStorage へ同期（外部システムへの sync = effect の正当な用途）。
   useEffect(() => {
@@ -153,21 +141,22 @@ function CareerConsultationInner() {
     [isMounted],
   );
 
-  // STEP-CONSULT-05: 入力済みデータに応じた初回相談テーマ（fallback つき）。
-  const starters = useMemo<string[]>(
-    () => (isMounted ? buildConsultationStarters(computeConsultationDataFlags()) : []),
-    [isMounted],
-  );
-
   const messages = currentThread?.messages ?? [];
-  const latestActions = useMemo<CareerConsultationRecommendedAction[]>(() => {
-    const msgs = currentThread?.messages ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role === 'assistant' && m.result) return m.result.recommendedActions;
-    }
-    return [];
-  }, [currentThread]);
+  const messageCount = messages.length;
+
+  // 会話が伸びたら最下部へ（チャットとして自然な挙動。scroll は main 内のみ）。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messageCount, loading, currentThreadId]);
+
+  // composer の高さを内容に追従させる（1 行 → 最大 ~8 行）。
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 176)}px`;
+  }, [input]);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -271,6 +260,7 @@ function CareerConsultationInner() {
     setThreads((prev) => [t, ...prev]);
     setCurrentThreadId(t.id);
     setError(null);
+    setSidebarOpen(false);
   }
 
   function handleDeleteThread(id: string) {
@@ -286,56 +276,203 @@ function CareerConsultationInner() {
     if (userId) void deleteCareerConsultationThreadFromSupabase(userId, id);
   }
 
+  const handleSelectThread = useCallback((id: string) => {
+    setCurrentThreadId(id);
+    setError(null);
+    setSidebarOpen(false);
+  }, []);
+
+  // Enter で送信 / Shift+Enter で改行。日本語 IME の確定 Enter は isComposing で除外する。
+  // 画面が狭い端末（ソフトキーボード）では Enter を改行のまま残す。
+  function handleComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return;
+    if (typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches) return;
+    e.preventDefault();
+    void send(input);
+  }
+
   if (!isMounted) return null;
 
+  const sidebar = (
+    <ConsultationSidebar
+      threads={threads}
+      currentThreadId={currentThreadId}
+      onNewThread={handleNewThread}
+      onSelectThread={handleSelectThread}
+      onDeleteThread={handleDeleteThread}
+    />
+  );
+
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <PageHeader
-        title="就活相談AI"
-        description="就活全体の司令塔として、今やるべきことを一緒に整理します。"
-      />
+    <div className={`flex ${WORKSPACE_HEIGHT} w-full overflow-hidden bg-white`}>
+      {/* Desktop: 固定幅サイドバー */}
+      <aside className="hidden md:flex md:w-[272px] lg:w-[288px] shrink-0 flex-col border-r border-slate-200 bg-slate-50">
+        {sidebar}
+      </aside>
 
-      {hasGdRoomSignals && (
-        <p className="mb-4 text-[11px] text-slate-400">
-          ※ 直近のGD（グループディスカッション）結果も参考にしています。
-        </p>
-      )}
-
-      {/* 履歴一覧 */}
-      <Card variant="soft" padding="md" className="mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest">相談履歴</p>
+      {/* Mobile: drawer。fixed ヘッダー（h-14）の下から始める——inset-0 だと
+          drawer 上端の「＋ 新しい相談」がヘッダー（z-50）の裏に隠れる。 */}
+      {isSidebarOpen && (
+        <div className="fixed inset-x-0 bottom-0 top-14 z-40 md:hidden">
           <button
             type="button"
-            onClick={handleNewThread}
-            className="text-xs font-semibold text-blue-600 hover:underline"
-          >
-            ＋ 新しい相談
-          </button>
+            aria-label="相談履歴を閉じる"
+            onClick={() => setSidebarOpen(false)}
+            className="absolute inset-0 bg-slate-900/40"
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-[82vw] max-w-[300px] flex-col border-r border-slate-200 bg-slate-50 shadow-xl">
+            {sidebar}
+          </aside>
         </div>
+      )}
+
+      {/* Main: conversation + composer */}
+      <main className="flex min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="相談履歴を開く"
+            className="md:hidden shrink-0 rounded-lg border border-gray-200 p-2 text-slate-600 hover:bg-gray-50"
+          >
+            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M3 5.5h14M3 10h14M3 14.5h14" />
+            </svg>
+          </button>
+          <div className="min-w-0">
+            <h1 className="truncate text-base sm:text-lg font-bold text-slate-900">就活相談AI</h1>
+            <p className="hidden sm:block truncate text-xs text-slate-500">
+              就活全体の司令塔として、今やるべきことを一緒に整理します。
+            </p>
+          </div>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+            {hasGdRoomSignals && (
+              <p className="mb-4 text-[11px] text-slate-400">
+                ※ 直近のGD（グループディスカッション）結果も参考にしています。
+              </p>
+            )}
+            {messages.length === 0 ? (
+              <div className="py-10 text-center">
+                <p className="text-base font-bold text-slate-800">今の状況から相談を始めましょう</p>
+                <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-500">
+                  入力済みの自己分析・ES・面接・GD・マッチングの内容を踏まえて回答します。
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-6">
+                {messages.map((m) => (
+                  <Bubble key={m.id} message={m} onPickFollowUp={setInput} />
+                ))}
+              </div>
+            )}
+            {loading && (
+              <div className="mt-6">
+                <p className="mb-1.5 text-[11px] font-bold tracking-widest text-blue-700">AI</p>
+                <p className="text-sm text-slate-500">司令塔が考えています…</p>
+              </div>
+            )}
+            {error && (
+              <p className="mt-6 text-sm leading-relaxed text-red-600" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 border-t border-slate-200 bg-white">
+          <div className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex items-end gap-2 rounded-2xl border border-gray-300 bg-white px-3 py-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+              <textarea
+                ref={composerRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                placeholder="就活について相談したいことを書いてください。"
+                rows={1}
+                disabled={loading}
+                className="max-h-44 flex-1 resize-none bg-transparent py-1.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none disabled:cursor-not-allowed disabled:text-gray-500"
+              />
+              <button
+                type="button"
+                onClick={() => send(input)}
+                disabled={loading || !input.trim()}
+                aria-label="相談する"
+                className="mb-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-600 text-white transition-colors hover:bg-brand-700 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 16V4M10 4l-5 5M10 4l5 5" />
+                </svg>
+              </button>
+            </div>
+            <p className="mt-2 hidden text-[11px] text-slate-400 md:block">
+              Enter で送信 / Shift + Enter で改行
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// 左サイドバー本体（Desktop の固定ペインと Mobile drawer で共有する）。
+function ConsultationSidebar({
+  threads,
+  currentThreadId,
+  onNewThread,
+  onSelectThread,
+  onDeleteThread,
+}: {
+  threads: CareerConsultationThread[];
+  currentThreadId: string | null;
+  onNewThread: () => void;
+  onSelectThread: (id: string) => void;
+  onDeleteThread: (id: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 px-3 pt-4">
+        <button
+          type="button"
+          onClick={onNewThread}
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-700"
+        >
+          ＋ 新しい相談
+        </button>
+      </div>
+
+      <p className="shrink-0 px-4 pt-5 pb-2 text-[11px] font-bold tracking-widest text-slate-500">
+        相談履歴
+      </p>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
         {threads.length === 0 ? (
-          <p className="text-xs text-slate-400">まだ相談履歴がありません。</p>
+          <p className="px-1 py-2 text-xs text-slate-400">まだ相談履歴がありません。</p>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-1">
             {threads.map((t) => {
               const active = t.id === currentThreadId;
               return (
-                <li key={t.id} className="flex items-center gap-2">
+                <li key={t.id} className="group flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => setCurrentThreadId(t.id)}
-                    className={`flex-1 text-left rounded-lg px-3 py-2 text-sm transition-colors truncate ${
+                    onClick={() => onSelectThread(t.id)}
+                    aria-current={active ? 'true' : undefined}
+                    className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm transition-colors ${
                       active
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-white ring-1 ring-slate-200 text-slate-700 hover:bg-slate-50'
+                        ? 'bg-white font-semibold text-slate-900 ring-1 ring-slate-200'
+                        : 'text-slate-600 hover:bg-white/70'
                     }`}
                   >
                     {t.title}
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDeleteThread(t.id)}
-                    className="shrink-0 text-xs text-slate-400 hover:text-red-500"
+                    onClick={() => onDeleteThread(t.id)}
+                    className="shrink-0 rounded-md px-1.5 py-1 text-[11px] text-slate-400 opacity-0 transition-opacity hover:text-red-500 focus:opacity-100 group-hover:opacity-100"
                     aria-label="この相談を削除"
                   >
                     削除
@@ -345,81 +482,12 @@ function CareerConsultationInner() {
             })}
           </ul>
         )}
-      </Card>
-
-      {/* チャット */}
-      <div className="mb-5 flex flex-col gap-3">
-        {messages.length === 0 ? (
-          <Card variant="soft" padding="md">
-            <p className="text-sm font-bold text-slate-800 mb-1">今の状況から相談できます</p>
-            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-              入力済みの自己分析・ES・面接・GD・マッチングなどをもとに、相談テーマを出しています。
-              データがまだ少ない場合は、就活準備の優先順位から整理できます。
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {starters.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setInput(s)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </Card>
-        ) : (
-          messages.map((m) => <Bubble key={m.id} message={m} onPickFollowUp={setInput} />)
-        )}
-        {loading && (
-          <div className="self-start rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-500">
-            司令塔が考えています…
-          </div>
-        )}
       </div>
 
-      {/* 司令塔からの次アクション（最新回答分を上部に集約表示） */}
-      {latestActions.length > 0 && (
-        <Card variant="soft" padding="md" className="mb-5 ring-1 ring-blue-100 bg-blue-50/40">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">
-            司令塔からの次アクション
-          </p>
-          <ActionList actions={latestActions} />
-        </Card>
-      )}
-
-      {error && (
-        <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
-          {error}
-        </p>
-      )}
-
-      {/* 入力 */}
-      <Card variant="soft" padding="md" className="mb-5">
-        <Textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="就活について相談したいことを書いてください。"
-          rows={3}
-          disabled={loading}
-        />
-        <div className="mt-3 flex justify-end">
-          <Button
-            variant="primary"
-            size="md"
-            onClick={() => send(input)}
-            disabled={loading || !input.trim()}
-          >
-            {loading ? '送信中…' : '相談する →'}
-          </Button>
-        </div>
-      </Card>
-
-      <div className="mt-2">
+      <div className="shrink-0 border-t border-slate-200 px-3 py-3">
         <Link
           href="/career/home"
-          className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 border border-gray-300 hover:border-gray-400 rounded-lg px-4 py-2 transition-colors"
+          className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-slate-500 transition-colors hover:bg-white hover:text-slate-800"
         >
           ← ホームに戻る
         </Link>
@@ -437,51 +505,57 @@ function Bubble({
 }) {
   if (message.role === 'user') {
     return (
-      <div className="self-end max-w-[85%] rounded-2xl bg-blue-600 px-4 py-3 text-sm text-white whitespace-pre-wrap">
-        {message.content}
+      <div className="flex flex-col items-end">
+        <p className="mb-1.5 pr-1 text-[11px] font-bold tracking-widest text-slate-400">あなた</p>
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-blue-600 px-4 py-3 text-sm text-white">
+          {message.content}
+        </div>
       </div>
     );
   }
 
   const r = message.result;
   return (
-    <div className="self-start w-full max-w-[95%] rounded-2xl bg-white ring-1 ring-slate-200 px-4 py-3">
-      {/* STEP-CONSULT-07: 現在地サマリ（あるときだけ）を回答本文の上に独立表示。旧履歴には無いので非表示。 */}
-      {r?.currentStatusSummary && (
-        <div className="mb-3 rounded-xl bg-blue-50/70 ring-1 ring-blue-100 px-3 py-2.5">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">現在地サマリ</p>
-          <p className="text-sm text-slate-700 leading-relaxed">{r.currentStatusSummary}</p>
-        </div>
-      )}
-      <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
-        {message.content}
-      </p>
-      {r && (
-        <div className="mt-3 flex flex-col gap-3">
-          <MiniList title="ポイント" items={r.keyInsights} />
-          {r.recommendedActions.length > 0 && (
-            <ActionList title="この相談から進めること" actions={r.recommendedActions} />
-          )}
-          <MiniList title="教えてほしいこと（不足情報）" items={r.missingInformation} />
-          {r.followUpQuestions.length > 0 && (
-            <div>
-              <p className="text-[11px] font-bold text-slate-500 mb-1.5">深掘りの問い</p>
-              <div className="flex flex-wrap gap-2">
-                {r.followUpQuestions.map((q, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => onPickFollowUp(q)}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 text-left"
-                  >
-                    {q}
-                  </button>
-                ))}
+    <div className="flex flex-col items-start">
+      <p className="mb-1.5 pl-1 text-[11px] font-bold tracking-widest text-blue-700">AI</p>
+      <div className="w-full rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200">
+        {/* STEP-CONSULT-07: 現在地サマリ（あるときだけ）を回答本文の上に独立表示。旧履歴には無いので非表示。 */}
+        {r?.currentStatusSummary && (
+          <div className="mb-3 rounded-xl bg-blue-50/70 ring-1 ring-blue-100 px-3 py-2.5">
+            <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">現在地サマリ</p>
+            <p className="text-sm text-slate-700 leading-relaxed">{r.currentStatusSummary}</p>
+          </div>
+        )}
+        <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+          {message.content}
+        </p>
+        {r && (
+          <div className="mt-3 flex flex-col gap-3">
+            <MiniList title="ポイント" items={r.keyInsights} />
+            {r.recommendedActions.length > 0 && (
+              <ActionList title="この相談から進めること" actions={r.recommendedActions} />
+            )}
+            <MiniList title="教えてほしいこと（不足情報）" items={r.missingInformation} />
+            {r.followUpQuestions.length > 0 && (
+              <div>
+                <p className="text-[11px] font-bold text-slate-500 mb-1.5">深掘りの問い</p>
+                <div className="flex flex-wrap gap-2">
+                  {r.followUpQuestions.map((q, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => onPickFollowUp(q)}
+                      className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 text-left"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
