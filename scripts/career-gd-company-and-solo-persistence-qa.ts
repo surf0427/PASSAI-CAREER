@@ -300,6 +300,38 @@ console.log('\n# D. ソロ GD の durable persistence');
     !/DROP TABLE|TRUNCATE/i.test(ddlCode),
     'D-8c DDL に破壊的操作（DROP / TRUNCATE）が含まれない',
   );
+
+  // ── D-9 ★ GRANT（初版 DDL の omission を再発させない）─────────────────
+  //   この project は public テーブルへの default privileges が無いため、GRANT を
+  //   書かないと RLS 以前に 42501 permission denied で弾かれる。実 DB 検証で
+  //   authenticated が REFERENCES/TRIGGER/TRUNCATE のみだったことが判明した。
+  check(
+    /GRANT\s+SELECT,\s*INSERT,\s*UPDATE\s+ON\s+public\.career_gd_solo_results\s+TO\s+authenticated/i.test(
+      ddlCode,
+    ),
+    'D-9 ★ DDL が authenticated へ SELECT/INSERT/UPDATE を付与する',
+  );
+  // 最小権限: 削除経路がコードに無いので DELETE は付与しない。
+  check(
+    !/GRANT[^;]*DELETE[^;]*career_gd_solo_results[^;]*authenticated/i.test(ddlCode),
+    'D-9b 最小権限: authenticated へ DELETE を付与しない（削除経路がコードに無い）',
+  );
+  // anon には一切付与しない（deny-by-default 維持）。
+  check(
+    !/GRANT[^;]*\bON\b[^;]*career_gd_solo_results[^;]*\bTO\b[^;]*\banon\b/i.test(ddlCode),
+    'D-9c ★ anon には一切付与しない（引き続き 42501 で拒否）',
+  );
+  // GRANT は RLS の代替ではない: owner policy 4 本が残っていること。
+  check(
+    (ddl.match(/auth\.uid\(\) = user_id/g) ?? []).length >= 4,
+    'D-9d GRANT 追加後も owner policy（auth.uid() = user_id）が維持されている',
+  );
+  // 実コードが必要とする操作と GRANT が一致している（DELETE を使い始めたら気付ける）。
+  const mirrorOps = read('lib/supabase/careerGdSolo.ts');
+  check(
+    !/\.delete\(/.test(mirrorOps),
+    'D-9e mirror コードに delete 経路が無い（DELETE 未付与と整合）',
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════

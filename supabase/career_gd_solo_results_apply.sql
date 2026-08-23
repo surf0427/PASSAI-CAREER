@@ -118,3 +118,37 @@ BEGIN
     EXECUTE format('CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING (auth.uid() = user_id)', t||' owner delete', t);
   END IF;
 END $$;
+
+-- ------------------------------------------------------------
+-- GRANTs — authenticated にだけ最小 DML を付与する。
+--
+--   背景（初版 DDL の omission）:
+--     本 DDL は career_features_apply.sql（§81〜§92）の書き方を写したが、そちらは
+--     GRANT 文を持たない。この career プロジェクトは public テーブルへの default
+--     privileges が付いていないため、GRANT を書かないと RLS 以前に 42501
+--     permission denied で弾かれる（career_gd_multi_apply.sql の GRANT ブロックが
+--     同じ事象を STEP-GD-13.5 で記録している）。
+--     実 DB 検証で career_gd_solo_results の authenticated が
+--     REFERENCES / TRIGGER / TRUNCATE のみ、INSERT / SELECT / UPDATE 欠落と判明したため補う。
+--     （既存 career_es_logs / career_interview_results / career_presentation_results /
+--       career_profiles は authenticated = INSERT, SELECT, UPDATE を保持しており、
+--       本テーブルだけがこの posture から外れていた。）
+--
+--   方針（最小権限・deny-by-default 維持）:
+--     - 付与するのは **SELECT / INSERT / UPDATE のみ**。GD ソロの実操作は
+--       lib/supabase/careerGdSolo.ts の upsert（INSERT + UPDATE）と select（SELECT）だけで、
+--       削除経路はコード上に存在しないため **DELETE は付与しない**
+--       （career_es_logs / career_interview_results / career_presentation_results と同 posture）。
+--     - **anon には一切付与しない**（GRANT 無し → 引き続き 42501 で拒否）。
+--     - service_role にも付与しない（本テーブルは browser client 専用 mirror であり、
+--       既存 browser mirror 群と同じく service_role は使わない）。
+--
+--   ★ GRANT は RLS の代替ではない。権限の重ね合わせは次のとおり:
+--       authenticated  … GRANT が SQL 操作自体を許可する
+--       RLS policy     … auth.uid() = user_id で **自分の行だけ**に絞る
+--     上の owner policy 4 本はそのまま維持する（GRANT のために RLS を緩めない）。
+--
+--   idempotent: GRANT は再実行しても no-op。
+-- ------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO authenticated;   -- Supabase 既定で付与済みだが冪等に明示
+GRANT SELECT, INSERT, UPDATE ON public.career_gd_solo_results TO authenticated;
