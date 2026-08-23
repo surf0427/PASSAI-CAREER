@@ -20,7 +20,11 @@ import type {
   CareerConsultationRecommendedAction,
   CareerConsultationActionPriority,
 } from '@/types/careerConsultation';
-import { isCareerConsultationActionFeature } from '@/lib/careerConsultation/actionLinks';
+import {
+  isCareerConsultationActionFeature,
+  isCareerConsultationActionFeatureReachable,
+  type CareerConsultationFeatureGates,
+} from '@/lib/careerConsultation/actionLinks';
 import type { CompanyResearchSnapshot } from '@/types/careerCompanyResearch';
 import { normalizeCompanyResearchSnapshot } from '@/lib/careerCompanyResearch/context';
 import {
@@ -79,6 +83,10 @@ import { str } from '@/lib/careerMemory/summaryUtils';
 import { guardCareerAiRequest } from '@/lib/careerApi/requestGuard';
 import { CAREER_AI_RATE_LIMITS } from '@/lib/rateLimit';
 import { requireCareerAiAccess } from '@/lib/careerBilling/aiAccess';
+// 推薦アクションの導線可否は **server flag が最終権限**（NEXT_PUBLIC_* は読まない）。
+//   gate OFF の機能は page 側 layout が notFound() を返すため、導線化してはいけない。
+import { isCareerCompanyMatchingEnabled } from '@/lib/careerMatchingGate/flags.server';
+import { isCareerGdEnabled } from '@/lib/careerGdGate/flags.server';
 
 const MODEL = 'claude-sonnet-4-6';
 export const maxDuration = 80;
@@ -141,7 +149,14 @@ function normalizePriority(value: unknown): CareerConsultationActionPriority | u
 // - AI の JSON 揺れに強く: string[] でも object[] でも受ける。
 // - label が空なら除外。feature は許可リスト外なら落とす。priority が不正なら省略。
 // - AI が返した href は一切採用しない（href は client 側で feature から解決する）。
-function normalizeRecommendedActions(value: unknown): CareerConsultationRecommendedAction[] {
+// - **公開ゲートが OFF の機能（企業マッチング / GD）を推薦してきたらアクションごと落とす。**
+//   AI は gate を知らないため `feature:'matching'` を返しうるが、その導線を出すと
+//   有料ユーザーが 404（layout の notFound()）に着地する。gate 済み導線の既存方針
+//   （Home / GD 結果画面）と同じく「準備中」を出さず定義ごと落とす。
+function normalizeRecommendedActions(
+  value: unknown,
+  gates: CareerConsultationFeatureGates,
+): CareerConsultationRecommendedAction[] {
   if (!Array.isArray(value)) return [];
   const out: CareerConsultationRecommendedAction[] = [];
   for (const item of value) {
@@ -155,6 +170,9 @@ function normalizeRecommendedActions(value: unknown): CareerConsultationRecommen
       const label = str(rec.label);
       if (!label) continue;
       const feature = isCareerConsultationActionFeature(rec.feature) ? rec.feature : undefined;
+      // 到達できない機能（gate OFF）を勧めない。label だけ残すと「存在しない機能を
+      // やれ」と指示することになるため、アクションごと落とす。
+      if (feature && !isCareerConsultationActionFeatureReachable(feature, gates)) continue;
       const reason = str(rec.reason);
       const priority = normalizePriority(rec.priority);
       out.push({
@@ -176,14 +194,17 @@ function normalizeCurrentStatusSummary(value: unknown): string | undefined {
   return s.length > 200 ? `${s.slice(0, 200).trim()}…` : s;
 }
 
-function normalizeResult(raw: unknown): CareerConsultationResult {
+function normalizeResult(
+  raw: unknown,
+  gates: CareerConsultationFeatureGates,
+): CareerConsultationResult {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const currentStatusSummary = normalizeCurrentStatusSummary(r.currentStatusSummary);
   return {
     ...(currentStatusSummary ? { currentStatusSummary } : {}),
     answer: str(r.answer),
     keyInsights: strArray(r.keyInsights),
-    recommendedActions: normalizeRecommendedActions(r.recommendedActions),
+    recommendedActions: normalizeRecommendedActions(r.recommendedActions, gates),
     missingInformation: strArray(r.missingInformation),
     followUpQuestions: strArray(r.followUpQuestions),
   };
@@ -208,6 +229,14 @@ export async function POST(req: Request) {
   const accessDenied = await requireCareerAiAccess(guard.identity);
   if (accessDenied) return accessDenied;
   const body = guard.body;
+
+  // 推薦アクションを導線化してよい機能（公開ゲートを持つものだけ判定する）。
+  //   ★ AI に渡さない。AI 応答の正規化時に「到達できない機能の推薦」を落とすためだけに使う
+  //     （prompt は不変 ＝ 既存の byte parity / prompt cache 契約に影響しない）。
+  const actionGates: CareerConsultationFeatureGates = {
+    matching: isCareerCompanyMatchingEnabled(),
+    gd: isCareerGdEnabled(),
+  };
 
   const b = (body && typeof body === 'object' ? body : {}) as {
     message?: unknown;
@@ -440,7 +469,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        const result = normalizeResult(JSON.parse(extractJson(raw)));
+        const result = normalizeResult(JSON.parse(extractJson(raw)), actionGates);
         if (!result.answer) throw new Error('empty-answer');
         return Response.json({ result });
       } catch {

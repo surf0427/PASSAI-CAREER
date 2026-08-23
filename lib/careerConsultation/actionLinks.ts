@@ -81,3 +81,38 @@ export function actionFeatureCta(
   if (!feature) return '開く';
   return FEATURE_CTA[feature] ?? '開く';
 }
+
+// ── 公開ゲートを持つ feature の到達可能性（純関数）─────────────────────
+//
+// 企業マッチング（/career/matching）と GD（/career/gd）は公開ゲートを持ち、
+// server flag が OFF のとき page 側 layout が notFound() を返す（＝ 404）。
+// AI はこの gate を知らないので `feature:'matching'` を推薦しうるが、そのまま
+// 導線化すると **有料ユーザーが 404 に着地する**。
+//
+// 既存の gate 済み導線（app/career/home/CareerHomeClient.tsx /
+// app/career/gd/GdSoloResultDetail.tsx）と同じ方針で、OFF の機能は
+// 「準備中」を出さず **定義ごと落とす**（＝ その推薦アクション自体を出さない）。
+//
+// ★ 判定材料は **server flag のみ**（呼び出し側が渡す）。本 module は env を読まない
+//   （pure のまま保ち、client / server / QA から同じ実装を使えるようにする）。
+
+/** 公開ゲートを持つ feature の有効状態（値は必ず server flag 由来）。 */
+export type CareerConsultationFeatureGates = {
+  /** CAREER_COMPANY_MATCHING_ENABLED */
+  matching: boolean;
+  /** CAREER_GD_ENABLED */
+  gd: boolean;
+};
+
+/**
+ * その feature の遷移先ページに実際に到達できるか。
+ * gate を持たない feature（自己分析 / ES / 面接 …）は常に true。
+ */
+export function isCareerConsultationActionFeatureReachable(
+  feature: CareerConsultationActionFeature,
+  gates: CareerConsultationFeatureGates,
+): boolean {
+  if (feature === 'matching') return gates.matching;
+  if (feature === 'gd') return gates.gd;
+  return true;
+}
