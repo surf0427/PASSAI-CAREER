@@ -99,3 +99,46 @@ export async function createPublicRoom(
   recordRoom(id);
   return id;
 }
+
+// ── STEP-GD-VOICE: 発言の投入 ────────────────────────────────────────
+//
+// GD は完全音声型になり、画面から文字を入力して発言する経路は**存在しない**。
+// 実マイクの発話を CI で再現することはできない（Whisper の実課金も伴う）ため、
+// E2E は発言を **アプリ自身の messages API** へ直接投げる。
+//
+// ★ これで失われる検証と、残る検証を明確にしておく:
+//   - 失われる … 「マイク音声 → 文字起こし → 発言」の経路（実機確認 / voice.qa.ts が担当）
+//   - 残る ……… seq 採番・冪等・Realtime 配信・二重表示防止・人数/権限・timer・結果生成
+//     （これらは元々「発言が 1 件入ったあと」に効く契約であり、投入手段には依存しない）
+//
+// page.evaluate 経由で fetch する = ブラウザの cookie（member 認証）がそのまま効く。
+export async function speakAs(page: Page, roomId: string, content: string): Promise<void> {
+  const result = await page.evaluate(
+    async ({ roomId: id, content: text }) => {
+      const res = await fetch(`/api/career/gd/room/${encodeURIComponent(id)}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: text,
+          clientMsgId:
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `e2e-${Date.now()}-${Math.random()}`,
+        }),
+      });
+      return { ok: res.ok, status: res.status, body: await res.text() };
+    },
+    { roomId, content },
+  );
+  expect(result.ok, `messages POST failed: ${result.status} ${result.body}`).toBe(true);
+}
+
+/**
+ * GD 実行画面が「完全音声型」であること（＝文字入力欄が無いこと）を確認する。
+ * 発言経路を API へ移した各 spec が、UI 契約の退行を見逃さないための共通アサーション。
+ */
+export async function expectVoiceOnlyComposer(page: Page): Promise<void> {
+  await expect(page.getByTestId('gd-voice-bar')).toBeVisible();
+  await expect(page.locator('textarea')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '発言する' })).toHaveCount(0);
+}

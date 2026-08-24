@@ -871,6 +871,8 @@ body {
   cursor: pointer;
 }
 .gdf-btn:focus-visible { outline: 2px solid #ffd79a; outline-offset: 2px; }
+/* 音声 GD の主操作は「発言の可否」を左右するため、タッチでも押し外さない大きさを確保する。 */
+.gdf-controls--voice .gdf-btn { min-height: 44px; padding-inline: 18px; }
 .gdf-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .gdf-btn--primary { background: #e8b473; color: #24160a; }
 .gdf-btn--primary:hover:not(:disabled) { background: #f0c68e; }
@@ -886,6 +888,50 @@ body {
 
 .gdf-note { font-size: 11px; line-height: 1.6; color: #bfd8c6; }
 .gdf-alert { font-size: 12px; line-height: 1.6; color: #ffc9c2; }
+
+/* ── 音声コントロール（STEP-GD-VOICE）────────────────────────────
+   GD は完全音声型。テキスト入力欄が無いぶん、「今マイクが生きているのか」を
+   一目で分かるようにする必要がある。色だけに頼らず必ず文言も併記する
+   （.gdf-voice__label は常に描画される）。 */
+.gdf-voice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgb(6 20 15 / 0.5);
+  outline: 1px solid rgb(160 210 175 / 0.18);
+  outline-offset: -1px;
+}
+.gdf-voice__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #7f9c88;
+}
+.gdf-voice__label {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #e9f6ec;
+}
+.gdf-voice[data-state='live'] .gdf-voice__dot { background: #7ee0be; }
+.gdf-voice[data-state='speaking'] .gdf-voice__dot {
+  background: #ffd79a;
+  animation: gdf-dot 1.1s ease-in-out infinite;
+}
+.gdf-voice[data-state='speaking'] { outline-color: rgb(255 215 154 / 0.45); }
+.gdf-voice[data-state='busy'] .gdf-voice__dot {
+  background: #9ec2ff;
+  animation: gdf-dot 1.4s ease-in-out infinite;
+}
+.gdf-voice[data-state='off'] .gdf-voice__dot { background: #8b8b8b; }
+.gdf-voice[data-state='off'] .gdf-voice__label { color: #cfe0d4; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gdf-voice__dot { animation: none !important; }
+}
 
 /* ステージ上のバッジ（参加者数・同期状態など）。 */
 .gdf-chip {

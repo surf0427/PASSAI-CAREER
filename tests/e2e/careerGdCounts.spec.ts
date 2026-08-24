@@ -5,7 +5,13 @@
 // 実行順（アルファベット順）は careerGdCounts が最初。各 room を finish まで進めて
 // host（member0）の waiting 公開 room を残さないため、後続 spec の公開 room 作成と競合しない。
 import { test, expect, type Browser } from '@playwright/test';
-import { memberContext, createPublicRoom, lobbyCard } from './helpers';
+import {
+  memberContext,
+  createPublicRoom,
+  lobbyCard,
+  speakAs,
+  expectVoiceOnlyComposer,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -42,9 +48,9 @@ async function runCountRoom(
 
     // 発言 → finish → 評価（result/ranking が planned 人でも破綻しない）。
     const msg = `E2E ${planned}人: 論点を三つに整理して進めましょう。`;
-    await host.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msg);
-    await host.page.getByRole('button', { name: '発言する' }).click();
-    await expect(host.page.getByText(msg)).toBeVisible();
+    await expectVoiceOnlyComposer(host.page);
+    await speakAs(host.page, roomId, msg);
+    await expect(host.page.getByText(msg)).toBeVisible({ timeout: 20_000 });
 
     host.page.once('dialog', (d) => d.accept());
     await host.page.getByRole('button', { name: 'GDを終了する' }).click();

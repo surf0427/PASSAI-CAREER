@@ -3,7 +3,14 @@
 // および public_lobby ↔ invite の分離が保たれていることをブラウザで確認する。
 // 参加コードは DOM から読むが、値は一切ログ出力しない。
 import { test, expect } from '@playwright/test';
-import { memberContext, recordRoom, roomIdFromUrl, confirmGdTheme } from './helpers';
+import {
+  memberContext,
+  recordRoom,
+  roomIdFromUrl,
+  confirmGdTheme,
+  speakAs,
+  expectVoiceOnlyComposer,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -60,9 +67,9 @@ test.describe('GD invite (合言葉) room regression', () => {
 
       // 6) message。
       const msg = 'E2E合言葉: まず前提を揃えて論点を整理しましょう。';
-      await host.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msg);
-      await host.page.getByRole('button', { name: '発言する' }).click();
-      await expect(host.page.getByText(msg)).toBeVisible();
+      await expectVoiceOnlyComposer(host.page);
+      await speakAs(host.page, inviteRoomId, msg);
+      await expect(host.page.getByText(msg)).toBeVisible({ timeout: 20_000 });
 
       // 7) finish。
       host.page.once('dialog', (d) => d.accept());
@@ -115,9 +122,9 @@ test.describe('GD invite (合言葉) room regression', () => {
 
       // message → finish → result。
       const msg = 'E2E合言葉8人: 役割を分担して進めましょう。';
-      await host.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msg);
-      await host.page.getByRole('button', { name: '発言する' }).click();
-      await expect(host.page.getByText(msg)).toBeVisible();
+      await expectVoiceOnlyComposer(host.page);
+      await speakAs(host.page, roomId, msg);
+      await expect(host.page.getByText(msg)).toBeVisible({ timeout: 20_000 });
 
       host.page.once('dialog', (d) => d.accept());
       await host.page.getByRole('button', { name: 'GDを終了する' }).click();

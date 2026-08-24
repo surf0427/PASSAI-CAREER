@@ -14,7 +14,14 @@
 //
 // 秘密は扱わない（join code は DOM から読むが値は出力しない）。
 import { test, expect, type Page } from '@playwright/test';
-import { memberContext, recordRoom, roomIdFromUrl, confirmGdTheme } from './helpers';
+import {
+  memberContext,
+  recordRoom,
+  roomIdFromUrl,
+  confirmGdTheme,
+  speakAs,
+  expectVoiceOnlyComposer,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -76,18 +83,22 @@ test.describe('GD production readiness (realtime / disconnect / timer / authoriz
       await expect(A.page.getByText('GD進行中')).toBeVisible({ timeout: 20_000 });
       await expect(B.page.getByText('GD進行中')).toBeVisible({ timeout: 20_000 });
 
+      // ── 進行画面は完全音声型（文字入力欄が無い）──
+      await expectVoiceOnlyComposer(A.page);
+      await expectVoiceOnlyComposer(B.page);
+
       // ── A の発言が B へ届く ──
+      //   STEP-GD-VOICE: 発言は API 経由で投入する（実マイクの発話は CI で再現できない）。
+      //   ここで検証したいのは「発言が入ってからの配信・重複除去」であり、投入手段ではない。
       const msgA = 'E2E-A: まず論点を整理しましょう。';
-      await A.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msgA);
-      await A.page.getByRole('button', { name: '発言する' }).click();
-      await expect(A.page.getByText(msgA)).toBeVisible();
+      await speakAs(A.page, roomId, msgA);
+      await expect(A.page.getByText(msgA)).toBeVisible({ timeout: 20_000 });
       await expect(B.page.getByText(msgA)).toBeVisible({ timeout: 20_000 });
 
       // ── B の発言が A へ届く ──
       const msgB = 'E2E-B: 前提として対象を絞りませんか。';
-      await B.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', msgB);
-      await B.page.getByRole('button', { name: '発言する' }).click();
-      await expect(B.page.getByText(msgB)).toBeVisible();
+      await speakAs(B.page, roomId, msgB);
+      await expect(B.page.getByText(msgB)).toBeVisible({ timeout: 20_000 });
       await expect(A.page.getByText(msgB)).toBeVisible({ timeout: 20_000 });
 
       // ── 二重表示が起きないこと（optimistic + Realtime + poll の三重取り込み対策）──

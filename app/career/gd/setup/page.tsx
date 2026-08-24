@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { useCareerGdVoiceCapabilities } from '@/hooks/useCareerGdVoiceCapabilities';
 import { Button } from '@/components/ui/Button';
 import { loadBasicInfo } from '@/app/career/profile/profileStorage';
 import type { CareerProfile } from '@/types/careerProfile';
@@ -67,8 +68,19 @@ export default function CareerGdSetupPage() {
   );
   const selfName = profile?.name?.trim() || 'あなた';
 
+  // ★ STEP-GD-VOICE: GD は音声でしか進行できないため、**開始前に**音声が使えるかを確かめる。
+  //   ここで止めておかないと「テーマを生成し、セッションを作り、進行画面へ入ってから
+  //   発言できないと分かる」という最悪の順序になる（AI コストも無駄に発生する）。
+  const { readiness: voiceReadiness } = useCareerGdVoiceCapabilities();
+  const voiceReady = voiceReadiness.state === 'ready';
+  const voiceBlockMessage = voiceReadiness.state === 'ready' || voiceReadiness.state === 'checking'
+    ? null
+    : voiceReadiness.message;
+
   async function handleStart() {
     if (loading) return;
+    // 音声が使えないなら、テーマ生成（AI コスト）より前で止める。
+    if (!voiceReady) return;
     setLoading(true);
     setError(null);
     try {
@@ -183,15 +195,34 @@ export default function CareerGdSetupPage() {
         </p>
       )}
 
+      {/* 音声が使えない環境では、開始させずに理由を出す（無言で失敗させない）。 */}
+      {voiceBlockMessage && (
+        <p
+          className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800 ring-1 ring-amber-100"
+          role="alert"
+          data-testid="gd-voice-unavailable"
+        >
+          {voiceBlockMessage}
+        </p>
+      )}
+
+      <p className="mb-4 text-xs leading-relaxed text-slate-500">
+        GDは音声で進行します。開始後にマイクの使用を許可してください。文字入力は不要です。
+      </p>
+
       <div className="flex flex-col sm:flex-row gap-3">
         <Button
           variant="primary"
           size="md"
           onClick={handleStart}
-          disabled={loading}
+          disabled={loading || !voiceReady}
           className="w-full sm:w-auto"
         >
-          {loading ? 'テーマを準備中…' : 'GDを始める →'}
+          {loading
+            ? 'テーマを準備中…'
+            : voiceReadiness.state === 'checking'
+              ? '音声の準備を確認中…'
+              : 'GDを始める →'}
         </Button>
         <Link
           href="/career/gd"

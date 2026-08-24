@@ -209,6 +209,23 @@ export const CAREER_GD_RATE_LIMITS = {
     namespace: 'career_gd_heartbeat',
     windows: [{ limit: 20, windowSeconds: 60 }, { limit: 600, windowSeconds: 3600 }],
   },
+  // ── STEP-GD-VOICE 追加分（完全音声型）─────────────────────────
+  // 文字起こし: 40/分・800/時。
+  //   GD は「押して話す → 離して確定」で 1 発言 1 クリップなので、実利用の上限は
+  //   発言 rate（30/分）とほぼ同じ。少し上に取るのは、取り消し・言い直しで
+  //   録音だけして送る回数が発言数をわずかに上回るため。
+  //   ★ OpenAI Whisper 課金に直結する。fail-open（Redis 障害で GD を無音にしない）。
+  stt: {
+    namespace: 'career_gd_stt',
+    windows: [{ limit: 40, windowSeconds: 60 }, { limit: 800, windowSeconds: 3600 }],
+  },
+  // 読み上げ: 60/分・1200/時。
+  //   AI 発言・進行アナウンスの読み上げ。client はキャッシュせず 1 発言 1 回叩くため、
+  //   AI 発言 rate（20/分）＋進行アナウンス＋再生し直しを見込んで発言系より緩める。
+  tts: {
+    namespace: 'career_gd_tts',
+    windows: [{ limit: 60, windowSeconds: 60 }, { limit: 1200, windowSeconds: 3600 }],
+  },
 } as const satisfies Record<string, RateLimitRule>;
 
 // ── Career プレゼン AI route の rate limit ルール（正本）────────────

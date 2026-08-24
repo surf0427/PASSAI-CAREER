@@ -1,10 +1,15 @@
 'use client';
 
-// PASSAI 就活版 — GD session 画面（テキストベース・ターン制の本体）。
+// PASSAI 就活版 — GD session 画面（ソロプレイ・**完全音声型**の本体）。
 //
 // 会話状態は localStorage（careerGdSessions）で保持し、各発言/評価はステートレス API
 // （/api/career/gd/{turn,feedback}）に委ねる。DB / 課金 / usage 非接続。
-// 進行: ユーザーが発言 → AI が1名応答（自動）。「AIの発言を進める」で AI 発言を追加できる。
+//
+// ★ STEP-GD-VOICE: ユーザーが文字を入力する場所は存在しない。
+//   進行: マイクが常時開いている → 話す → 無音で 1 発言が自動確定（voiceSegmenter）
+//         → /api/career/gd/voice/stt で文字起こし → transcript へ追記
+//         → AI が 1 名応答し、その発言を **音声で再生**する（useCareerGdTts）。
+//   文字起こしは評価の根拠として保持・表示するが、ユーザーが編集・送信する欄にはしない。
 // 強すぎない AI・ユーザーの発言機会確保のため、AI は1回につき1名だけ発言する。
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -14,6 +19,10 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { GD_ROLE_LABELS } from '../gdRoles';
 import { GdCircleStage, useRecentSpeaker, type GdStageParticipant } from '../components/stage';
+import { GdVoiceBar } from '../components/voice/GdVoiceBar';
+import { useCareerGdMic } from '@/hooks/useCareerGdMic';
+import { useCareerGdVoiceCapture } from '@/hooks/useCareerGdVoiceCapture';
+import { useCareerGdTts } from '@/hooks/useCareerGdTts';
 import {
   getInProgressGdSession,
   upsertGdSession,
@@ -80,8 +89,10 @@ export default function CareerGdSessionPage() {
   const [session, setSession] = useState<CareerGdSession | null>(
     () => getInProgressGdSession(),
   );
-  const [draft, setDraft] = useState('');
   const [phase, setPhase] = useState<Phase>('discussing');
+  // 音声の確定は非同期（STT の往復）で届くため、コールバック内から最新 phase を読む必要がある。
+  // deps に phase を入れると onTranscript が作り替わって録音側の ref が揺れるので ref で持つ。
+  const phaseRef = useRef<Phase>('discussing');
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   // Forest Circle の「・・・」表示用（どの AI が生成中か）。進行ロジックには関与しない。
@@ -93,6 +104,10 @@ export default function CareerGdSessionPage() {
     () => session?.participants.find((p) => p.isSelf) ?? null,
     [session],
   );
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   // 経過タイマー（表示のみ・強制終了しない）。
   useEffect(() => {
@@ -160,36 +175,49 @@ export default function CareerGdSessionPage() {
     }
   }, []);
 
-  // 「AIの発言を進める」ボタン。
-  const advanceAi = useCallback(() => {
-    if (!session || phase !== 'discussing') return;
-    void runAiTurn(session);
-  }, [session, phase, runAiTurn]);
+  /**
+   * ユーザーの発言が音声から確定したときに呼ばれる（STEP-GD-VOICE）。
+   *
+   * ★ phase が 'ai-thinking' でも **発言は必ず記録する**。
+   *   AI の生成待ちの最中に話した内容を捨てると、ユーザーには「自分の発言が消えた」
+   *   としか見えない（テキスト時代は入力欄に残っていたので気付けたが、音声では消滅する）。
+   *   AI の応答トリガだけを phase で制御する。
+   *
+   * ★ 最新の session は localStorage から読み直す。STT の往復中に AI 発言が
+   *   追記されている可能性があり、state の closure を信じると発言が上書きで消える。
+   */
+  const commitUserSpeech = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const latest = getInProgressGdSession();
+      if (!latest) return;
+      const me = latest.participants.find((p) => p.isSelf);
+      if (!me) return;
+      if (speechCount(latest) >= MAX_UTTERANCES) return;
 
-  // ユーザーが発言する → 保存後、AI 1 名が自動で応答する。
-  const postUser = useCallback(async () => {
-    if (!session || !self || phase !== 'discussing') return;
-    const trimmed = draft.trim();
-    if (!trimmed || reachedCap) return;
-    const utterance: GdUtterance = {
-      id: newId('gdu'),
-      participantId: self.id,
-      content: trimmed,
-      createdAt: new Date().toISOString(),
-      kind: 'speech',
-    };
-    const next: CareerGdSession = {
-      ...session,
-      transcript: [...session.transcript, utterance],
-      updatedAt: new Date().toISOString(),
-    };
-    upsertGdSession(next);
-    setSession(next);
-    setDraft('');
-    if (speechCount(next) < MAX_UTTERANCES) {
-      await runAiTurn(next);
-    }
-  }, [session, self, phase, draft, reachedCap, runAiTurn]);
+      const utterance: GdUtterance = {
+        id: newId('gdu'),
+        participantId: me.id,
+        content: trimmed,
+        createdAt: new Date().toISOString(),
+        kind: 'speech',
+      };
+      const next: CareerGdSession = {
+        ...latest,
+        transcript: [...latest.transcript, utterance],
+        updatedAt: new Date().toISOString(),
+      };
+      upsertGdSession(next);
+      setSession(next);
+
+      // AI 応答は「議論中」のときだけ起動する（生成中の二重起動・評価中の割り込みを防ぐ）。
+      if (phaseRef.current === 'discussing' && speechCount(next) < MAX_UTTERANCES) {
+        void runAiTurn(next);
+      }
+    },
+    [runAiTurn],
+  );
 
   // GD を終了して評価する。
   const finish = useCallback(async () => {
@@ -273,6 +301,77 @@ export default function CareerGdSessionPage() {
     }
   }, [session, self, router]);
 
+  // ── 音声（STEP-GD-VOICE）─────────────────────────────────────────
+  //   マイクの所有者は 1 つ（useCareerGdMic）。文字起こしと読み上げがそれを共有する。
+  const mic = useCareerGdMic();
+  const tts = useCareerGdTts({
+    audioContext: mic.audioContext,
+    enabled: phase !== 'evaluating',
+  });
+  // effect の deps には安定した関数参照だけを入れる
+  //   （Hook の返り値オブジェクトは毎レンダー新しくなるため、そのまま deps に入れると毎回走る）。
+  const { speak: speakVoice, cancelAll: cancelVoice } = tts;
+  const capture = useCareerGdVoiceCapture({
+    stream: mic.stream,
+    audioContext: mic.audioContext,
+    // 評価中・発言上限到達後は録音しない（採点対象にならない発言を録っても課金が増えるだけ）。
+    enabled: !!session && phase !== 'evaluating' && !reachedCap,
+    muted: mic.muted,
+    onTranscript: commitUserSpeech,
+  });
+
+  // AI の発言を音声で再生する。
+  //   speakerKey は 'solo:<AI の並び順>'。同じ AI は常に同じ声になる（誰の発言か耳で分かる）。
+  //   読み上げ済み判定は useCareerGdTts が utterance id で行うので、
+  //   ここは「未再生のものを渡し直すだけ」で二重再生しない。
+  const aiIndexById = useMemo<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    const ais = (session?.participants ?? []).filter((p) => p.type === 'ai');
+    ais.forEach((p, i) => {
+      map[p.id] = i;
+    });
+    return map;
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || mic.status !== 'ready') return;
+    for (const u of session.transcript) {
+      if (u.kind === 'system') {
+        speakVoice({ id: u.id, text: u.content, speakerKey: 'moderator', participantId: null });
+        continue;
+      }
+      const speaker = session.participants.find((p) => p.id === u.participantId);
+      if (!speaker || speaker.type !== 'ai') continue; // 自分の発言は読み上げない
+      speakVoice({
+        id: u.id,
+        text: u.content,
+        speakerKey: `solo:${aiIndexById[speaker.id] ?? 0}`,
+        participantId: speaker.id,
+      });
+    }
+  }, [session, mic.status, aiIndexById, speakVoice]);
+
+  // マイクが有効になった直後、まだ誰も発言していなければ AI から口火を切る。
+  //   音声 GD では「無音の画面を前に、何をすればいいか分からない」が最悪の入口になるため、
+  //   最初の一声は必ず AI が出す。1 セッション 1 回だけ（ref で二重起動を防ぐ）。
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (openedRef.current) return;
+    if (mic.status !== 'ready' || !session) return;
+    if (speechCount(session) > 0) return;
+    if (phase !== 'discussing') return;
+    openedRef.current = true;
+    // マイク許可（外部システムの状態）が整った瞬間に、外部 API 呼び出しを 1 回だけ起動する。
+    // openedRef が再入を防ぐため 1 セッション 1 回で、カスケードレンダリングにはならない。
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 上記のとおり外部システムとの同期
+    void runAiTurn(session);
+  }, [mic.status, session, phase, runAiTurn]);
+
+  // GD を離れる / 評価に入るときは読み上げを止める（結果画面に声が残らない）。
+  useEffect(() => {
+    if (phase === 'evaluating') cancelVoice();
+  }, [phase, cancelVoice]);
+
   // ── Forest Circle 表示用の adapter（既存 state を写すだけ / 進行ロジック非関与）──
   //   直近の発言（system を除く）＝「今この人が話している」の source。
   const lastSpeech = useMemo<GdUtterance | null>(() => {
@@ -283,20 +382,24 @@ export default function CareerGdSessionPage() {
     lastSpeech?.participantId ?? null,
     lastSpeech?.id ?? null,
   );
-  // 自分は「入力中（draft がある）」を発言中として扱う（テキストGDでの自然な写像）。
-  const selfTyping = draft.trim().length > 0;
+  // 自分の「発言中」は、実際にマイクへ声が乗っているか（VAD の判定）で決まる。
+  //   テキスト時代の「入力中」の置き換えだが、こちらは本物の発話状態である。
+  const selfTalking = capture.speaking;
   const stageParticipants = useMemo<GdStageParticipant[]>(() => {
     const list = session?.participants ?? [];
     // 自分を先頭（＝手前中央の席）へ。sort は安定なので他の並びは既存のまま。
     const ordered = [...list].sort((a, b) => (a.isSelf ? 0 : 1) - (b.isSelf ? 0 : 1));
+    // speaking は **同時に 1 人だけ**。優先順位を 1 つの speakerId へ解決してから配る。
+    //   参加者ごとに独立判定すると「自分が話している最中に AI の読み上げが鳴る」瞬間に
+    //   2 人が同時に「発言中」になってしまうため、ここで一意に決める。
+    //   ① 自分が実際に話している（VAD）… 音声 GD では自分の発話が最も確かな現在情報
+    //   ② AI の読み上げが鳴っている参加者 … 耳で聞こえている人と一致させる
+    //   ③ 直近の確定発言者
+    const selfId = ordered.find((x) => x.isSelf)?.id ?? null;
+    const speakerId = selfTalking ? selfId : (tts.speakingParticipantId ?? recentSpeakerId);
     return ordered.map((p) => {
       const thinking = phase === 'ai-thinking' && p.id === aiSpeakerId;
-      // speaking は同時に 1 人だけ（直近の実発言が最優先。自分の入力中は「誰も話していない」ときのみ）。
-      const speaking =
-        !thinking &&
-        (p.isSelf
-          ? recentSpeakerId === p.id || (!recentSpeakerId && selfTyping)
-          : recentSpeakerId === p.id);
+      const speaking = !thinking && !!speakerId && p.id === speakerId;
       return {
         key: p.id,
         participantId: p.id,
@@ -308,7 +411,7 @@ export default function CareerGdSessionPage() {
         speech: thinking ? 'thinking' : speaking ? 'speaking' : 'idle',
       };
     });
-  }, [session, phase, aiSpeakerId, recentSpeakerId, selfTyping]);
+  }, [session, phase, aiSpeakerId, recentSpeakerId, selfTalking, tts.speakingParticipantId]);
 
   if (!isMounted) return null;
 
@@ -351,7 +454,10 @@ export default function CareerGdSessionPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <PageHeader title="GD中" description="森の円卓で、AI参加者とディスカッションを進めてください。" />
+      <PageHeader
+        title="GD中"
+        description="森の円卓で、AI参加者と声でディスカッションを進めてください。文字入力は不要です。"
+      />
 
       <div className="gdf-shell">
         {/* 円になって座っている参加者（主役）。テーマ・残り時間は円の中央に置く。 */}
@@ -398,11 +504,16 @@ export default function CareerGdSessionPage() {
 
           {/* 議論ログ */}
           <div className="gdf-panel">
-            <p className="gdf-panel__label">議論ログ（{total} / {MAX_UTTERANCES} 発言）</p>
+            {/* 文字起こしは「評価の根拠を確認するための記録」。編集も送信もできない。 */}
+            <p className="gdf-panel__label">
+              議論ログ・文字起こし（{total} / {MAX_UTTERANCES} 発言）
+            </p>
             <div className="gdf-log mt-2">
               {session.transcript.length === 0 ? (
                 <p className="gdf-log__empty">
-                  まだ発言はありません。あなたから口火を切るか、「AIの発言を進める」を押してください。
+                  {mic.status === 'ready'
+                    ? 'まもなくAIメンバーが口火を切ります。そのまま話しかけてください。'
+                    : 'マイクを有効にすると、GDが始まります。'}
                 </p>
               ) : (
                 session.transcript.map((u) => {
@@ -438,40 +549,23 @@ export default function CareerGdSessionPage() {
             </p>
           )}
 
-          {/* 発言入力・操作 */}
+          {/* 発言は音声のみ。文字を入力する要素は置かない（STEP-GD-VOICE）。 */}
           {!reachedCap ? (
-            <div className="gdf-panel">
-              <label htmlFor="gd-solo-input" className="gdf-panel__label">
-                あなたの発言
-              </label>
-              <textarea
-                id="gd-solo-input"
-                className="gdf-field mt-2"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="意見・提案・他の参加者への質問などを入力してください。"
-                rows={3}
-                disabled={aiThinking || phase === 'evaluating'}
-              />
-              <div className="gdf-controls mt-3">
-                <button
-                  type="button"
-                  className="gdf-btn gdf-btn--primary"
-                  onClick={postUser}
-                  disabled={aiThinking || phase === 'evaluating' || !draft.trim()}
-                >
-                  発言する →
-                </button>
-                <button
-                  type="button"
-                  className="gdf-btn gdf-btn--ghost"
-                  onClick={advanceAi}
-                  disabled={aiThinking || phase === 'evaluating'}
-                >
-                  AIの発言を進める
-                </button>
-              </div>
-            </div>
+            <GdVoiceBar
+              micStatus={mic.status}
+              micError={mic.errorMessage}
+              muted={mic.muted}
+              onEnableMic={() => void mic.enable()}
+              onToggleMute={mic.toggleMuted}
+              captureStatus={capture.status}
+              selfSpeaking={capture.speaking}
+              captureError={capture.error}
+              unusableCount={capture.unusableCount}
+              ttsDegraded={tts.degraded}
+              // ソロには他の人間参加者がいないので peer 音声の表示自体を出さない。
+              peerAudio={null}
+              disabled={phase === 'evaluating'}
+            />
           ) : (
             <div className="gdf-panel">
               <p className="text-[13px] leading-relaxed text-[#e2f1e6]">
@@ -486,7 +580,7 @@ export default function CareerGdSessionPage() {
               type="button"
               className="gdf-btn gdf-btn--primary"
               onClick={finish}
-              disabled={phase === 'evaluating' || aiThinking || selfSpeechCount(session) === 0}
+              disabled={phase === 'evaluating' || selfSpeechCount(session) === 0}
             >
               {phase === 'evaluating' ? '評価を作成中…' : 'GDを終了して評価を見る →'}
             </button>

@@ -130,17 +130,21 @@ console.log('\n[C] 発話インジケータ');
   // solo: 既存 phase='ai-thinking' と発言ログを使う（新しい進行 state を作らない）。
   check('C8 solo は既存 phase を thinking に写す', solo.includes("phase === 'ai-thinking' && p.id === aiSpeakerId"));
   check('C9 solo は transcript の最新発言を speaker に使う', solo.includes('lastSpeech') && solo.includes("u.kind !== 'system'"));
-  check('C10 solo は入力中を自分の発言中に写す', solo.includes('selfTyping'));
+  // STEP-GD-VOICE: 「入力中（draft）」は消滅し、自分の発言中は **実際の発話**（VAD）で決まる。
+  //   置き換え後も「同時に発言中は 1 人だけ」という不変条件は維持されていること。
+  check('C10 solo は実際の発話を自分の発言中に写す', solo.includes('selfTalking = capture.speaking'));
   check(
-    'C10b solo の speaking は同時に 1 人だけ（実発言が最優先）',
-    solo.includes('recentSpeakerId === p.id || (!recentSpeakerId && selfTyping)'),
+    'C10b solo の speaking は同時に 1 人だけ（発話 → 読み上げ → 直近発言を単一 id へ解決）',
+    solo.includes('const speakerId = selfTalking ? selfId : (tts.speakingParticipantId ?? recentSpeakerId)') &&
+      solo.includes('const speaking = !thinking && !!speakerId && p.id === speakerId'),
   );
   // room: 既存 messages / pendingMessages を使う。
   check('C11 room は確定 message の最新を speaker に使う', room.includes('lastMessage') && room.includes("messages[i].kind !== 'system'"));
   check('C12 room は optimistic 送信中を自分の発言中に写す', room.includes("pendingMessages.some((m) => m.status === 'sending')"));
   check(
-    'C12b room の speaking は同時に 1 人だけ（確定発言が最優先）',
-    room.includes('recentSpeakerId === m.participantId || (!recentSpeakerId && selfSpeaking)'),
+    'C12b room の speaking は同時に 1 人だけ（発話 → 読み上げ → 直近発言を単一 id へ解決）',
+    room.includes('const speakerId = selfSpeaking ? selfParticipantId || null : (ttsSpeakingId ?? recentSpeakerId)') &&
+      room.includes('const speaking = !!speakerId && m.participantId === speakerId'),
   );
   // 進行ロジックの新規追加が無いこと（speaker を server / DB に持たせていない）。
   check(
@@ -163,12 +167,16 @@ console.log('\n[D] 既存契約の非退行');
   check('D4 同期モードバッジが残る', room.includes('gd-sync-mode') || room.includes('<SyncModeBadge'));
   check('D5 残り時間の testid が残る', room.includes('data-testid="gd-remaining-time"'));
   check('D6 optimistic 発言の testid が残る', room.includes('data-testid="gd-pending-message"'));
-  check('D7 発言入力の id が残る', room.includes('id="gd-input"'));
+  // D7 は STEP-GD-VOICE で撤去。GD は完全音声型になり、発言入力欄（id="gd-input"）は
+  //   **存在しないことが仕様**になった。代わりに音声バーの test hook を検査する
+  //   （詳細な音声契約は scripts/gd-qa/voice.qa.ts が担当）。
+  check('D7 音声バーの testid がある（旧 gd-input の後継）', room.includes("data-testid=\"gd-voice-bar\"") || room.includes('<GdVoiceBar'));
   // ② 操作（ボタン名）を変えていない。
-  for (const label of ['発言する', 'AIに発言してもらう', 'GDを終了する', '生成中…']) {
+  //    ★ 「発言する」は音声化で消えた（発言はボタンではなく発話で確定する）ため対象外。
+  for (const label of ['AIに発言してもらう', 'GDを終了する', '生成中…']) {
     check(`D8 room の操作ラベル維持: ${label}`, room.includes(label));
   }
-  for (const label of ['発言する →', 'AIの発言を進める', 'GDを終了して評価を見る →', '評価を作成中…']) {
+  for (const label of ['GDを終了して評価を見る →', '評価を作成中…']) {
     check(`D9 solo の操作ラベル維持: ${label}`, solo.includes(label));
   }
   // ③ 進行・同期・保存のロジックがそのまま残っている。
@@ -253,7 +261,13 @@ console.log('\n[F] アクセシビリティ');
   check('F4 接続状態に aria-label がある', avatar.includes('aria-label={GD_CONNECTION_LABELS[connection]}'));
   check('F5 prefers-reduced-motion で「・・・」を静止させる', /@media \(prefers-reduced-motion: reduce\)[\s\S]*gdf-seat__dot[\s\S]*animation: none/.test(css));
   check('F6 reduced-motion で拡大演出も止める', /@media \(prefers-reduced-motion: reduce\)[\s\S]*--gdf-boost: 1;/.test(css));
-  check('F7 発言入力に label が結び付いている', room.includes('htmlFor="gd-input"') && solo.includes('htmlFor="gd-solo-input"'));
+  // F7 は STEP-GD-VOICE で意味が変わった。入力欄が無いので label ではなく、
+  //   「状態が色だけでなく文言でも伝わること」を検査する（音声 UI の a11y の要）。
+  check(
+    'F7 音声の状態が文言でも伝わる（色だけに依存しない）',
+    read('app/career/gd/components/voice/GdVoiceBar.tsx').includes('gdf-voice__label') &&
+      css.includes('.gdf-voice__label'),
+  );
   check('F8 操作は button / link のまま（keyboard 操作を壊さない）', room.includes('type="button"') && solo.includes('type="button"'));
   check('F9 focus リングを消していない', css.includes('.gdf-btn:focus-visible') && css.includes('.gdf-field:focus'));
 }

@@ -115,8 +115,9 @@ prompt は従来と **byte 完全一致**（＝非破壊）。
 ## 6. QA
 
 ```bash
-npm run qa:careerGd            # 既存: GD の product 仕様（お題 / テーマ / 部屋終了）
+npm run qa:careerGd            # 既存: GD の product 仕様（お題 / テーマ / 部屋終了 / 音声）
 npm run qa:careerGdProduction  # 新規: 本番運用条件（flag / RLS / 切断 / timer / Spine / rate limit）
+npm run qa:careerGdVoice       # STEP-GD-VOICE: 完全音声型の契約（qa:careerGd に含まれる）
 npx playwright test tests/e2e/careerGdRealtime.spec.ts   # multi-client（実 DB・要 storageState）
 ```
 
@@ -125,5 +126,9 @@ npx playwright test tests/e2e/careerGdRealtime.spec.ts   # multi-client（実 DB
 
 ## 7. 今回やっていないこと（別 Phase）
 
-- **音声 / WebRTC**（remote audio）— 実装ゼロのまま。GD は text online GD として完成させた。
+- ~~**音声 / WebRTC**（remote audio）— 実装ゼロのまま。GD は text online GD として完成させた。~~
+  → **STEP-GD-VOICE で解消**。GD は完全音声型になった（textarea は全モードから撤去）。
+  仕様・通電手順・既知の限界は [`gd_voice_current_state.md`](./gd_voice_current_state.md) を参照。
+  本ドキュメントの §2〜§6（flag / Realtime / 切断検知 / server timer / Data Spine / QA）は
+  **すべて不変**であり、音声化はその上に乗っている。
 - host migration / kick / 高度な moderation / phase 進行（導入→発散→収束→発表）。

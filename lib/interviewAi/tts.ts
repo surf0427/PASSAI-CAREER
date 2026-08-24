@@ -49,6 +49,17 @@ export type SynthesizeInput = {
   text: string;
   // モード別の話し方（口調・テンポ）を切り替えるための面接タイプ。未指定は本番モード相当。
   interviewType?: InterviewType | null;
+
+  // ── STEP-GD-VOICE: 呼び出し側が話者を明示する口（GD の AI persona 別 voice）──
+  //   ★ 非破壊拡張。**未指定なら従来と完全に同一の挙動**（面接の既存呼び出しは影響を受けない）。
+  //   優先順位: 明示指定 > env（ops 上書き） > interviewType 既定（ttsVoice.ts）。
+  //   GD は 10 persona に別々の声を割り当てる必要があり、env の全体上書きでは表現できないため
+  //   「明示指定だけは env より優先する」。env は面接向けの ops ノブとして従来どおり効き続ける。
+  voice?: string | null;
+  /** ステアリング対応モデル（gpt-4o 系）のときだけ送られる話し方指示。 */
+  instructions?: string | null;
+  /** 読み上げ速度。OpenAI の許容範囲 [0.25, 4.0] にクランプされる。 */
+  speed?: number | null;
 };
 
 export type SynthesizeOutput = {
@@ -92,11 +103,22 @@ export async function synthesizeSpeech(
   // モード別の声・話し方（声 / 口調 / テンポ）。env で voice / speed を明示したらそれを優先（ops 上書き）、
   // 無ければモード別の既定を使う。instructions は ステアリング対応モデルのみ付与。
   const delivery = ttsDeliveryFor(input.interviewType);
-  const voice = process.env.INTERVIEW_AI_TTS_VOICE || delivery.voice;
+  // 明示指定（GD persona 等）> env（ops 上書き）> interviewType 既定。
+  // 明示指定が無い呼び出しでは右2つだけが効くため、既存の面接経路は byte 単位で不変。
+  const explicitVoice = typeof input.voice === 'string' ? input.voice.trim() : '';
+  const voice = explicitVoice || process.env.INTERVIEW_AI_TTS_VOICE || delivery.voice;
+  const explicitSpeed =
+    typeof input.speed === 'number' && Number.isFinite(input.speed) ? input.speed : null;
   const speed =
-    process.env.INTERVIEW_AI_TTS_SPEED !== undefined
-      ? parseSpeed(process.env.INTERVIEW_AI_TTS_SPEED)
-      : delivery.speed;
+    explicitSpeed !== null
+      ? Math.min(4, Math.max(0.25, explicitSpeed))
+      : process.env.INTERVIEW_AI_TTS_SPEED !== undefined
+        ? parseSpeed(process.env.INTERVIEW_AI_TTS_SPEED)
+        : delivery.speed;
+  const explicitInstructions =
+    typeof input.instructions === 'string' && input.instructions.trim()
+      ? input.instructions.trim()
+      : '';
   const supportsInstructions = model.startsWith('gpt-4o');
   const body: Record<string, unknown> = {
     model,
@@ -105,7 +127,7 @@ export async function synthesizeSpeech(
     response_format: 'mp3',
     speed,
   };
-  if (supportsInstructions) body.instructions = delivery.instructions;
+  if (supportsInstructions) body.instructions = explicitInstructions || delivery.instructions;
 
   // タイムアウト（TTS は数秒）。
   const controller = new AbortController();

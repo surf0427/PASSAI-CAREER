@@ -61,6 +61,29 @@ declare namespace NodeJS {
     // OpenAI (STT/TTS provider 境界。リアルタイム面接でも流用)
     readonly OPENAI_API_KEY?: string;
 
+    // ── STT / TTS provider 切替（lib/interviewAi/{stt,tts}.ts の唯一の入口が読む）──
+    //   STEP-GD-VOICE で GD も同じ境界を共有するため、暗黙 env を明示宣言する。
+    //   'openai' 以外 / 未設定 = provider 無効（Unavailable エラー → 呼び出し側がフォールバック）。
+    readonly INTERVIEW_AI_STT_PROVIDER?: string;
+    readonly INTERVIEW_AI_TTS_PROVIDER?: string;
+    /** TTS の全体上書き（ops 制御）。GD が persona 別 voice を明示指定した場合はそちらが優先。 */
+    readonly INTERVIEW_AI_TTS_VOICE?: string;
+    readonly INTERVIEW_AI_TTS_MODEL?: string;
+    readonly INTERVIEW_AI_TTS_SPEED?: string;
+
+    // ── GD 完全音声型（STEP-GD-VOICE）──
+    //   ★ 音声専用の kill switch は **意図的に作らない**。GD は音声でしか進行できない仕様なので
+    //     「GD は ON だが音声だけ OFF」は壊れた商品状態であり、運用上その状態を作れてはいけない。
+    //     停止したいときは CAREER_GD_ENABLED を落とす（GD ごと止まる）。音声の可否は
+    //     provider env（INTERVIEW_AI_STT_PROVIDER + OPENAI_API_KEY）の有無だけで決まる。
+    /**
+     * WebRTC mesh の ICE サーバ設定（JSON 配列文字列）。
+     * 例: '[{"urls":"turn:turn.example.com:3478","username":"u","credential":"c"}]'
+     * 未設定なら公開 STUN のみ（対称 NAT 環境で P2P が張れないユーザーが出る）。
+     * NEXT_PUBLIC_ なのでブラウザに露出する = **長期の固定 credential を入れないこと**。
+     */
+    readonly NEXT_PUBLIC_CAREER_GD_ICE_SERVERS?: string;
+
     // Interview AI — リアルタイム音声面接 (STEP-INTERVIEW-AI-REALTIME-PR1)
     /**
      * server-only 最終ゲート。'true' のときだけ token route が client_secret を発行する。

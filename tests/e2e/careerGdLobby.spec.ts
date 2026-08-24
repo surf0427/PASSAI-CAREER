@@ -2,7 +2,13 @@
 // 実際のクリック/遷移/polling/満員/開始/発言/終了/評価/履歴までブラウザで検証する。
 // 秘密（token/cookie/email）は扱わず、storageState 経由でログイン済み context を使う。
 import { test, expect } from '@playwright/test';
-import { memberContext, createPublicRoom, lobbyCard as card } from './helpers';
+import {
+  memberContext,
+  createPublicRoom,
+  lobbyCard as card,
+  speakAs,
+  expectVoiceOnlyComposer,
+} from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -205,15 +211,15 @@ test.describe('GD public lobby browser E2E', () => {
 
       // m0 発言。
       await host.page.goto(`/career/gd/room/${hostRoomId}`);
-      await host.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', m0msg);
-      await host.page.getByRole('button', { name: '発言する' }).click();
-      await expect(host.page.getByText(m0msg)).toBeVisible();
+      await expectVoiceOnlyComposer(host.page);
+      await speakAs(host.page, hostRoomId, m0msg);
+      await expect(host.page.getByText(m0msg)).toBeVisible({ timeout: 20_000 });
 
       // m1 発言。
       await other.page.goto(`/career/gd/room/${hostRoomId}`);
-      await other.page.fill('textarea[placeholder="あなたの発言を入力（600文字まで）"]', m1msg);
-      await other.page.getByRole('button', { name: '発言する' }).click();
-      await expect(other.page.getByText(m1msg)).toBeVisible();
+      await expectVoiceOnlyComposer(other.page);
+      await speakAs(other.page, hostRoomId, m1msg);
+      await expect(other.page.getByText(m1msg)).toBeVisible({ timeout: 20_000 });
 
       // m0 の画面に m1 の発言が polling(3秒)で反映。
       await expect(host.page.getByText(m1msg)).toBeVisible({ timeout: 10_000 });

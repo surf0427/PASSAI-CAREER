@@ -3,7 +3,9 @@
 // PASSAI 就活版 — GD Phase2 マルチGD ルーム画面（STEP-GD-14）。
 // room.status に応じて表示を切り替える:
 //   waiting  … ロビー（参加待機・host のみ開始）
-//   active   … GDセッション（テーマ・残り時間・参加者・発言タイムライン・発言入力・AI発言・host終了）
+//   active   … GDセッション（テーマ・残り時間・参加者・発言タイムライン・**音声発言**・AI発言・host終了）
+//              ★ STEP-GD-VOICE: 文字入力欄は無い。発言はマイク音声からのみ取得し、
+//                参加者どうしは WebRTC mesh で実音声を聞き合う。文字起こしは記録・評価用。
 //   finished … 簡易結果への導線（発言量ベースの暫定フィードバック＋参加ランキング）
 //
 // 共有状態は Supabase が正本。DB 操作はすべて API route 経由（クライアントは room 系テーブルを直接叩かない）。
@@ -45,6 +47,12 @@ import {
   useRecentSpeaker,
   type GdStageParticipant,
 } from '../../components/stage';
+import { GdVoiceBar } from '../../components/voice/GdVoiceBar';
+import { useCareerGdMic } from '@/hooks/useCareerGdMic';
+import { useCareerGdVoiceCapture } from '@/hooks/useCareerGdVoiceCapture';
+import { useCareerGdTts } from '@/hooks/useCareerGdTts';
+import { useCareerGdVoiceMesh } from '@/hooks/useCareerGdVoiceMesh';
+import { useCareerGdVoiceCapabilities } from '@/hooks/useCareerGdVoiceCapabilities';
 import { GdEvaluationDetail } from '../../GdEvaluationDetail';
 import { GdRoomOverallDetail } from '../../GdRoomOverallDetail';
 import { appendGdRoomLog, loadGdRoomLogs } from '../../gdRoomLogStorage';
@@ -306,6 +314,16 @@ function WaitingView({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
+  // ★ STEP-GD-VOICE: GD は音声でしか進行できない。開始前に音声の可否を確かめ、
+  //   使えない参加者は「入ってから話せないと分かる」事態を避ける。
+  //   host は開始を止める（他の参加者を巻き込まないため）。非 host にも状態は見せる。
+  const { readiness: voiceReadiness } = useCareerGdVoiceCapabilities();
+  const voiceReady = voiceReadiness.state === 'ready';
+  const voiceBlockMessage =
+    voiceReadiness.state === 'ready' || voiceReadiness.state === 'checking'
+      ? null
+      : voiceReadiness.message;
+
   // ── STEP-GD-26: waiting の fallback ポーリング（Realtime 無効環境の担保）──
   // 非 host が host の手動開始を検知して active へ遷移でき、待機中の参加者/オンライン状態も更新する。
   // onStarted は root の setDetail。status が waiting でなくなれば root が active/finished へ再ルーティングする。
@@ -434,6 +452,21 @@ function WaitingView({
         nowMs={nowMs}
       />
 
+      {/* 音声の準備状況（全参加者に見せる。無言で失敗させない）。 */}
+      {voiceBlockMessage ? (
+        <div
+          className="mb-4 rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-100"
+          role="alert"
+          data-testid="gd-voice-unavailable"
+        >
+          <p className="text-sm leading-relaxed text-amber-800">{voiceBlockMessage}</p>
+        </div>
+      ) : (
+        <p className="mb-4 text-xs leading-relaxed text-slate-500">
+          このGDは音声で進行します。開始後にマイクの使用を許可してください。文字入力は不要です。
+        </p>
+      )}
+
       {isHost ? (
         <Card variant="soft" padding="md">
           {isFull ? (
@@ -456,8 +489,20 @@ function WaitingView({
               {startError}
             </p>
           )}
-          <Button variant="primary" size="md" onClick={start} disabled={starting} className="w-full sm:w-auto">
-            {starting ? '開始中…' : isFull ? 'GDを開始する' : 'AIメンバーを補完して開始'}
+          <Button
+            variant="primary"
+            size="md"
+            onClick={start}
+            disabled={starting || !voiceReady}
+            className="w-full sm:w-auto"
+          >
+            {starting
+              ? '開始中…'
+              : voiceReadiness.state === 'checking'
+                ? '音声の準備を確認中…'
+                : isFull
+                  ? 'GDを開始する'
+                  : 'AIメンバーを補完して開始'}
           </Button>
         </Card>
       ) : (
@@ -508,7 +553,6 @@ function ActiveView({
   const selfParticipantId = selfMember?.participantId ?? '';
   const selfDisplayName = selfMember?.displayName ?? 'あなた';
 
-  const [input, setInput] = useState('');
   const [aiThinking, setAiThinking] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -595,23 +639,31 @@ function ActiveView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pendingMessages]);
 
-  const handleSend = useCallback(() => {
-    if (timerExpired) return; // ⑪ 時間切れ後は送信不可（最終判定は server も active を検証）
-    const content = input.trim();
-    if (!content) return; // ⑨ trim 後に空なら送信不可
-    sendMessage(content); // optimistic（pending 表示は hook 側）。入力欄は即クリア＝多重送信防止。
-    setInput('');
-  }, [timerExpired, input, sendMessage]);
+  // 時間切れ判定を音声コールバックから読むための ref
+  //   （deps に入れると onTranscript が作り替わり、録音側の参照が揺れる）。
+  const timerExpiredRef = useRef(timerExpired);
+  useEffect(() => {
+    timerExpiredRef.current = timerExpired;
+  }, [timerExpired]);
 
-  const onInputKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // ⑨ Enter 送信 / Shift+Enter 改行（IME 変換確定中の Enter では送信しない）。
-      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        handleSend();
-      }
+  /**
+   * 音声から 1 発言が確定したときに呼ばれる（STEP-GD-VOICE）。
+   *
+   * ★ 発言の保存経路は音声化前と同一（POST /room/[roomId]/messages）。
+   *   seq のサーバ採番・client_msg_id の冪等・server 側の期限検証・rate limit は
+   *   すべて従来どおり効く。音声はテキストの取得手段を替えただけで、正本経路は変えない。
+   *
+   * ★ 時間切れ後は送らない。最終判定は server 側（ROOM_TIME_EXPIRED / 409）だが、
+   *   期限後の発話で毎回 409 を踏むと optimistic の失敗表示が積み上がるため手前で止める。
+   */
+  const commitSpeech = useCallback(
+    (text: string) => {
+      if (timerExpiredRef.current) return;
+      const content = text.trim();
+      if (!content) return;
+      sendMessage(content); // optimistic 表示は hook 側。失敗時は再送 UI が出る。
     },
-    [handleSend],
+    [sendMessage],
   );
 
   const aiTurn = useCallback(async () => {
@@ -679,6 +731,84 @@ function ActiveView({
     [members],
   );
 
+  // ── 音声（STEP-GD-VOICE）─────────────────────────────────────────
+  //   マイクの所有者は 1 つ。文字起こし・読み上げ・参加者間 mesh がその 1 本を共有する。
+  const mic = useCareerGdMic();
+  const voiceActive = room.status === 'active';
+
+  const tts = useCareerGdTts({ audioContext: mic.audioContext, enabled: voiceActive });
+  // effect の deps には安定した関数参照だけを入れる
+  //   （Hook の返り値オブジェクトは毎レンダー新しくなるため、そのまま deps に入れると毎回走る）。
+  const { speak: speakVoice, cancelAll: cancelVoice } = tts;
+
+  const capture = useCareerGdVoiceCapture({
+    stream: mic.stream,
+    audioContext: mic.audioContext,
+    enabled: voiceActive && !timerExpired,
+    muted: mic.muted,
+    onTranscript: commitSpeech,
+  });
+
+  // 参加者どうしの実音声（WebRTC mesh / シグナリングは Supabase Realtime broadcast）。
+  //   ★ 既存の発言同期・presence 経路には一切触らない。ここは音声メディア専用。
+  const mesh = useCareerGdVoiceMesh({
+    roomId,
+    selfParticipantId,
+    localStream: mic.stream,
+    enabled: voiceActive && !!selfParticipantId,
+  });
+
+  // AI 参加者の発言と進行アナウンスを読み上げる。
+  //   speakerKey は persona_key（leader / logical …）。人間の発言は mesh で本人の声が
+  //   直接聞こえているので **読み上げない**（二重に聞こえるのを防ぐ）。
+  useEffect(() => {
+    if (!voiceActive || mic.status !== 'ready') return;
+    for (const m of messages) {
+      if (m.kind === 'system') {
+        speakVoice({
+          id: m.id || `seq-${m.seq}`,
+          text: m.content,
+          speakerKey: 'moderator',
+          participantId: null,
+        });
+        continue;
+      }
+      const member = members.find((x) => x.participantId === m.participantId);
+      if (!member?.isAi) continue;
+      speakVoice({
+        id: m.id || `seq-${m.seq}`,
+        text: m.content,
+        speakerKey: member.persona?.personaKey ?? '',
+        participantId: m.participantId,
+      });
+    }
+  }, [voiceActive, mic.status, messages, members, speakVoice]);
+
+  // 進行が終わったら読み上げを止める（結果画面へ声を持ち込まない）。
+  useEffect(() => {
+    if (!voiceActive) cancelVoice();
+  }, [voiceActive, cancelVoice]);
+
+  // 音声 UI へ渡す peer 情報（人間の相手だけを対象にする。AI は mesh に参加しない）。
+  const peerAudioInfo = useMemo(() => {
+    const humanPeers = members.filter(
+      (m) => !m.isAi && !m.leftAt && m.participantId !== selfParticipantId,
+    );
+    const nameOfPeer = (participantId: string) =>
+      humanPeers.find((m) => m.participantId === participantId)?.displayName ?? '参加者';
+    const connectedCount = humanPeers.filter(
+      (m) => mesh.peers[m.participantId]?.state === 'connected',
+    ).length;
+    return {
+      signalingConnected: mesh.signalingConnected,
+      failedPeerNames: mesh.failedPeerIds
+        .filter((id) => humanPeers.some((m) => m.participantId === id))
+        .map(nameOfPeer),
+      connectedCount,
+      humanPeerCount: humanPeers.length,
+    };
+  }, [members, selfParticipantId, mesh.peers, mesh.signalingConnected, mesh.failedPeerIds]);
+
   // ── Forest Circle 表示用の adapter（既存 state を写すだけ）────────────────
   //   speaker の source は「確定済み message の最新 1 件」。realtime protocol も
   //   messages hook も変更しない（新しい speaker state を server 側に作らない）。
@@ -692,11 +822,15 @@ function ActiveView({
     lastMessage?.participantId ?? null,
     lastMessage ? lastMessage.id || `seq-${lastMessage.seq}` : null,
   );
-  // 自分は「入力中 / 送信中（optimistic pending）」を発言中として扱う。
+  // 自分の「発言中」は、実際にマイクへ声が乗っているか（VAD）で決まる。
+  //   送信中（STT / optimistic pending）も、聞き手には話し終えた直後に見えるので含める。
   const selfSpeaking =
-    input.trim().length > 0 || pendingMessages.some((m) => m.status === 'sending');
+    capture.speaking ||
+    capture.status === 'transcribing' ||
+    pendingMessages.some((m) => m.status === 'sending');
   const humanCount = members.filter((m) => !m.isAi && !m.leftAt).length;
 
+  const ttsSpeakingId = tts.speakingParticipantId;
   const stageParticipants = useMemo<GdStageParticipant[]>(() => {
     // 自分を先頭（＝手前中央の席）へ。sort は安定なので他の並びは既存の members 順のまま。
     const ordered = [...members].sort(
@@ -704,6 +838,13 @@ function ActiveView({
         (a.participantId === selfParticipantId ? 0 : 1) -
         (b.participantId === selfParticipantId ? 0 : 1),
     );
+    // speaking は **同時に 1 人だけ**。優先順位を 1 つの speakerId へ解決してから配る。
+    //   参加者ごとに独立判定すると「自分が話している最中に AI の読み上げが鳴る」瞬間に
+    //   2 人が同時に「発言中」になってしまうため、ここで一意に決める。
+    //   ① 自分が実際に話している（VAD / STT 送信中）
+    //   ② AI の読み上げが鳴っている参加者（耳で聞こえている人と一致させる）
+    //   ③ 直近の確定発言者（remote user の発話はここに乗る）
+    const speakerId = selfSpeaking ? selfParticipantId || null : (ttsSpeakingId ?? recentSpeakerId);
     return ordered.map((m) => {
       // 接続状態の導出は MembersCard と同じ 3 情報源のマージ（既存 lib をそのまま使う）。
       const inPresence = !!presenceMap && !!presenceMap[m.participantId];
@@ -714,10 +855,7 @@ function ActiveView({
           ? 'online'
           : mergeGdConnectionState(m.connectionState, derived);
       const isSelf = m.participantId === selfParticipantId;
-      // speaking は同時に 1 人だけ（確定発言が最優先。自分の入力中は「誰も話していない」ときのみ）。
-      const speaking = isSelf
-        ? recentSpeakerId === m.participantId || (!recentSpeakerId && selfSpeaking)
-        : recentSpeakerId === m.participantId;
+      const speaking = !!speakerId && m.participantId === speakerId;
       return {
         key: m.id,
         participantId: m.participantId,
@@ -732,7 +870,7 @@ function ActiveView({
         left: !!m.leftAt,
       };
     });
-  }, [members, selfParticipantId, presenceMap, nowMs, recentSpeakerId, selfSpeaking]);
+  }, [members, selfParticipantId, presenceMap, nowMs, recentSpeakerId, selfSpeaking, ttsSpeakingId]);
 
   const statusLabel = timerExpired
     ? '制限時間になりました'
@@ -790,11 +928,14 @@ function ActiveView({
 
           {/* 議論ログ */}
           <div className="gdf-panel">
-            <p className="gdf-panel__label">ディスカッション</p>
+            {/* 文字起こしは「評価の根拠を確認するための記録」。編集も送信もできない。 */}
+            <p className="gdf-panel__label">ディスカッション（文字起こし）</p>
             <div ref={timelineRef} className="gdf-log mt-2">
               {messages.length === 0 && pendingMessages.length === 0 ? (
                 <p className="gdf-log__empty">
-                  まだ発言はありません。あなたの発言、または「AIに発言してもらう」で議論を始めましょう。
+                  {mic.status === 'ready'
+                    ? 'まだ発言はありません。そのまま話しかけるか、「AIに発言してもらう」で議論を始めましょう。'
+                    : 'マイクを有効にすると、話した内容がここに文字起こしされます。'}
                 </p>
               ) : (
                 <>
@@ -833,32 +974,22 @@ function ActiveView({
             </p>
           )}
 
-          {/* 発言入力・操作 */}
-          <div className="gdf-panel">
-            <label htmlFor="gd-input" className="sr-only">
-              発言を入力
-            </label>
-            <textarea
-              id="gd-input"
-              className="gdf-field"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onInputKeyDown}
-              rows={2}
-              maxLength={600}
-              disabled={timerExpired}
-              placeholder="あなたの発言を入力（Enterで送信 / Shift+Enterで改行・600文字まで）"
-            />
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          {/* 発言は音声のみ。文字を入力する要素は置かない（STEP-GD-VOICE）。 */}
+          <GdVoiceBar
+            micStatus={mic.status}
+            micError={mic.errorMessage}
+            muted={mic.muted}
+            onEnableMic={() => void mic.enable()}
+            onToggleMute={mic.toggleMuted}
+            captureStatus={capture.status}
+            selfSpeaking={capture.speaking}
+            captureError={capture.error}
+            unusableCount={capture.unusableCount}
+            ttsDegraded={tts.degraded}
+            peerAudio={peerAudioInfo}
+            disabled={timerExpired}
+            actions={
               <div className="gdf-controls">
-                <button
-                  type="button"
-                  className="gdf-btn gdf-btn--primary"
-                  onClick={handleSend}
-                  disabled={timerExpired || !input.trim()}
-                >
-                  発言する
-                </button>
                 <button
                   type="button"
                   className="gdf-btn gdf-btn--ghost"
@@ -867,26 +998,26 @@ function ActiveView({
                 >
                   {aiThinking ? '生成中…' : 'AIに発言してもらう'}
                 </button>
+                {isHost && (
+                  <button
+                    type="button"
+                    className="gdf-btn gdf-btn--danger"
+                    onClick={finish}
+                    disabled={finishing}
+                  >
+                    {finishing ? '終了処理中…' : 'GDを終了する'}
+                  </button>
+                )}
               </div>
-              {isHost && (
-                <button
-                  type="button"
-                  className="gdf-btn gdf-btn--danger"
-                  onClick={finish}
-                  disabled={finishing}
-                >
-                  {finishing ? '終了処理中…' : 'GDを終了する'}
-                </button>
-              )}
-            </div>
-            {timerExpired ? (
-              <p className="gdf-alert mt-2">
-                制限時間になりました。{isHost ? 'まもなく自動で終了します。' : 'ホストの終了をお待ちください。'}
-              </p>
-            ) : (
-              !isHost && <p className="gdf-note mt-2">GDの終了はホストが行います。</p>
-            )}
-          </div>
+            }
+          />
+          {timerExpired ? (
+            <p className="gdf-alert">
+              制限時間になりました。{isHost ? 'まもなく自動で終了します。' : 'ホストの終了をお待ちください。'}
+            </p>
+          ) : (
+            !isHost && <p className="gdf-note">GDの終了はホストが行います。</p>
+          )}
         </div>
       </div>
 

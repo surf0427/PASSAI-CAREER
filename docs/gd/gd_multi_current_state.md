@@ -8,7 +8,12 @@
 
 - **Phase1（実装済み）**: ソロGD（ユーザー1人 + AI 補完）。localStorage canonical。
 - **Phase2（本ドキュメント）**: 合言葉参加型マルチGD。member ログイン必須。Realtime なし（ポーリング）。
-- **Phase3（未着手）**: ランダムマッチング / Supabase Realtime / 音声・WebRTC。
+- **Phase3**: ランダムマッチング / Supabase Realtime（STEP-GD-31 で実装済み）/
+  音声・WebRTC（**STEP-GD-VOICE で実装済み**）。
+  ★ 本ドキュメントの発言経路の記述のうち「発言入力（textarea）」は **STEP-GD-VOICE で撤去済み**。
+  発言はマイク音声からのみ取得され、文字起こしが従来の messages 経路へ流れる
+  （seq 採番 / 冪等 / 期限検証 / 評価 / 保存は**すべて不変**）。
+  詳細は [`gd_voice_current_state.md`](./gd_voice_current_state.md)。
 
 ## 確定方針
 
