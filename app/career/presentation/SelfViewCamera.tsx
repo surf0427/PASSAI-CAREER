@@ -147,46 +147,47 @@ export function SelfViewCamera({ autoStart = true, className = '' }: Props) {
 
   return (
     <Card variant="soft" padding="md" className={className}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 sm:flex-1">
-          <p className="text-[11px] font-bold text-blue-700 tracking-widest">セルフビュー</p>
-          <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-            発表中の表情・姿勢・目線を自分で確認できます。映像はこの画面に表示するだけで、
-            保存も送信もされません（評価には使われません）。
-          </p>
-          {message && (
-            <p className="mt-2 text-xs text-amber-700 leading-relaxed" role="status">
-              {message}
-            </p>
-          )}
-          <div className="mt-3">
-            <Button variant="outline" size="sm" onClick={toggle}>
-              {enabled ? 'カメラをオフにする' : 'カメラをオンにする'}
-            </Button>
+      {/* 見出しと ON/OFF を 1 行にまとめ、残りの高さを映像に回す（縦の密度を上げる）。 */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-bold text-blue-700 tracking-widest">セルフビュー</p>
+        <Button variant="outline" size="sm" onClick={toggle}>
+          {enabled ? 'カメラをオフにする' : 'カメラをオンにする'}
+        </Button>
+      </div>
+
+      {showingVideo && (
+        // 映像はカード幅いっぱいに広げる（Zoom のセルフビュー相当の存在感）。
+        //   - 上限 520px: 1 カラムになる狭い画面で映像だけが極端に縦長にならないようにする。
+        //   - 4:3: 顔だけでなく上半身・姿勢まで入る比率（16:9 だと縦が足りない）。
+        <div className="mt-3 mx-auto w-full max-w-[520px]">
+          <div className="relative overflow-hidden rounded-xl bg-slate-900 aspect-[4/3] ring-1 ring-slate-300">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              // 自分を見る用途なので鏡像で表示する（録画データを加工するわけではない）。
+              style={{ transform: 'scaleX(-1)' }}
+              className="h-full w-full object-cover"
+            />
+            {status !== 'on' && (
+              <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] text-slate-300">
+                {status === 'starting' ? 'カメラを起動しています…' : 'カメラは表示されていません'}
+              </div>
+            )}
           </div>
         </div>
+      )}
 
-        {showingVideo && (
-          <div className="w-full max-w-[280px] shrink-0 self-center sm:w-60 sm:max-w-none sm:self-start">
-            <div className="relative overflow-hidden rounded-xl bg-slate-900 aspect-[4/3] ring-1 ring-slate-300">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                // 自分を見る用途なので鏡像で表示する（録画データを加工するわけではない）。
-                style={{ transform: 'scaleX(-1)' }}
-                className="h-full w-full object-cover"
-              />
-              {status !== 'on' && (
-                <div className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] text-slate-300">
-                  {status === 'starting' ? 'カメラを起動しています…' : 'カメラは表示されていません'}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      <p className="mt-3 text-xs text-slate-600 leading-relaxed">
+        発表中の表情・姿勢・目線を自分で確認できます。映像はこの画面に表示するだけで、
+        保存も送信もされません（評価には使われません）。
+      </p>
+      {message && (
+        <p className="mt-2 text-xs text-amber-700 leading-relaxed" role="status">
+          {message}
+        </p>
+      )}
     </Card>
   );
 }

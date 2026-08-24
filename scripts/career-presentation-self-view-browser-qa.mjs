@@ -99,6 +99,44 @@ const browser = await chromium.launch({
   const evalBtn = page.getByRole('button', { name: /発表を終えて評価を見る/ });
   check(await evalBtn.isEnabled(), '評価ボタンが押せる（カメラは前提条件ではない）');
 
+  // ── サイズ拡大とお題の同時可視性（desktop 1280x720）────────────────
+  console.log('\n── サイズ拡大 / お題の可視性（desktop）──');
+  const vbox = await page.locator('video').boundingBox();
+  // 拡大前は 240x180。明確に大きくなっていることを実測で固定する。
+  check(vbox.width >= 400, `映像が拡大前(240px)より明確に大きい（${Math.round(vbox.width)}px）`);
+  check(
+    Math.round(vbox.height) >= 300,
+    `上半身・姿勢が入る縦幅がある（${Math.round(vbox.height)}px・拡大前は 180px）`,
+  );
+  check(
+    vbox.width * vbox.height >= 240 * 180 * 3,
+    `映像面積が拡大前の 3 倍以上（${Math.round((vbox.width * vbox.height) / (240 * 180) * 10) / 10}x）`,
+  );
+  const themeBox = await page.getByText('QA用のお題').boundingBox();
+  const vh = page.viewportSize().height;
+  check(
+    themeBox.y >= 0 && themeBox.y + themeBox.height <= vh,
+    'お題がスクロールなしでファーストビューに収まる',
+  );
+  check(
+    vbox.y < vh,
+    'セルフビューもファーストビューに入る（お題と同時に見える）',
+  );
+  check(
+    themeBox.x + themeBox.width <= vbox.x + 1,
+    'お題は左・カメラは右で横並び（お題を覆わない）',
+  );
+  check(
+    Math.abs(themeBox.y - vbox.y) < vh,
+    'お題とカメラが同じ行にある',
+  );
+  // 発表操作がカメラに覆われていないこと。
+  const recBox = await page.getByRole('button', { name: /録音して発表する/ }).boundingBox();
+  check(
+    recBox.x + recBox.width <= vbox.x + 1,
+    '録音ボタンがカメラと重ならない（発表操作を阻害しない）',
+  );
+
   // ── CASE 6: ON/OFF トグル ────────────────────────────────────────
   console.log('\n── CASE 6: カメラ ON / OFF ──');
   // 停止を観測するため、現在の track を保持しておく。
@@ -246,10 +284,15 @@ const browser = await chromium.launch({
   }, { timeout: 20000 });
   console.log('\n── モバイル幅 390px ──');
   const box = await page.locator('video').boundingBox();
-  check(box.width <= 390 && box.width >= 200, `映像幅が画面内に収まり小さすぎない（${Math.round(box.width)}px）`);
+  check(box.width <= 390, `映像が画面幅からはみ出さない（${Math.round(box.width)}px / 390px）`);
+  check(box.width > 280, `モバイルでも拡大前(280px)より大きい（${Math.round(box.width)}px）`);
   const overflow = await page.evaluate(() =>
     document.documentElement.scrollWidth <= window.innerWidth + 1);
   check(overflow, '横スクロールが発生しない（レイアウト崩れなし）');
+  // 1 カラムに戻り、お題がカメラの上に来ていること（重なり・欠けなし）。
+  const mThemeBox = await page.getByText('QA用のお題').boundingBox();
+  check(mThemeBox.y + mThemeBox.height <= box.y, 'モバイルはお題 → カメラの縦積み（重ならない）');
+  check(box.x >= 0 && box.x + box.width <= 390, '映像が画面内に完全に収まる');
   await ctx.close();
 }
 

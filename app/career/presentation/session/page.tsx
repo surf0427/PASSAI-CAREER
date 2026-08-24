@@ -314,11 +314,20 @@ export default function CareerPresentationSessionPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+    <div className="max-w-3xl lg:max-w-6xl xl:max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader title="発表中" description="テーマに沿って発表してください。発表後にAIが評価します。" />
 
+      {/* 発表中のレイアウト。
+          lg 未満: 1 カラム（お題 → セルフビュー → 録音 → 文字起こし）で従来どおり。
+          lg 以上: 2 カラム。左にお題と発表操作、右に大きいセルフビューを置き、
+            grid の明示配置（col-start / row-start）で並べる。DOM 順は 1 カラムのときの
+            自然な順序（お題 → セルフビュー → 録音）のままなので、モバイルの並びは変わらない。
+            ★ お題とセルフビューを同じ行に置くことで、カメラを大きくしてもお題が
+              ファーストビューから押し出されない。 */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_460px] xl:grid-cols-[minmax(0,1fr)_520px] lg:gap-6 lg:items-start">
+
       {/* テーマ・条件 */}
-      <Card variant="soft" padding="md" className="mb-5">
+      <Card variant="soft" padding="md" className="mb-5 lg:col-start-1 lg:row-start-1 lg:mb-0">
         <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">お題</p>
         <p className="text-base font-bold text-slate-900 leading-relaxed whitespace-pre-wrap">
           {session.theme}
@@ -355,9 +364,15 @@ export default function CareerPresentationSessionPage() {
       </Card>
 
       {/* セルフビュー（自分のカメラ映像）。表示のみで保存・送信・評価には使わない。
-          お題の直下・録音操作の直前に置くことで、発表中の視線移動を最小にしつつ
-          transcript / timer / 発表資料 / 操作ボタンのどれも覆わない。 */}
-      <SelfViewCamera className="mb-5" />
+          lg 未満はお題の直下・録音操作の直前（従来位置）。
+          lg 以上は右カラムに置いて 2 行ぶんを占め、sticky で発表中ずっと見えるようにする。
+          self-start が無いと grid item が行いっぱいに引き伸ばされて sticky が効かない。 */}
+      <div className="mb-5 lg:col-start-2 lg:row-start-1 lg:row-span-2 lg:mb-0 lg:self-start lg:sticky lg:top-6">
+        <SelfViewCamera />
+      </div>
+
+      {/* 発表操作（録音・文字起こし・中断）。lg 以上では左カラムの 2 行目に入る。 */}
+      <div className="lg:col-start-1 lg:row-start-2 lg:mt-5">
 
       {/* 録音（音声モード） */}
       {isVoice && (
@@ -448,6 +463,9 @@ export default function CareerPresentationSessionPage() {
         >
           ← 中断してプレゼントップに戻る
         </Link>
+      </div>
+
+      </div>
       </div>
     </div>
   );

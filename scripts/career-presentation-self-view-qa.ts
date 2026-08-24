@@ -212,21 +212,58 @@ check(
   '発表資料の折りたたみと同時に表示できる（資料カードの外に置いている）',
 );
 check(
-  /<SelfViewCamera className="mb-5" \/>/.test(page),
-  '既存カードと同じ縦リズム（mb-5）で並ぶ',
+  /mb-5 lg:col-start-2[\s\S]{0,120}<SelfViewCamera \/>/.test(page),
+  'lg 未満は既存カードと同じ縦リズム（mb-5）で並ぶ',
 );
-// モバイル崩れ防止: 縦積み → sm 以上で横並び、映像幅は上限付き。
+// 映像サイズ: カード幅いっぱい（上限 520px）。旧 240px サムネイルには戻さない。
 check(
-  /flex-col gap-3 sm:flex-row/.test(component),
-  'モバイルは縦積み・sm 以上で横並び（レイアウト崩れを起こさない）',
+  /mt-3 mx-auto w-full max-w-\[520px\]/.test(component),
+  '映像はカード幅いっぱいに広がる（上限 520px・中央寄せ）',
 );
 check(
-  /max-w-\[280px\]/.test(component) && /sm:w-60/.test(component),
-  '映像は上限幅付き（大きすぎず、表情が見える程度のサイズ）',
+  !/max-w-\[280px\]/.test(component) && !/sm:w-60/.test(component),
+  '旧サムネイルサイズ（280px / w-60=240px）に戻っていない',
 );
 check(
   /aspect-\[4\/3\]/.test(component),
-  '4:3 の固定比率で描画する（表情が見える縦幅を確保する）',
+  '4:3 の固定比率で描画する（顔だけでなく上半身・姿勢が入る縦幅）',
+);
+// 見出しと ON/OFF を 1 行に畳み、残りをすべて映像に回す。
+check(
+  /flex flex-wrap items-center justify-between gap-2/.test(component),
+  '見出しと ON/OFF は 1 行にまとめ、縦を映像に回している',
+);
+check(
+  component.indexOf('<video') < component.indexOf('発表中の表情・姿勢・目線'),
+  '映像が説明文より前（カード上部）にあり、最初に目に入る',
+);
+
+// ── お題の可視性（拡大の最重要条件）──────────────────────────────
+// lg 以上ではお題とセルフビューを同じ行に置く。カメラを大きくしてもお題は
+// ファーストビューから押し出されない。
+check(
+  /lg:grid lg:grid-cols-\[minmax\(0,1fr\)_460px\] xl:grid-cols-\[minmax\(0,1fr\)_520px\]/.test(page),
+  'lg 以上は「左=情報 / 右=大きいセルフビュー」の 2 カラム',
+);
+check(
+  /lg:col-start-1 lg:row-start-1/.test(page),
+  'お題カードは左カラムの 1 行目（最上部）に固定される',
+);
+check(
+  /lg:col-start-2 lg:row-start-1 lg:row-span-2/.test(page),
+  'セルフビューは右カラムでお題と同じ行から始まる（同時に見える）',
+);
+check(
+  /lg:self-start lg:sticky lg:top-6/.test(page),
+  'セルフビューは sticky。self-start 付きで grid item が伸びず sticky が効く',
+);
+check(
+  /lg:col-start-1 lg:row-start-2/.test(page),
+  '録音・文字起こしは左カラムの 2 行目（カメラに覆われない）',
+);
+check(
+  /max-w-3xl lg:max-w-6xl xl:max-w-7xl/.test(page),
+  'lg 以上でのみコンテナを広げる（lg 未満の 1 カラムは従来幅のまま）',
 );
 check(
   /Card|Button/.test(component) &&
