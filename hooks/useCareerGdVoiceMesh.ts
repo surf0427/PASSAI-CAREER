@@ -13,8 +13,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { parseGdIceServers } from '@/lib/careerGd/voice';
+import { parseGdIceServers, type GdIceServer } from '@/lib/careerGd/voice';
 import { CareerGdVoiceMesh, type GdPeerAudio } from '@/lib/careerGd/voiceMesh';
+import { normalizeIssuedIceServers } from '@/lib/careerGd/turnIce';
+
+/**
+ * ICE 取得の打ち切り（ms）。
+ * ここを過ぎたら STUN のみで音声接続を試みる。応答待ちで音声が始まらないのが最悪なので、
+ * 「TURN が無くても始める」を優先する（TURN 不在は UI に出る）。
+ */
+const GD_ICE_FETCH_TIMEOUT_MS = 5_000;
 
 export type UseCareerGdVoiceMeshArgs = {
   roomId: string;
@@ -41,6 +49,12 @@ export type UseCareerGdVoiceMeshResult = {
   signalingConnected: boolean;
   /** P2P を張れなかった相手の participantId 一覧（UI で必ず可視化する）。 */
   failedPeerIds: string[];
+  /**
+   * TURN が実際に載っているか（server 発行の結果）。
+   * false = STUN のみ ＝ 対称 NAT 配下の相手とは P2P を張れないことがある。
+   * ★ 無言にしないため、呼び出し側は UI へ出すこと。
+   */
+  turnConfigured: boolean;
 };
 
 export function useCareerGdVoiceMesh({
@@ -63,19 +77,73 @@ export function useCareerGdVoiceMesh({
   //   （Safari で srcObject を持つ要素が回収されると音が消えるため）。
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
 
-  const iceServers = useMemo(
+  // build 時 inline の **STUN のみ**フォールバック。TURN は絶対にここへ置かない
+  //   （bundle へ出るため）。server から ICE を取れなかったときだけ使う。
+  const fallbackIceServers = useMemo(
     () => parseGdIceServers(process.env.NEXT_PUBLIC_CAREER_GD_ICE_SERVERS),
     [],
   );
 
+  // ICE の正本は server（GET /api/career/gd/voice/ice）。TURN credential は
+  //   認証済み member にだけ短命で配られるので、client bundle には一切残らない。
+  //   ★ 取得が終わるまで mesh を起動しない。起動後に ICE 構成を差し替えると、
+  //     確立済みの peer 接続を張り直すことになり音声が切れる。
+  const [ice, setIce] = useState<{
+    servers: GdIceServer[];
+    turnConfigured: boolean;
+    ready: boolean;
+  }>({ servers: fallbackIceServers, turnConfigured: false, ready: false });
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    // 応答が無いまま音声が始まらない状態を作らない。必ず打ち切って fallback で進む。
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GD_ICE_FETCH_TIMEOUT_MS);
+
+    const load = async () => {
+      try {
+        const res = await fetch('/api/career/gd/voice/ice', {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`ice ${res.status}`);
+        const data = (await res.json()) as { iceServers?: unknown; turnConfigured?: unknown };
+        if (cancelled) return;
+        // 応答は信用せず検証してから使う（壊れていても例外にしない）。
+        const servers = normalizeIssuedIceServers(data.iceServers);
+        if (servers.length > 0) {
+          setIce({ servers, turnConfigured: data.turnConfigured === true, ready: true });
+        } else {
+          setIce({ servers: fallbackIceServers, turnConfigured: false, ready: true });
+        }
+      } catch {
+        if (cancelled) return;
+        // 取得失敗でも GD を止めない。STUN のみで接続を試み、TURN 不在は UI に出る。
+        setIce({ servers: fallbackIceServers, turnConfigured: false, ready: true });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    void load();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // room / 有効状態が変わったら取り直す（古い credential を持ち越さない）。
+  }, [enabled, roomId, fallbackIceServers]);
+
   useEffect(() => {
     if (!enabled || !localStream || !roomId || !selfParticipantId) return;
+    if (!ice.ready) return; // ICE 未確定の間は起動しない
 
     const mesh = new CareerGdVoiceMesh({
       roomId,
       selfParticipantId,
       localStream,
-      iceServers,
+      iceServers: ice.servers,
       // 自分自身は peer にならないので、照合は「名簿にいるか」だけで足りる。
       isAllowedPeer: (participantId) => allowedRef.current.has(participantId),
       callbacks: {
@@ -92,7 +160,7 @@ export function useCareerGdVoiceMesh({
       setPeers({});
       setSignalingConnected(false);
     };
-  }, [enabled, localStream, roomId, selfParticipantId, iceServers]);
+  }, [enabled, localStream, roomId, selfParticipantId, ice.ready, ice.servers]);
 
   // 名簿が変わったら ref を更新し、改めて自分の存在を告知する。
   //   ★ 告知し直さないと、「相手の join を自分の名簿がまだ知らない瞬間に
@@ -165,5 +233,5 @@ export function useCareerGdVoiceMesh({
     [peers],
   );
 
-  return { peers, signalingConnected, failedPeerIds };
+  return { peers, signalingConnected, failedPeerIds, turnConfigured: ice.turnConfigured };
 }

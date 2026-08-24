@@ -815,8 +815,16 @@ function ActiveView({
         .map(nameOfPeer),
       connectedCount,
       humanPeerCount: humanPeers.length,
+      turnConfigured: mesh.turnConfigured,
     };
-  }, [members, selfParticipantId, mesh.peers, mesh.signalingConnected, mesh.failedPeerIds]);
+  }, [
+    members,
+    selfParticipantId,
+    mesh.peers,
+    mesh.signalingConnected,
+    mesh.failedPeerIds,
+    mesh.turnConfigured,
+  ]);
 
   // ── Forest Circle 表示用の adapter（既存 state を写すだけ）────────────────
   //   speaker の source は「確定済み message の最新 1 件」。realtime protocol も

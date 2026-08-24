@@ -48,6 +48,12 @@ export type GdVoiceBarProps = {
     connectedCount: number;
     /** 自分以外の人間参加者の人数。 */
     humanPeerCount: number;
+    /**
+     * TURN が設定されているか（server 発行の結果）。
+     * false = STUN のみ ＝ 通信環境によっては相手と繋がらないことがある。
+     * ★ 実際に失敗する前でも予告として出す（無言で「なぜか聞こえない」を作らない）。
+     */
+    turnConfigured: boolean;
   } | null;
 
   /** 制限時間切れなど、発言を受け付けない状態。 */
@@ -165,6 +171,11 @@ export function GdVoiceBar({
             <p className="gdf-alert">
               {peerAudio.failedPeerNames.join('、')}
               さんと音声がつながりませんでした（通信環境による制限）。発言内容は文字起こしで共有されます。
+            </p>
+          ) : !peerAudio.turnConfigured && peerAudio.humanPeerCount > 0 ? (
+            <p className="gdf-note" data-testid="gd-voice-turn-missing">
+              中継サーバが未設定のため、通信環境によっては一部の参加者と音声がつながらないことがあります。
+              （参加者の音声: {peerAudio.connectedCount} / {peerAudio.humanPeerCount} 人と接続中）
             </p>
           ) : (
             <p className="gdf-note">

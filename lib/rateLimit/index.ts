@@ -215,6 +215,16 @@ export const CAREER_GD_RATE_LIMITS = {
   //   発言 rate（30/分）とほぼ同じ。少し上に取るのは、取り消し・言い直しで
   //   録音だけして送る回数が発言数をわずかに上回るため。
   //   ★ OpenAI Whisper 課金に直結する。fail-open（Redis 障害で GD を無音にしない）。
+  // ICE サーバ配布（TURN credential 発行）: 20/分・200/時。
+  //   1 GD あたり必要なのは数回（開始時 + 再入室 + 再読み込み）。無制限の
+  //   credential mint 口にしないための上限であり、通常利用の邪魔にはならない。
+  //   ★ fail-open。Upstash 障害を理由に GD の音声接続そのものを止めない
+  //     （credential が出ないと Multi の音声が成立しないため、ここを fail-closed にすると
+  //      store 障害がそのまま音声全損になる）。
+  ice: {
+    namespace: 'career_gd_ice',
+    windows: [{ limit: 20, windowSeconds: 60 }, { limit: 200, windowSeconds: 3600 }],
+  },
   stt: {
     namespace: 'career_gd_stt',
     windows: [{ limit: 40, windowSeconds: 60 }, { limit: 800, windowSeconds: 3600 }],

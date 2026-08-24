@@ -77,12 +77,34 @@ declare namespace NodeJS {
     //     停止したいときは CAREER_GD_ENABLED を落とす（GD ごと止まる）。音声の可否は
     //     provider env（INTERVIEW_AI_STT_PROVIDER + OPENAI_API_KEY）の有無だけで決まる。
     /**
-     * WebRTC mesh の ICE サーバ設定（JSON 配列文字列）。
-     * 例: '[{"urls":"turn:turn.example.com:3478","username":"u","credential":"c"}]'
-     * 未設定なら公開 STUN のみ（対称 NAT 環境で P2P が張れないユーザーが出る）。
-     * NEXT_PUBLIC_ なのでブラウザに露出する = **長期の固定 credential を入れないこと**。
+     * WebRTC mesh の **STUN のみ**のフォールバック設定（JSON 配列文字列）。
+     * 例: '[{"urls":"stun:stun.l.google.com:19302"}]'
+     *
+     * ★ 役割（STEP-GD-VOICE-TURN で変更）:
+     *   TURN の正本は **認証済み server endpoint**（GET /api/career/gd/voice/ice）であり、
+     *   この env は「server から ICE を取れなかったときに最低限 STUN で試す」ための
+     *   ローカル開発 / テスト用フォールバックに降格した。
+     *
+     * ★ **ここに TURN credential を入れてはいけない。**
+     *   NEXT_PUBLIC_ は build 時に client bundle へ inline される静的配信物なので、
+     *   認証も rate limit も掛からない状態で誰でも取り出せる（TURN は任意の UDP/TCP を
+     *   中継するため、実質「公開リレー」を配ることになる）。秘密を含まない STUN のみ可。
      */
     readonly NEXT_PUBLIC_CAREER_GD_ICE_SERVERS?: string;
+
+    // ── GD 参加者間音声の TURN（STEP-GD-VOICE-TURN / Cloudflare Realtime TURN）──
+    //   ★ すべて **server-only**。NEXT_PUBLIC_ を付けないこと（bundle に出る）。
+    //   ★ runtime env として読むので、値の変更に再ビルドは不要（再デプロイのみ）。
+    /** Cloudflare Realtime TURN の Key ID（credential 生成 API のパスに入る）。 */
+    readonly CLOUDFLARE_TURN_KEY_ID?: string;
+    /** 同 API 用の Bearer token。**長期 secret**。絶対に client へ渡さない。 */
+    readonly CLOUDFLARE_TURN_KEY_API_TOKEN?: string;
+    /**
+     * 発行する credential の有効期間（秒）。既定 3600。
+     * 範囲は server 側で 1800〜21600 にクランプされる（下限 = GD の最大セッション長。
+     * 議論の途中で credential が失効する構成を運用者が作れないようにするため）。
+     */
+    readonly CAREER_GD_TURN_TTL_SECONDS?: string;
 
     // Interview AI — リアルタイム音声面接 (STEP-INTERVIEW-AI-REALTIME-PR1)
     /**

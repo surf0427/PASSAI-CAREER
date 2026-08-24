@@ -74,6 +74,8 @@
 | 6 | 音声コントロール UI（旧 textarea の置き換え） | `app/career/gd/components/voice/GdVoiceBar.tsx` |
 | 7 | server 側の可用性判定 | `lib/careerGd/voice.server.ts` |
 | 8 | 音声 QA（168 checks） | `scripts/gd-qa/voice.qa.ts`（`npm run qa:careerGdVoice`） |
+| 9 | TURN credential 発行（Cloudflare・短命） | `lib/careerGd/turnIce.ts`（純関数）/ `lib/careerGd/turnCredentials.server.ts`（server-only）/ `app/api/career/gd/voice/ice/route.ts` |
+| 10 | TURN QA（87 checks） | `scripts/gd-qa/turn.qa.ts`（`npm run qa:careerGdTurn`） |
 
 `lib/interviewAi/tts.ts` には `voice` / `speed` / `instructions` の明示指定口を**非破壊で**追加した
 （未指定なら従来と完全に同一の挙動。面接の既存呼び出しは影響を受けない）。
@@ -91,17 +93,55 @@
 | `INTERVIEW_AI_STT_PROVIDER` | `openai` | **必須** | 文字起こし不可 → **GD を開始させない**（開始ボタンが押せず理由を表示） |
 | `OPENAI_API_KEY` | OpenAI の key | **必須** | 同上 |
 | `INTERVIEW_AI_TTS_PROVIDER` | `openai` | 推奨 | AI の声がブラウザ合成に降格（GD は成立するが声質が落ちる） |
-| `NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` | TURN の JSON 配列 | **マルチ公開には必須** | 公開 STUN のみになり、mesh のペア数ぶん失敗が増幅する。**マルチ音声 GD の Production Blocker**（§7-1）。ソロは影響を受けない |
+| `CLOUDFLARE_TURN_KEY_ID` | Cloudflare Realtime TURN の Key ID | **マルチ公開には必須** | TURN 無し（STUN のみ）。mesh のペア数ぶん失敗が増幅する（§7-1）。ソロは影響を受けない |
+| `CLOUDFLARE_TURN_KEY_API_TOKEN` | 同 API token（**server-only の長期 secret**） | **マルチ公開には必須** | 同上 |
+| `CAREER_GD_TURN_TTL_SECONDS` | 例 `3600` | 任意 | 既定 3600。server 側で 1800〜21600 にクランプ |
+| `NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` | **STUN のみ**の JSON 配列 | 任意 | 既定の公開 STUN。★ **TURN credential を入れないこと**（§5-4） |
 
 ★ 音声専用の kill switch は**意図的に作っていない**。GD は音声でしか進行できないため
 「GD は ON だが音声だけ OFF」は縮退ではなく壊れた商品状態であり、運用上その状態を作れてはいけない。
 停止したいときは従来どおり `CAREER_GD_ENABLED` を落とす（GD ごと止まる）。
 
+### 5-4. TURN（参加者間音声）— Cloudflare Realtime TURN
+
+★ **credential の供給経路（ここが設計の要）**
+
+```text
+Cloudflare TURN key / API token   ← server-only env（bundle に出ない）
+        ↓
+GET /api/career/gd/voice/ice      ← GD kill switch → member 認証 → rate limit
+        ↓  Cloudflare の credential 生成 API を server から叩く
+short-lived iceServers（既定 TTL 3600 秒）
+        ↓
+browser → RTCPeerConnection({ iceServers })
+```
+
+★ **禁止**: `NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` へ TURN credential を入れること。
+`NEXT_PUBLIC_*` は build 時に client bundle へ inline される静的配信物なので、
+認証も rate limit も掛からない状態で誰でも取り出せる。TURN は任意の UDP/TCP を
+中継するため、これは「インターネットに開いたリレー」を配ることに等しい
+（帯域窃取 → quota 枯渇 → GD の音声が止まる、という可用性の問題にも直結する）。
+この env は **秘密を含まない STUN のみ**のフォールバックへ降格した。
+
+★ **TTL**: 既定 3600 秒。server 側で **1800〜21600 秒にクランプ**する。
+下限を GD の最大セッション長（`time_limit_sec` の上限 = 1800 秒）に固定してあるため、
+env に何を書いても「議論の途中で credential が失効する」構成にはならない。
+credential の再取得機構は持たない（TTL が最長セッションを覆うため不要）。
+
+★ **再ビルド不要**: 上記 3 つは runtime env として server が読む。値を変えたら
+**再デプロイのみ**でよい（`NEXT_PUBLIC_*` のような build-time inline は発生しない）。
+
+★ **TURN 未設定でも壊れない**: ICE endpoint は 200 で STUN のみ + `turnConfigured=false`
+を返す。Solo GD は mesh を使わないので TURN provider 障害の影響を受けない。
+Multi では UI が「中継サーバが未設定のため、通信環境によっては一部の参加者と
+音声がつながらないことがあります」と表示する（無言の劣化を作らない）。
+
 ### 5-3. 通電確認
 
 ```bash
 npm run qa:careerGdVoice      # 音声契約（純関数の境界 + 構造検査）
-npm run qa:careerGd           # GD product 仕様（voice QA を含む）
+npm run qa:careerGdTurn       # TURN ephemeral credential（TTL / provider 失敗系 / secret 閉じ込め）
+npm run qa:careerGd           # GD product 仕様（voice / turn QA を含む）
 npm run qa:careerGdProduction # 本番運用条件（flag / RLS / 切断 / timer）
 ```
 
@@ -129,9 +169,12 @@ npm run qa:careerGdProduction # 本番運用条件（flag / RLS / 切断 / timer
    つまり TURN 無しでは、4 人 GD の約半数・6〜8 人 GD のほぼ全部で
    「誰かの声だけ聞こえない」状態になる。「文字起こしは共有されるから可」とはしない
    （商品は音声 GD であり、これは縮退ではなく不成立）。
-   → **`NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` に TURN を設定するまでマルチは公開しない。**
+   → **Cloudflare Realtime TURN（`CLOUDFLARE_TURN_KEY_ID` / `CLOUDFLARE_TURN_KEY_API_TOKEN`）
+   を本番 env へ設定し、実機で relay candidate を確認するまでマルチは公開しない。**
    ソロ GD は mesh を使わないため、この制約の影響を受けない。
-   なお失敗そのものは無言にしない（`GdVoiceBar` が相手名つきで表示する）。
+   なお失敗そのものは無言にしない（`GdVoiceBar` が相手名つき、および TURN 未設定の予告を表示する）。
+   ★ credential の**供給経路**は STEP-GD-VOICE-TURN で解決済み（§5-4）。
+   残っているのは「実際に env を入れて relay を実証すること」だけ。
 
 1-b. **signaling の認可は application 層のみ（channel 層は未設定）。**
    Supabase Broadcast の channel は既定で認可が無く、channel 名（roomId）を知る者は
@@ -142,6 +185,11 @@ npm run qa:careerGdProduction # 本番運用条件（flag / RLS / 切断 / timer
    ★ ただし **完全な防御は channel 層**（Supabase Realtime Authorization / private channel と
    `realtime.messages` の RLS ポリシー）であり、これは未適用。運用者が適用すれば
    「そもそも購読できない」まで強化できる（本 STEP では DDL を増やさない方針で見送り）。
+1-c. **TURN credential は server 発行の短命方式（解決済み）。**
+   長期 secret は server-only env にあり、browser へ渡るのは Cloudflare が発行した
+   短命 credential だけ。build 後の client bundle に長期 secret が 0 件であることを
+   `npm run build` 後のスキャンで確認している（`qa:careerGdTurn` の [D] が構造面を固定）。
+
 2. **人数の上限は mesh の性質で決まる。** 現行の想定（4 / 6 / 8 人）は問題ないが、
    これを大きく超える人数を扱うなら SFU への移行が必要になる。
 3. **背景タブでは VAD の精度が落ちる。** ブラウザが `setInterval` を 1 秒へ丸めるため、
@@ -216,6 +264,40 @@ TURN の要否と mesh の実効は、**NAT をまたぐ組み合わせ**でし�
 | 13 | B が再入室 | 再び音声が繋がる |
 | 14 | host が終了 | 両者が終了状態へ。**読み上げが止まる** |
 | 15 | 評価 → 履歴 | 評価が生成され、履歴に残る |
+
+### 8-3b. ICE endpoint の smoke（TURN env 投入直後にまず行う）
+
+実機の前に、**credential 供給経路が生きているか**だけを先に確かめる。
+
+1. 本番（または Preview）に member でログインする。
+2. ブラウザの DevTools コンソールで:
+
+```js
+// ★ 出力するのは「形」だけ。credential 本体は表示しない。
+const r = await fetch('/api/career/gd/voice/ice', { cache: 'no-store' });
+const d = await r.json();
+console.log({
+  status: r.status,
+  turnConfigured: d.turnConfigured,
+  ttlSec: d.ttlSec,
+  serverCount: d.iceServers?.length,
+  schemes: [...new Set((d.iceServers ?? []).flatMap(s =>
+    (Array.isArray(s.urls) ? s.urls : [s.urls]).map(u => String(u).split(':')[0])))],
+  hasCredential: (d.iceServers ?? []).some(s => !!s.credential),
+});
+```
+
+期待:
+
+| 項目 | 期待値 | 外れたときの意味 |
+|---|---|---|
+| `status` | 200 | 401/403 = 未ログイン / 404 = `CAREER_GD_ENABLED` 未設定 / 429 = 叩きすぎ |
+| `turnConfigured` | `true` | `false` = Cloudflare env 未設定、または provider 呼び出しに失敗 |
+| `ttlSec` | 3600（既定） | 1800 未満にはならない（server でクランプ） |
+| `schemes` | `stun` / `turn` / `turns` を含む | `stun` だけ = TURN が載っていない |
+| `hasCredential` | `true` | `false` = TURN entry が検証で落とされている |
+
+★ `turnConfigured=false` のまま実機 relay 検証へ進んでも必ず失敗する。ここを先に通すこと。
 
 ### 8-4. TURN relay の実機確認（**credential は表示しない**）
 
