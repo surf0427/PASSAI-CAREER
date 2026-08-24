@@ -6,6 +6,7 @@
 // 「localStorage canonical / Supabase 非接続 / 課金なし」方針のため、ブラウザ標準の
 // Web Speech API でライブ文字起こしする（動画保存はしない）。テキスト貼り付けにもフォールバックできる。
 // 文字起こしは送信前に自由に編集できる（音声認識の誤りを直せる）。
+// 発表中のセルフビュー（カメラ映像の表示のみ・保存も送信もしない）は SelfViewCamera が持つ。
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
@@ -15,6 +16,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Textarea';
 import { buildPresentationContextPayload } from '../contextSource';
+import { SelfViewCamera } from '../SelfViewCamera';
 import {
   getInProgressPresentationSession,
   upsertPresentationSession,
@@ -351,6 +353,11 @@ export default function CareerPresentationSessionPage() {
           </details>
         )}
       </Card>
+
+      {/* セルフビュー（自分のカメラ映像）。表示のみで保存・送信・評価には使わない。
+          お題の直下・録音操作の直前に置くことで、発表中の視線移動を最小にしつつ
+          transcript / timer / 発表資料 / 操作ボタンのどれも覆わない。 */}
+      <SelfViewCamera className="mb-5" />
 
       {/* 録音（音声モード） */}
       {isVoice && (
