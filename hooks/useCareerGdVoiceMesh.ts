@@ -23,6 +23,15 @@ export type UseCareerGdVoiceMeshArgs = {
   localStream: MediaStream | null;
   /** GD が active かつマルチのときだけ true。 */
   enabled: boolean;
+  /**
+   * 今この room に在籍する **人間参加者の participantId**（自分を含めてよい）。
+   *
+   * ★ signaling の認可境界。Supabase Broadcast の channel には既定で認可が無いため、
+   *   ここに無い participantId からの signal は一切処理しない
+   *   （= 非参加者・退室者は peer になれず、音声を聞くことも差し込むこともできない）。
+   *   名簿は既存の membership 認可済み API（GET room）由来のものをそのまま渡すこと。
+   */
+  allowedPeerIds: string[];
 };
 
 export type UseCareerGdVoiceMeshResult = {
@@ -39,9 +48,16 @@ export function useCareerGdVoiceMesh({
   selfParticipantId,
   localStream,
   enabled,
+  allowedPeerIds,
 }: UseCareerGdVoiceMeshArgs): UseCareerGdVoiceMeshResult {
   const [peers, setPeers] = useState<Record<string, GdPeerAudio>>({});
   const [signalingConnected, setSignalingConnected] = useState(false);
+
+  // 名簿は ref で保持する。deps に入れると参加者の増減のたびに mesh が作り直され、
+  // 確立済みの音声接続が全部切れてしまう（名簿は「照合に使う最新値」でしかない）。
+  const allowedRef = useRef<Set<string>>(new Set(allowedPeerIds));
+  const allowedKey = allowedPeerIds.join(',');
+  const meshRef = useRef<CareerGdVoiceMesh | null>(null);
 
   // participantId → 再生用の <audio>。DOM には挿さないが参照を保持し続ける
   //   （Safari で srcObject を持つ要素が回収されると音が消えるため）。
@@ -60,19 +76,33 @@ export function useCareerGdVoiceMesh({
       selfParticipantId,
       localStream,
       iceServers,
+      // 自分自身は peer にならないので、照合は「名簿にいるか」だけで足りる。
+      isAllowedPeer: (participantId) => allowedRef.current.has(participantId),
       callbacks: {
         onPeersChange: setPeers,
         onSignalingChange: setSignalingConnected,
       },
     });
+    meshRef.current = mesh;
     mesh.start();
 
     return () => {
       mesh.stop();
+      meshRef.current = null;
       setPeers({});
       setSignalingConnected(false);
     };
   }, [enabled, localStream, roomId, selfParticipantId, iceServers]);
+
+  // 名簿が変わったら ref を更新し、改めて自分の存在を告知する。
+  //   ★ 告知し直さないと、「相手の join を自分の名簿がまだ知らない瞬間に
+  //     相手の hello が届いて弾いた」ケースから復帰できない（hello は再送されない）。
+  useEffect(() => {
+    allowedRef.current = new Set(allowedPeerIds);
+    meshRef.current?.announce();
+    // allowedKey は名簿の内容ハッシュ。配列の参照ではなく中身が変わったときだけ走らせる。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- allowedKey が allowedPeerIds の内容を代表する
+  }, [allowedKey]);
 
   // peers の stream を実際に再生する（要素の生成・付け替え・後片付け）。
   useEffect(() => {

@@ -68,6 +68,23 @@ export type GdVoiceMeshOptions = {
   localStream: MediaStream;
   iceServers?: GdIceServer[];
   callbacks?: GdVoiceMeshCallbacks;
+  /**
+   * その participantId を **今この room の参加者として受理してよいか**（STEP-GD-VOICE-HARDENING）。
+   *
+   * ★ 必須の安全境界。Supabase Broadcast の channel には既定で認可が無く、
+   *   channel 名（= roomId）を知っていれば誰でも購読・送信できてしまう。
+   *   signaling の `from` は送信者の自己申告にすぎないため、application 層で
+   *   「現在の room に在籍する人間の participantId か」を必ず照合する。
+   *
+   *   これを通さないと、退室済みの元参加者や room を離れた者が
+   *   任意の participantId を名乗って peer になり、進行中の議論の音声を
+   *   聞く / 音声を差し込むことができてしまう。
+   *
+   * ★ 照合先の participantId（`gduser-<uuid>` / `gdhost-<uuid>`）は server 生成の UUID で、
+   *   membership 認可済みの GET room API 経由でしか得られない。したがって本照合により
+   *   「非参加者・退室者は peer になれない」が成立する。
+   */
+  isAllowedPeer: (participantId: string) => boolean;
 };
 
 type PeerEntry = {
@@ -86,6 +103,7 @@ export class CareerGdVoiceMesh {
   private readonly localStream: MediaStream;
   private readonly iceServers: GdIceServer[];
   private readonly callbacks: GdVoiceMeshCallbacks;
+  private readonly isAllowedPeer: (participantId: string) => boolean;
 
   private channel: RealtimeChannel | null = null;
   private peers = new Map<string, PeerEntry>();
@@ -98,6 +116,7 @@ export class CareerGdVoiceMesh {
     this.localStream = options.localStream;
     this.iceServers = options.iceServers ?? parseGdIceServers(null);
     this.callbacks = options.callbacks ?? {};
+    this.isAllowedPeer = options.isAllowedPeer;
   }
 
   // ── 起動 / 停止 ───────────────────────────────────────────────
@@ -134,6 +153,19 @@ export class CareerGdVoiceMesh {
         this.callbacks.onSignalingChange?.(false);
       }
     });
+  }
+
+  /**
+   * 参加者名簿が更新されたときに、改めて自分の存在を告知する。
+   *
+   * ★ 必要な理由: 認可照合は「自分が知っている名簿」に依存するため、
+   *   相手の join を自分の名簿がまだ知らない瞬間に相手の hello が届くと、
+   *   正規の参加者を弾いてしまう（hello は再送されないので永久に繋がらない）。
+   *   名簿が更新されたら再告知することで、その取りこぼしを確実に回復させる。
+   */
+  announce(): void {
+    if (!this.started || this.disposed || !this.channel) return;
+    void this.send({ kind: 'hello', from: this.selfId });
   }
 
   stop(): void {
@@ -260,9 +292,22 @@ export class CareerGdVoiceMesh {
   private async handleSignal(signal: GdVoiceSignal): Promise<void> {
     if (this.disposed) return;
     const from = signal.from;
-    if (!from || from === this.selfId) return;
+    if (typeof from !== 'string' || !from || from === this.selfId) return;
     // 宛先付きメッセージは自分宛だけ処理する（broadcast は全員に届くため）。
     if (signal.to && signal.to !== this.selfId) return;
+
+    // ★ 認可境界。現在この room に在籍する人間の participantId 以外は一切処理しない。
+    //   ここで弾かないと、channel 名（roomId）を知る非参加者が peer になれてしまう。
+    //   既に peer を張っている相手が在籍者でなくなった場合は、その場で切断する。
+    if (!this.isAllowedPeer(from)) {
+      const stale = this.peers.get(from);
+      if (stale) {
+        this.closePeer(stale);
+        this.peers.delete(from);
+        this.emitPeers();
+      }
+      return;
+    }
 
     switch (signal.kind) {
       case 'hello': {

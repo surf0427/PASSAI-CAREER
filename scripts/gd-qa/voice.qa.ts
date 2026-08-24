@@ -509,5 +509,72 @@ console.log('\n[H] 早期失敗（開始前ゲート）');
   check('H12 room waiting: 理由を全参加者に出す', room.includes('gd-voice-unavailable'));
 }
 
+// ══════════════════════════════════════════════════════════════
+// [I] STATIC — STT 投入順の直列化（発言順が入れ替わらないこと）
+// ══════════════════════════════════════════════════════════════
+//
+// ★ 限界の明示: 直列化は React Hook 内の promise チェーンで実現しており、
+//   DOM / MediaRecorder 無しに単体実行できない。ここは **構造検査**であって
+//   「実際に順序が保たれた」ことの証明ではない（実機項目に回している）。
+console.log('\n[I] STT 投入順の直列化');
+{
+  const capture = codeOnly(read('hooks/useCareerGdVoiceCapture.ts'));
+  check('I1 直列化用の promise チェーンを持つ', capture.includes('sttChainRef'));
+  check(
+    'I2 録音の切れ目から直接 STT を撃たない（並行実行しない）',
+    !capture.includes('void sendClip(blob)') && capture.includes('enqueueClip(blob)'),
+  );
+  check(
+    'I3 チェーンに繋いで 1 件ずつ処理する',
+    /sttChainRef\.current\s*=\s*sttChainRef\.current[\s\S]{0,200}sendClip\(blob\)/.test(capture),
+  );
+  check(
+    'I4 1 件の失敗で以降のキューが止まらない',
+    /sendClip\(blob\)[\s\S]{0,300}\.catch\(/.test(capture),
+  );
+  check(
+    'I5 離脱・終了後はキューに残ったクリップを送らない',
+    /if \(stoppedForGoodRef\.current\) return;/.test(capture),
+  );
+  check(
+    'I6 「記録中」表示はキュー待ちも数える',
+    /enqueueClip[\s\S]{0,300}setTranscribingCount\(\(n\) => n \+ 1\)/.test(capture),
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// [J] STATIC — signaling の認可（非参加者・退室者を peer にしない）
+// ══════════════════════════════════════════════════════════════
+//
+// Supabase Broadcast の channel には既定で認可が無く、channel 名（roomId）を知る者は
+// 誰でも購読・送信できる。したがって application 層の照合が唯一の境界になる。
+console.log('\n[J] signaling の認可');
+{
+  const mesh = codeOnly(read('lib/careerGd/voiceMesh.ts'));
+  check('J1 mesh は照合関数を必須で受け取る', /isAllowedPeer:\s*\(participantId: string\) => boolean;/.test(mesh));
+  check('J2 signal の from を照合してから処理する', mesh.includes('if (!this.isAllowedPeer(from))'));
+  // 照合が offer / ensurePeer より前にあること（後段だと peer を作ってから弾く形になる）。
+  {
+    const guard = mesh.indexOf('if (!this.isAllowedPeer(from))');
+    const switchAt = mesh.indexOf('switch (signal.kind)');
+    check('J3 照合が signal 種別の分岐より前にある', guard > 0 && switchAt > 0 && guard < switchAt);
+  }
+  check('J4 在籍しなくなった相手の peer は切断する', /isAllowedPeer\(from\)\)\s*\{[\s\S]{0,200}closePeer/.test(mesh));
+  check('J5 from が文字列であることを検証する', mesh.includes("typeof from !== 'string'"));
+  check('J6 名簿更新後に再告知できる（正規参加者の取りこぼし回復）', mesh.includes('announce()'));
+
+  const meshHook = codeOnly(read('hooks/useCareerGdVoiceMesh.ts'));
+  check('J7 hook は名簿を受け取り照合へ渡す', meshHook.includes('allowedPeerIds') && meshHook.includes('isAllowedPeer:'));
+  check('J8 名簿は ref 保持（増減で mesh を作り直さない）', meshHook.includes('allowedRef'));
+  check('J9 名簿が変わったら再告知する', /allowedRef\.current = new Set\(allowedPeerIds\);[\s\S]{0,120}announce\(\)/.test(meshHook));
+
+  const room = codeOnly(read(ROOM));
+  check(
+    'J10 名簿は「在籍中の人間参加者」だけ（退室者・AI を含めない）',
+    /allowedPeerIds\s*=\s*useMemo\([\s\S]{0,200}!m\.isAi && !m\.leftAt/.test(room),
+  );
+  check('J11 名簿を mesh へ渡している', room.includes('allowedPeerIds,'));
+}
+
 console.log(`\nGD voice QA: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

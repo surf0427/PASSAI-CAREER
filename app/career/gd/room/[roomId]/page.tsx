@@ -751,11 +751,20 @@ function ActiveView({
 
   // 参加者どうしの実音声（WebRTC mesh / シグナリングは Supabase Realtime broadcast）。
   //   ★ 既存の発言同期・presence 経路には一切触らない。ここは音声メディア専用。
+  // signaling の認可名簿。**在籍中の人間参加者だけ**（退室者・AI は含めない）。
+  //   名簿の出所は membership 認可済みの GET room API（＝ここで新しい信頼源を作らない）。
+  //   これに無い participantId からの signaling は mesh 側で一切処理されない。
+  const allowedPeerIds = useMemo(
+    () => members.filter((m) => !m.isAi && !m.leftAt).map((m) => m.participantId),
+    [members],
+  );
+
   const mesh = useCareerGdVoiceMesh({
     roomId,
     selfParticipantId,
     localStream: mic.stream,
     enabled: voiceActive && !!selfParticipantId,
+    allowedPeerIds,
   });
 
   // AI 参加者の発言と進行アナウンスを読み上げる。

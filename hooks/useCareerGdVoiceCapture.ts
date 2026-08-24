@@ -98,6 +98,21 @@ export function useCareerGdVoiceCapture({
   const stoppedForGoodRef = useRef(false);
   const mimeTypeRef = useRef<string>('');
 
+  /**
+   * STT 投入を **直列化**するための promise チェーン（STEP-GD-VOICE-HARDENING）。
+   *
+   * ★ これが無いと発言順が入れ替わる。
+   *   Whisper の往復時間はクリップ長にほぼ比例するため、
+   *     「長い発言 A」→「短い相槌 B」
+   *   と話すと B の応答が先に返り、B → A の順で発言が投稿されてしまう
+   *   （server の seq は到着順に採番されるので、議論ログも評価入力も順序が壊れる）。
+   *   録音の切れ目の順＝発話の順なので、その順で 1 件ずつ送れば順序は必ず保たれる。
+   *
+   * ★ 直す場所を「投入順」に限定するのが重要。seq 採番・冪等・messages API 契約は
+   *   一切変更しない（順序の正本は従来どおり server 採番の seq）。
+   */
+  const sttChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const clearError = useCallback(() => setError(null), []);
 
   // ── STT 送信（失敗しても GD を止めない）──────────────────────────
@@ -107,7 +122,6 @@ export function useCareerGdVoiceCapture({
       setError('発言が長すぎたため、一部を送信できませんでした。区切って話してください。');
       return;
     }
-    setTranscribingCount((n) => n + 1);
     try {
       const form = new FormData();
       // ファイル名はサーバの形式判定には使わない（mimeType を別途送る）。
@@ -131,10 +145,33 @@ export function useCareerGdVoiceCapture({
       onTranscriptRef.current(transcript);
     } catch {
       setError('通信に失敗しました。次の発言で自動的に再開します。');
-    } finally {
-      setTranscribingCount((n) => Math.max(0, n - 1));
     }
   }, []);
+
+  /**
+   * クリップを STT キューへ積む。**必ず録音の切れ目の順に処理される**。
+   *
+   * 「記録中」表示はキュー待ちも含めて数える（連続して話したときに
+   * 「もう記録が終わった」ように見えてしまうのを防ぐ）。
+   */
+  const enqueueClip = useCallback(
+    (blob: Blob) => {
+      if (blob.size < MIN_CLIP_BYTES) return; // ほぼ無音。キューにも載せない＝課金しない。
+      setTranscribingCount((n) => n + 1);
+      sttChainRef.current = sttChainRef.current
+        .then(async () => {
+          // 待っている間に GD を離れた / 終了した場合は送らない
+          //   （退室後に自分の発言が投稿される・終了済み room へ課金付き request を出す、を防ぐ）。
+          if (stoppedForGoodRef.current) return;
+          await sendClip(blob);
+        })
+        .catch(() => {
+          // 1 件の失敗で以降のキューを止めない（次の発言は必ず処理される）。
+        })
+        .finally(() => setTranscribingCount((n) => Math.max(0, n - 1)));
+    },
+    [sendClip],
+  );
 
   // ── 録音 + 音量解析 ─────────────────────────────────────────────
   useEffect(() => {
@@ -181,7 +218,8 @@ export function useCareerGdVoiceCapture({
         if (!disposed && !stoppedForGoodRef.current) startRecorder();
         if (action !== 'cut' || parts.length === 0) return; // recycle / 中断は捨てる
         const blob = new Blob(parts, { type: mimeType || 'audio/webm' });
-        void sendClip(blob);
+        // ★ 直接 await せずキューへ積む。処理は 1 件ずつ・録音の切れ目の順に行われる。
+        enqueueClip(blob);
       };
       recorder.onerror = () => {
         // 録音器が壊れたら作り直す（無言で録音が止まる状態を残さない）。
@@ -283,7 +321,7 @@ export function useCareerGdVoiceCapture({
     };
     // stream / audioContext / enabled が変わったときだけ作り直す。
     // muted と onTranscript は ref 経由なので deps に入れない（録音器を壊さない）。
-  }, [enabled, stream, audioContext, sendClip]);
+  }, [enabled, stream, audioContext, enqueueClip]);
 
   const status: GdCaptureStatus = !enabled || !stream
     ? 'idle'

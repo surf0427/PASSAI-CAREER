@@ -73,7 +73,7 @@
 | 5 | 音声 API 3 本（stt / tts / capabilities） | `app/api/career/gd/voice/**` |
 | 6 | 音声コントロール UI（旧 textarea の置き換え） | `app/career/gd/components/voice/GdVoiceBar.tsx` |
 | 7 | server 側の可用性判定 | `lib/careerGd/voice.server.ts` |
-| 8 | 音声 QA（150 checks） | `scripts/gd-qa/voice.qa.ts`（`npm run qa:careerGdVoice`） |
+| 8 | 音声 QA（168 checks） | `scripts/gd-qa/voice.qa.ts`（`npm run qa:careerGdVoice`） |
 
 `lib/interviewAi/tts.ts` には `voice` / `speed` / `instructions` の明示指定口を**非破壊で**追加した
 （未指定なら従来と完全に同一の挙動。面接の既存呼び出しは影響を受けない）。
@@ -91,7 +91,7 @@
 | `INTERVIEW_AI_STT_PROVIDER` | `openai` | **必須** | 文字起こし不可 → **GD を開始させない**（開始ボタンが押せず理由を表示） |
 | `OPENAI_API_KEY` | OpenAI の key | **必須** | 同上 |
 | `INTERVIEW_AI_TTS_PROVIDER` | `openai` | 推奨 | AI の声がブラウザ合成に降格（GD は成立するが声質が落ちる） |
-| `NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` | TURN の JSON 配列 | **推奨** | 公開 STUN のみ。**対称 NAT 配下の参加者と P2P が張れない**（下記 §7） |
+| `NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` | TURN の JSON 配列 | **マルチ公開には必須** | 公開 STUN のみになり、mesh のペア数ぶん失敗が増幅する。**マルチ音声 GD の Production Blocker**（§7-1）。ソロは影響を受けない |
 
 ★ 音声専用の kill switch は**意図的に作っていない**。GD は音声でしか進行できないため
 「GD は ON だが音声だけ OFF」は縮退ではなく壊れた商品状態であり、運用上その状態を作れてはいけない。
@@ -115,11 +115,33 @@ npm run qa:careerGdProduction # 本番運用条件（flag / RLS / 切断 / timer
 
 ## 7. 既知の限界（正直に記す）
 
-1. **TURN 未設定だと一部の参加者と音声が繋がらない。**
-   公開 STUN のみでは対称 NAT（一部のモバイル回線・企業 NW）配下で P2P を確立できない。
-   その相手の声だけが聞こえない状態になる。
-   → 無言にはしない。`GdVoiceBar` が「◯◯さんと音声がつながりませんでした」と表示し、
-   発言内容は文字起こしで共有され続ける。本番で取りこぼしを消すには TURN を設定すること。
+1. **TURN 未設定はマルチ音声 GD の Production Blocker（監査で「warning」から格上げ）。**
+   公開 STUN のみでは対称 NAT（国内モバイル回線の CGNAT・企業 NW）配下で P2P を確立できない。
+   ★ mesh では **全ペアが個別に接続を張る**ため、失敗確率がペア数で増幅する:
+
+   | 人間参加者 | ペア数 | ペア失敗率 10% のとき「誰か 1 人でも聞こえない」確率 |
+   |---|---|---|
+   | 2 人 | 1 | 約 10% |
+   | 4 人 | 6 | 約 47% |
+   | 6 人 | 15 | 約 79% |
+   | 8 人 | 28 | 約 95% |
+
+   つまり TURN 無しでは、4 人 GD の約半数・6〜8 人 GD のほぼ全部で
+   「誰かの声だけ聞こえない」状態になる。「文字起こしは共有されるから可」とはしない
+   （商品は音声 GD であり、これは縮退ではなく不成立）。
+   → **`NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` に TURN を設定するまでマルチは公開しない。**
+   ソロ GD は mesh を使わないため、この制約の影響を受けない。
+   なお失敗そのものは無言にしない（`GdVoiceBar` が相手名つきで表示する）。
+
+1-b. **signaling の認可は application 層のみ（channel 層は未設定）。**
+   Supabase Broadcast の channel は既定で認可が無く、channel 名（roomId）を知る者は
+   購読・送信ができる。そのため mesh は `from` を**在籍中の人間参加者名簿と照合**し、
+   一致しない signal を一切処理しない（非参加者・退室者は peer になれない）。
+   照合先の participantId は server 生成 UUID で membership 認可済み API 経由でしか得られず、
+   roomId も UUID なので実効的な境界になる。
+   ★ ただし **完全な防御は channel 層**（Supabase Realtime Authorization / private channel と
+   `realtime.messages` の RLS ポリシー）であり、これは未適用。運用者が適用すれば
+   「そもそも購読できない」まで強化できる（本 STEP では DDL を増やさない方針で見送り）。
 2. **人数の上限は mesh の性質で決まる。** 現行の想定（4 / 6 / 8 人）は問題ないが、
    これを大きく超える人数を扱うなら SFU への移行が必要になる。
 3. **背景タブでは VAD の精度が落ちる。** ブラウザが `setInterval` を 1 秒へ丸めるため、
@@ -146,6 +168,100 @@ QA が全部 PASS しても、以下は実機でしか証明できない。
 | 8 | 話し終えて 1.2 秒黙る | その時点で発言が確定し、ログに現れる |
 | 9 | ソロで GD を開始 | AI が先に口火を切り、その声が聞こえる |
 | 10 | `INTERVIEW_AI_TTS_PROVIDER` を外して GD | AI の発言がブラウザ合成で鳴り、「簡易モード」の注記が出る（無音にならない） |
+
+### 8-1. 端末マトリクス（**同一 Wi-Fi だけでは不十分**）
+
+TURN の要否と mesh の実効は、**NAT をまたぐ組み合わせ**でしか判定できない。
+同一 Wi-Fi 上の 2 端末は同一 LAN の host candidate で繋がってしまい、
+本番で最も多い「モバイル回線の参加者」を一切検証できない。
+
+| | Device A | Device B |
+|---|---|---|
+| 端末 | Mac | iPhone |
+| ブラウザ | Safari または Chrome | iOS Safari（browser tab。PWA ではない） |
+| 回線 | Wi-Fi | **4G / 5G（Wi-Fi を必ず切る）** |
+
+### 8-2. SOLO 実機チェック
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 1 | `/career/gd/setup` → GD を始める | 音声が使えない環境なら**テーマ生成の前**に開始が止まる |
+| 2 | 「マイクを有効にする」 | 権限ダイアログが出て `ready` になる |
+| 3 | そのまま待つ | AI が先に口火を切り、**その声が鳴る**（iOS の解除が効いている証拠） |
+| 4 | 「はい」だけ発話 | 短い発言が捨てられずログに出る |
+| 5 | 通常の長さで発話 | 語頭・語尾が欠けずに文字起こしされる |
+| 6 | 30 秒以上続けて発話 | 途中で強制分割されるが内容が欠落しない |
+| 7 | 「長い発言」→ 直後に「確かに」 | **ログの順序が発話順どおり**（STT 直列化の実証。逆順なら回帰） |
+| 8 | ミュート → 20 秒放置 | Whisper へ送られない（ネットワークタブに stt request が出ない） |
+| 9 | ミュート解除 | **権限の再プロンプトが出ず**そのまま発言できる |
+| 10 | GD を終了 → 評価 | 評価が生成され、結果が保存される |
+| 11 | 結果画面へ遷移後 | 録音インジケータが消える（マイクが解放されている） |
+
+### 8-3. MULTI 実機チェック（A=Mac/Wi-Fi, B=iPhone/4G）
+
+| # | 手順 | 期待 |
+|---|---|---|
+| 1 | A が部屋作成 → B が参加 | 両者が待機画面で互いを認識する |
+| 2 | A が開始 | 両者が進行画面へ。文字入力欄は存在しない |
+| 3 | A が発話 | **B に A の生の声が聞こえる** |
+| 4 | B が発話 | **A に B の生の声が聞こえる** |
+| 5 | 両者の音声バー | `参加者の音声: 1 / 1 人と接続中`。失敗なら相手名つきで表示される |
+| 6 | A の文字起こし | A・B 双方のログに出る |
+| 7 | B の文字起こし | A・B 双方のログに出る |
+| 8 | A がミュート | B に A の声が届かない。B の声は A に届き続ける |
+| 9 | A がミュート解除 | 再プロンプト無しで復帰 |
+| 10 | 「AIに発言してもらう」 | AI の声が鳴り、**両者で 1 回だけ**（重複読み上げが無い） |
+| 11 | AI が連続発言 | seq 順に 1 件ずつ鳴る（同時再生・逆順が無い） |
+| 12 | B が退出 | A 側の peer が閉じ、A の画面が壊れない |
+| 13 | B が再入室 | 再び音声が繋がる |
+| 14 | host が終了 | 両者が終了状態へ。**読み上げが止まる** |
+| 15 | 評価 → 履歴 | 評価が生成され、履歴に残る |
+
+### 8-4. TURN relay の実機確認（**credential は表示しない**）
+
+TURN が実際に使われたかは、**relay candidate が 1 つでも生成されたか**で判定する。
+
+Chrome:
+
+1. GD 進行中に別タブで `chrome://webrtc-internals` を開く。
+2. 対象の `RTCPeerConnection` を選ぶ。
+3. `iceCandidatePairs` / イベントログで `candidateType` が
+   **`relay`** の candidate が存在することを確認する。
+   `host` / `srflx` しか無ければ TURN は使われていない。
+4. `Stats` の `candidate-pair` で `state: succeeded` の pair の
+   `localCandidateId` を辿り、その `candidateType` を確認する。
+
+Safari:
+
+1. 「開発」メニュー →「Web インスペクタ」→ コンソール。
+2. 進行中に以下を実行（**URL・username・credential は出力しない**。type だけ見る）:
+
+```js
+// ページ内で保持している peer connection を直接は参照できないため、
+// 一時確認としては Chrome の webrtc-internals を正とする。
+// Safari 単独で見る場合は、接続後に「相手の声が聞こえるか」で代替判定する。
+```
+
+★ 限界: **relay candidate の生成はコード検査・自動 QA では確認できない**。
+`NEXT_PUBLIC_CAREER_GD_ICE_SERVERS` の parse と RTCPeerConnection への引き渡しまでは
+`qa:careerGdVoice` が検証するが、実際に TURN サーバへ到達して relay が取れたかは
+上記の実機手順でしか確定しない。
+
+### 8-5. ネットワーク障害シナリオ
+
+| # | 操作 | 期待される挙動 | 判定 |
+|---|---|---|---|
+| 1 | B を Wi-Fi → 4G へ切替 | 音声が切れる。音声バーが接続失敗または再準備を**表示する** | 現仕様では**自動復帰しない**（要リロード）。表示されるので acceptable degradation |
+| 2 | 一時的に圏外 → 復帰 | 同上。文字起こしは復帰後の発言から再開する | acceptable degradation |
+| 3 | 片方が退出 | 残った側の peer だけが閉じ、他は維持される | 必須（壊れたら blocker） |
+| 4 | マイク権限を拒否 | 復帰手順の文言が出る。無反応にならない | 必須 |
+| 5 | Safari を背面 → 前面 | 前面復帰後に発言・再生が継続する | 要実機確認 |
+| 6 | 端末をロック → 解除 | 解除後に発言・再生が継続する。継続しない場合はリロードで復帰できる | 要実機確認 |
+
+★ シグナリング channel は**自動再接続しない**（既存 `CareerGdRealtimeRoom` と異なり
+`scheduleReconnect` を持たない）。回線切替後に新しい参加者と繋がらなくなるが、
+`signalingConnected=false` として UI に出るため無言では壊れない。
+seamless recovery は現仕様ではなく、**リロードが回復手段**である。
 
 ## 9. 変更した既存ファイル（影響範囲）
 
