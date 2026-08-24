@@ -226,6 +226,11 @@ body {
   0%, 100% { transform: scaleY(0.3); }
   50%      { transform: scaleY(1); }
 }
+/* まばたき（ときどき目を閉じるだけの控えめな生気づけ）。 */
+@keyframes civ-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  96%           { transform: scaleY(0.1); }
+}
 /* 思考中のごく弱い明滅。 */
 @keyframes civ-think {
   0%, 100% { opacity: 1; }
@@ -239,7 +244,7 @@ body {
   aspect-ratio: 16 / 10;
   border-radius: 20px;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #eef4fd 45%, #dce7f7 100%);
+  background: radial-gradient(120% 92% at 50% 0%, #ffffff 0%, #f2f7fe 46%, #e4edfb 100%);
   box-shadow: 0 10px 30px -14px rgb(15 23 42 / 0.35);
   outline: 1px solid rgb(191 219 254 / 0.9);
   outline-offset: -1px;
@@ -264,6 +269,9 @@ body {
   max-width: 100%;
 }
 .civ-avatar { height: 100%; width: auto; display: block; }
+
+/* まばたき。変形原点は各目の中心（コンポーネント側で transform-origin を指定）。 */
+.civ-eye { animation: civ-blink 6s ease-in-out infinite; }
 
 /* 口の開閉。transform-box: fill-box で SVG 要素自身を変形原点にする。 */
 .civ-mouth {
@@ -362,6 +370,7 @@ body {
   .civ-stage[data-state='speaking'] .civ-mouth,
   .civ-stage[data-state='speaking'] .civ-halo,
   .civ-stage[data-state='thinking'] .civ-avatar,
+  .civ-eye,
   .civ-wave__bar {
     animation: none !important;
   }
