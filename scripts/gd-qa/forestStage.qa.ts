@@ -118,6 +118,12 @@ console.log('\n[C] 発話インジケータ');
   check('C5 発言中は足元リング / グローで強調', css.includes('.gdf-seat[data-speech=\'speaking\'] .gdf-seat__ring') && css.includes('drop-shadow'));
   check('C6 強調は控えめな拡大にとどめる', css.includes('--gdf-boost: 1.07'));
   check('C7 発話状態を読み上げにも渡す', stage.includes('aria-live="polite"'));
+  // 進行状況テキストは出たり消えたりするため、ステージ内（円の中 / 上部）には置かない。
+  //   置くと人数・文言長によって参加者の名前札・人物と衝突する（実測で確認済みの回帰）。
+  check(
+    'C14 進行状況バーはステージの外（参加者と衝突しない位置）',
+    /<\/section>\s*\{\/\*[\s\S]*?\*\/\}\s*\{statusLabel &&/.test(stage),
+  );
 
   const solo = codeOnly(read(SOLO));
   const room = codeOnly(read(ROOM));
@@ -250,6 +256,25 @@ console.log('\n[F] アクセシビリティ');
   check('F7 発言入力に label が結び付いている', room.includes('htmlFor="gd-input"') && solo.includes('htmlFor="gd-solo-input"'));
   check('F8 操作は button / link のまま（keyboard 操作を壊さない）', room.includes('type="button"') && solo.includes('type="button"'));
   check('F9 focus リングを消していない', css.includes('.gdf-btn:focus-visible') && css.includes('.gdf-field:focus'));
+}
+
+// ══════════════════════════════════════════════════════════════
+// [H] 中央 HUD の高さ固定（奥の席の名前札と衝突させないための不変条件）
+// ══════════════════════════════════════════════════════════════
+console.log('\n[H] 中央 HUD の不変条件');
+{
+  const css = read('app/globals.css');
+  const stage = read(`${STAGE_DIR}/GdCircleStage.tsx`);
+  const solo = read(SOLO);
+  const room = read(ROOM);
+  // 中央はテーマ 1 行 + 残り時間のみ。行数が変わると円との間隔が崩れる。
+  check('H1 中央のテーマは 1 行固定', /\.gdf-center__theme \{[^}]*white-space: nowrap/.test(css));
+  check('H2 中央に可変要素を追加していない', !stage.includes('gdf-center__status'));
+  // 中央は 1 行に省略されるため、テーマ全文はステージ下のパネルが正本。
+  check('H3 solo はテーマ全文をステージ下に出す', solo.includes('{session.theme.title || \'（テーマ準備中）\'}'));
+  check('H4 room はテーマ全文をステージ下に出す', room.includes('{room.theme?.title || \'（テーマ準備中）\'}'));
+  // 円の上下に人物 1 人ぶんの高さを確保する（人物が上端で切れないための最低条件）。
+  check('H5 実行中ステージは縦に余裕のある比率', /\.gdf-stage \{[\s\S]*?aspect-ratio: 5 \/ 6/.test(css) && css.includes('aspect-ratio: 3 / 2'));
 }
 
 // ══════════════════════════════════════════════════════════════

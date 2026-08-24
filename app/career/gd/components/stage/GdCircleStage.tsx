@@ -50,6 +50,7 @@ export function GdCircleStage({
       : '発言している参加者はいません。';
 
   return (
+    <>
     <section
       className={`gdf-stage${className ? ` ${className}` : ''}`}
       data-count={participants.length}
@@ -68,14 +69,12 @@ export function GdCircleStage({
         </div>
       )}
 
-      {/* 円の中央（テーマ・残り時間・状況）。主役はあくまで参加者なので小さく保つ。 */}
+      {/* 円の中央（テーマ・残り時間）。主役はあくまで参加者なので小さく保つ。 */}
       <div className="gdf-center">
-        <p className="gdf-center__label">テーマ</p>
         <p className="gdf-center__theme" title={themeTitle}>
           {themeTitle}
         </p>
         {timer && <div className="gdf-center__timer">{timer}</div>}
-        {statusLabel && <p className="gdf-center__status">{statusLabel}</p>}
       </div>
 
       <div className="gdf-ring">
@@ -95,5 +94,11 @@ export function GdCircleStage({
         {liveMessage}
       </p>
     </section>
+    {/* 進行状況（AI生成中 / 時間切れ など）。
+        ★ ステージ内ではなく直下に置く: 状況テキストは実行中に出たり消えたりするため、
+          円の中や上部に入れると人数によって参加者の名前札・人物と衝突しうる。
+          誰とも重ならない位置に固定し、常に読めるようにする。 */}
+    {statusLabel && <p className="gdf-stage__status">{statusLabel}</p>}
+    </>
   );
 }

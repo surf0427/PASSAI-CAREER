@@ -376,24 +376,25 @@ export default function CareerGdSessionPage() {
         />
 
         <div className="mt-3 flex flex-col gap-3">
-          {/* テーマの詳細（円の中央には見出しだけを置くため、本文はここに出す）。 */}
-          {(session.theme.description || (session.theme.constraints?.length ?? 0) > 0) && (
-            <div className="gdf-panel">
-              <p className="gdf-panel__label">テーマの詳細</p>
-              {session.theme.description && (
-                <p className="mt-1 text-[13px] leading-relaxed text-[#e2f1e6] whitespace-pre-wrap">
-                  {session.theme.description}
-                </p>
-              )}
-              {session.theme.constraints && session.theme.constraints.length > 0 && (
-                <ul className="mt-2 list-disc pl-5 space-y-0.5">
-                  {session.theme.constraints.map((c, i) => (
-                    <li key={i} className="text-xs text-[#bfd8c6]">{c}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+          {/* テーマ（中央 HUD は 1 行に省略されるため、全文・与件はここが正）。 */}
+          <div className="gdf-panel">
+            <p className="gdf-panel__label">テーマ</p>
+            <p className="mt-1 text-[14px] font-bold leading-relaxed text-[#f2fbf3]">
+              {session.theme.title || '（テーマ準備中）'}
+            </p>
+            {session.theme.description && (
+              <p className="mt-1 text-[13px] leading-relaxed text-[#e2f1e6] whitespace-pre-wrap">
+                {session.theme.description}
+              </p>
+            )}
+            {session.theme.constraints && session.theme.constraints.length > 0 && (
+              <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                {session.theme.constraints.map((c, i) => (
+                  <li key={i} className="text-xs text-[#bfd8c6]">{c}</li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           {/* 議論ログ */}
           <div className="gdf-panel">
