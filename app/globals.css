@@ -201,3 +201,168 @@ body {
   .iv-interviewer__dot { animation: none !important; }
   .iv-interviewer--speaking { transform: none; }
 }
+
+/* ────────────────────────────────────────────────────────────
+   就活版 面接 — 面接官ステージ（オンライン面接の「相手側の画面」）
+   方針:
+     - 受験版の .iv-* とは独立した namespace（.civ-*）。両者は互いに影響しない。
+     - ステージは固定 aspect-ratio で CLS を防ぎ、面接官の顔が視覚的中心に来るサイズにする。
+     - 状態演出は親の [data-state] だけを見る（React 側に演出用 state を増やさない）。
+     - prefers-reduced-motion ではアニメーションを止める。
+   ──────────────────────────────────────────────────────────── */
+
+/* 発話中の口の開閉（優先案 A: 口をわずかに開閉する）。 */
+@keyframes civ-mouth {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1.7); }
+}
+/* 発話中のハロー（案 B の補強。口だけでは気づきにくいため薄く重ねる）。 */
+@keyframes civ-halo {
+  0%   { transform: scale(0.94); opacity: 0.28; }
+  100% { transform: scale(1.16); opacity: 0; }
+}
+/* 状態ピルの中の音声波形。 */
+@keyframes civ-wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50%      { transform: scaleY(1); }
+}
+/* 思考中のごく弱い明滅。 */
+@keyframes civ-think {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+/* ステージ本体。16:8 に近い横長（モバイルは高さを圧縮）。 */
+.civ-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: 20px;
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #eef4fd 45%, #dce7f7 100%);
+  box-shadow: 0 10px 30px -14px rgb(15 23 42 / 0.35);
+  outline: 1px solid rgb(191 219 254 / 0.9);
+  outline-offset: -1px;
+  transition: outline-color 0.3s ease, box-shadow 0.3s ease;
+}
+@media (min-width: 640px) {
+  .civ-stage { aspect-ratio: 16 / 8; border-radius: 24px; }
+}
+
+/* 状態ごとのステージ枠（過剰にしない・枠色だけ変える）。 */
+.civ-stage[data-state='speaking']  { outline-color: #60a5fa; box-shadow: 0 10px 30px -14px rgb(37 99 235 / 0.5); }
+.civ-stage[data-state='listening'] { outline-color: #6ee7b7; }
+.civ-stage[data-state='thinking']  { outline-color: #fcd34d; }
+
+/* 面接官の SVG。ステージ高さの大半を占め、下端で切れて「胸から上」に見せる。 */
+.civ-stage__avatar {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 100%;
+  max-width: 100%;
+}
+.civ-avatar { height: 100%; width: auto; display: block; }
+
+/* 口の開閉。transform-box: fill-box で SVG 要素自身を変形原点にする。 */
+.civ-mouth {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.civ-stage[data-state='speaking'] .civ-mouth { animation: civ-mouth 0.42s ease-in-out infinite; }
+
+/* 発話中のハロー。 */
+.civ-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.civ-stage[data-state='speaking'] .civ-halo { animation: civ-halo 1.6s ease-out infinite; }
+
+/* 思考中は顔全体をごく弱く明滅させる（考えている合図）。 */
+.civ-stage[data-state='thinking'] .civ-avatar { animation: civ-think 1.8s ease-in-out infinite; }
+
+/* 左下の名前タグ（Zoom の名前表示相当）。 */
+.civ-stage__name {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 5px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  line-height: 1.2;
+  background: rgb(15 23 42 / 0.62);
+  backdrop-filter: blur(3px);
+  color: #fff;
+}
+.civ-stage__mode {
+  padding: 1px 7px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgb(255 255 255 / 0.22);
+  color: #eff6ff;
+  white-space: nowrap;
+}
+
+/* 右上の状態ピル（旧「💬 質問しています…」の統合先）。 */
+.civ-stage__status {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.14);
+  color: #334155;
+  white-space: nowrap;
+}
+.civ-stage[data-state='speaking']  .civ-stage__status { color: #1d4ed8; }
+.civ-stage[data-state='listening'] .civ-stage__status { color: #047857; }
+.civ-stage[data-state='thinking']  .civ-stage__status { color: #b45309; }
+
+@media (min-width: 640px) {
+  .civ-stage__name   { left: 16px; bottom: 16px; font-size: 13px; }
+  .civ-stage__status { right: 16px; top: 16px; font-size: 13px; }
+}
+
+/* 状態ピルの中の音声波形。 */
+.civ-wave { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; }
+.civ-wave__bar {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  transform-origin: bottom;
+  background: currentColor;
+  animation: civ-wave 0.9s ease-in-out infinite;
+}
+.civ-wave__bar:nth-child(2) { animation-delay: 0.15s; }
+.civ-wave__bar:nth-child(3) { animation-delay: 0.3s; }
+
+/* 質問字幕（ステージ直下の caption バー）。 */
+.civ-caption {
+  border-radius: 16px;
+  background: #f8fafc;
+  outline: 1px solid #e2e8f0;
+  outline-offset: -1px;
+  padding: 14px 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .civ-stage[data-state='speaking'] .civ-mouth,
+  .civ-stage[data-state='speaking'] .civ-halo,
+  .civ-stage[data-state='thinking'] .civ-avatar,
+  .civ-wave__bar {
+    animation: none !important;
+  }
+}

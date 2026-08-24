@@ -33,7 +33,8 @@ import {
 import { shadowWriteInterviewMemory } from '@/app/career/personalMemoryShadowWrite';
 import { recordCareerEvent } from '@/lib/careerEvents/record';
 import { getInterviewModeConfig, resolveInterviewType } from '../interviewModes';
-import { InterviewerAvatar, type AvatarState } from '../components/InterviewerAvatar';
+import { InterviewerStage } from '../components/InterviewerStage';
+import type { AvatarState } from '../components/InterviewerAvatar';
 // P0-2（HARDENING）: 音声が使えない環境／失敗時の緊急テキスト回答（正常時は出さない）。
 import {
   shouldOfferTextFallback,
@@ -385,14 +386,60 @@ export default function CareerInterviewSessionPage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
       <PageHeader title="面接中" description="面接官AIの質問に回答してください。" />
 
-      {/* 面接官アバター（状態表示） */}
-      <Card variant="soft" padding="md" className="mb-5">
-        <InterviewerAvatar
+      {/* 面接官ステージ（オンライン面接の「相手側の画面」）。
+          面接官名・モード・状態表示はステージ内に統合した。状態は既存 state から算出した
+          avatarState をそのまま渡す（演出のための state を新設しない）。 */}
+      <div className="mb-4">
+        <InterviewerStage
           role={modeConfig.interviewerRole}
           modeLabel={modeConfig.label}
           state={avatarState}
         />
-      </Card>
+      </div>
+
+      {reaction && phase === 'answering' && (
+        <p className="mb-3 text-center text-xs text-slate-500 italic">面接官: {reaction}</p>
+      )}
+
+      {/* 現在の質問（ステージ直下の字幕バー）。
+          - 音声モード（TTS 可）: 質問本文は表示しない（耳で聞く）。聞き直すための操作だけを置く。
+          - それ以外（旧 text セッション / TTS 非対応）: これまでどおり質問本文を表示する。 */}
+      {question && showQuestionText && (
+        <div className="civ-caption mb-5">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-base font-bold text-slate-900 leading-relaxed whitespace-pre-wrap">
+              {question}
+            </p>
+            {ttsSupported && (
+              <button
+                type="button"
+                onClick={() => speak(question)}
+                className="shrink-0 rounded-lg px-2 py-1 text-xs text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                aria-label="質問を読み上げる"
+              >
+                🔊 読み上げ
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {question && !showQuestionText && (
+        <div className="civ-caption mb-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+          <p className="text-sm text-slate-600" aria-live="polite">
+            {avatarState === 'speaking'
+              ? '面接官が質問しています。'
+              : '質問は音声で流れます。聞き逃したときは'}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => speak(question)}
+            aria-label="質問をもう一度聞く"
+          >
+            🔊 もう一度聞く
+          </Button>
+        </div>
+      )}
 
       {/* 進行バー */}
       <div className="mb-5">
@@ -410,49 +457,10 @@ export default function CareerInterviewSessionPage() {
         </div>
       </div>
 
-      {reaction && phase === 'answering' && (
-        <p className="mb-3 text-xs text-slate-500 italic">面接官: {reaction}</p>
-      )}
-
-      {/* 現在の質問。
-          - 音声モード（TTS 可）: 質問本文は表示しない（耳で聞く）。聞き直すための操作だけを置く。
-          - それ以外（旧 text セッション / TTS 非対応）: これまでどおり質問本文を表示する。 */}
-      {question && showQuestionText && (
-        <Card variant="soft" padding="md" className="mb-5">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-base font-bold text-slate-900 leading-relaxed whitespace-pre-wrap">
-              {question}
-            </p>
-            {ttsSupported && (
-              <button
-                type="button"
-                onClick={() => speak(question)}
-                className="shrink-0 text-xs text-blue-600 hover:underline"
-                aria-label="質問を読み上げる"
-              >
-                🔊 読み上げ
-              </button>
-            )}
-          </div>
-        </Card>
-      )}
-      {question && !showQuestionText && (
-        <div className="mb-5 flex flex-col items-center gap-1.5">
-          <p className="text-xs text-slate-400">聞き逃したときは</p>
-          <Button
-            variant="outline"
-            size="md"
-            onClick={() => speak(question)}
-            aria-label="質問をもう一度聞く"
-          >
-            🔊 もう一度聞く
-          </Button>
-        </div>
-      )}
-
-      {/* 回答（音声のみ・評価前のみ） */}
+      {/* 回答（音声のみ・評価前のみ）。
+          面接官ステージ（青系）と役割を分けるため、こちら側は白カードで受ける。 */}
       {phase !== 'finished' && phase !== 'evaluating' && (
-        <Card variant="soft" padding="md" className="mb-5">
+        <Card variant="default" padding="md" className="mb-5">
           <p
             className={`block text-sm font-bold text-slate-800 mb-2 ${
               isVoiceMode ? 'text-center' : ''
