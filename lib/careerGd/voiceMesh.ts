@@ -19,7 +19,8 @@
  *   既定は公開 STUN のみ。対称 NAT 配下の参加者とは P2P を確立できず、
  *   その相手の声だけが聞こえない状態になる。**これを無言にしない**ため、
  *   peer ごとの接続状態を UI へ通知する（onPeersChange）。本番で取りこぼしを消すには
- *   NEXT_PUBLIC_CAREER_GD_ICE_SERVERS に TURN を設定する。
+ *   server 発行の TURN を使う（GET /api/career/gd/voice/ice）。iceServers は呼び出し側が渡す。
+ *   ★ NEXT_PUBLIC_CAREER_GD_ICE_SERVERS へ TURN credential を入れてはいけない（bundle へ出る）。
  */
 
 import type { RealtimeChannel } from '@supabase/supabase-js';

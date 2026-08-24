@@ -291,7 +291,10 @@ export type GdIceServer = {
  *
  * ★ STUN だけでは **対称 NAT（一部のモバイル回線・企業 NW）配下のユーザーで
  *   P2P が張れない**。その場合 mesh は「相手の声が聞こえない」状態になる。
- *   本番で取りこぼしを無くすには NEXT_PUBLIC_CAREER_GD_ICE_SERVERS に TURN を入れる。
+ *   本番で取りこぼしを無くすには **server 発行の TURN** を使う
+ *   （GET /api/career/gd/voice/ice ＝ CLOUDFLARE_TURN_KEY_ID / _API_TOKEN）。
+ *   ★ NEXT_PUBLIC_CAREER_GD_ICE_SERVERS へ TURN credential を入れてはいけない。
+ *     build 時に client bundle へ inline され、誰でも取り出せる中継になる。
  *   到達不能は UI 側で必ず可視化する（無言で音が来ないのが最悪の失敗）。
  */
 export const GD_DEFAULT_ICE_SERVERS: readonly GdIceServer[] = [
