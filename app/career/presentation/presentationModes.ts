@@ -401,6 +401,37 @@ export function evalFocusLabels(keys: string[] | undefined): string[] {
     .filter((l): l is string => !!l);
 }
 
+// ── 発表資料（任意・テキスト）─────────────────────────────────────
+//
+// 本人が「実際の発表で使う資料・スライドの内容」を setup で貼り付けられる（任意）。
+// 資料は評価の**補助材料**であり、未入力でも評価は従来どおり成立する（資料が無いことによる減点はしない）。
+//
+// ★ 受験版（/presentation・lib/presentation/material.ts）は PDF / 画像を Supabase Storage へ
+//   アップロードする仕組みだが、就活版は「localStorage canonical / Supabase Storage 非接続」方針の
+//   ため**テキスト貼り付けのみ**を扱う（新しいファイル処理基盤は作らない）。
+//
+// 上限は evaluate route の入力検証と setup UI の両方が本定数を正本にする（二重定義しない）。
+// 共通 payload 上限（lib/careerApi/requestGuard の MAX_STRING_CHARS=40,000）より十分小さい。
+export const CAREER_PRESENTATION_MATERIAL_MAX_CHARS = 10_000;
+
+/**
+ * 発表資料の入力を正規化する（純関数・決定的・never throw）。
+ *
+ * - 文字列以外 / 空白のみ → ''（＝資料なし。呼び出し側は保存も送信もしない）。
+ * - 前後の空白のみを落とす。改行・インデントなど**資料の中身の構造は保つ**
+ *   （箇条書き・スライド区切りが評価材料として意味を持つため）。
+ * - 上限を超える分は切り捨てる（request 破損・prompt 肥大を防ぐ最後の砦。
+ *   通常は UI と route の検証で先に弾かれる）。
+ */
+export function normalizePresentationMaterial(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (trimmed === '') return '';
+  return trimmed.length > CAREER_PRESENTATION_MATERIAL_MAX_CHARS
+    ? trimmed.slice(0, CAREER_PRESENTATION_MATERIAL_MAX_CHARS)
+    : trimmed;
+}
+
 // AIお題生成の難易度。
 export type CareerPresentationDifficulty = 'easy' | 'standard' | 'hard';
 

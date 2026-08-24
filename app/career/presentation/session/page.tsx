@@ -218,6 +218,9 @@ export default function CareerPresentationSessionPage() {
           timeLimitSec: session.timeLimitSec,
           durationSec,
           transcript: text,
+          // 発表資料（任意・setup で貼り付けたもの）。session が正本。
+          //   未入力なら '' を送り、評価は従来どおり（資料なしで減点されない）。
+          material: session.material ?? '',
         }),
       });
       if (!res.ok) {
@@ -248,6 +251,8 @@ export default function CareerPresentationSessionPage() {
         transcript: text,
         result: data.result,
       };
+      // 発表資料（任意）。あるときだけ履歴にも残す（session と同じ lifecycle）。
+      if (session.material) resultLog.material = session.material;
       appendPresentationResult(resultLog);
       // Supabase durable mirror（best-effort / member のみ）。
       if (userIdRef.current) {
@@ -315,6 +320,19 @@ export default function CareerPresentationSessionPage() {
             </>
           )}
         </p>
+
+        {/* 発表資料（setup で貼り付けたもの）。あるときだけ表示する。
+            発表中に見返せるよう折りたたみで置き、評価に使われることを明示する。 */}
+        {session.material && (
+          <details className="mt-3 rounded-lg bg-white ring-1 ring-slate-200 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+              発表資料（評価に使用されます）
+            </summary>
+            <p className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-xs text-slate-600 leading-relaxed">
+              {session.material}
+            </p>
+          </details>
+        )}
       </Card>
 
       {/* 録音（音声モード） */}

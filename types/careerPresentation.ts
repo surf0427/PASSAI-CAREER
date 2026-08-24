@@ -182,6 +182,15 @@ export type CareerPresentationSession = {
   durationSec: number;
   // 発表の文字起こし（音声）または貼り付け原稿（テキスト）。
   transcript: string;
+  /**
+   * 発表資料（任意）。setup で本人が貼り付けた「発表で使うスライド・資料の内容」のテキスト。
+   *
+   * ★ optional。未入力 / 本 field 追加前の旧セッションには存在しないため、読み取り側は
+   *   欠損を前提に扱うこと（欠損＝資料なしで正常。資料が無いことを理由に減点はしない）。
+   * ★ 正本はここ（localStorage の session）。評価時に result へ写して履歴にも残す。
+   *   受験版のような Supabase Storage への**ファイル**添付は就活版では扱わない（テキストのみ）。
+   */
+  material?: string;
 };
 
 // 完了済みプレゼン 1 件分の結果（localStorage: careerPresentationResults）。
@@ -196,6 +205,8 @@ export type CareerPresentationResult = {
   timeLimitSec: number;
   durationSec: number;
   transcript: string;
+  // 発表資料（任意）。session から写す。旧ログには無い（欠損＝資料なしで正常）。
+  material?: string;
   result: CareerPresentationFinalResult;
   // 発表後に練習した質疑応答（任意。未実施なら空 or 省略）。
   qa?: CareerPresentationQaTurn[];

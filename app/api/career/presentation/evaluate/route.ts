@@ -24,6 +24,10 @@ import type {
 import { anthropic, extractJson } from '@/lib/ai';
 import { createTimeoutSignal } from '@/lib/aiTimeout';
 import {
+  CAREER_PRESENTATION_MATERIAL_MAX_CHARS,
+  normalizePresentationMaterial,
+} from '@/app/career/presentation/presentationModes';
+import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_AXES,
   buildPresentationSystemParts,
@@ -177,6 +181,8 @@ export async function POST(req: Request) {
     timeLimitSec?: unknown;
     durationSec?: unknown;
     transcript?: unknown;
+    // 発表資料（任意・本人が setup で貼り付けたテキスト）。未指定 / 空なら従来どおりの評価。
+    material?: unknown;
   };
 
   const transcript = str(b.transcript);
@@ -185,6 +191,14 @@ export async function POST(req: Request) {
   }
   if (transcript.length > MAX_TRANSCRIPT_CHARS) {
     return Response.json({ error: '発表内容が長すぎます。' }, { status: 413 });
+  }
+
+  // 発表資料（任意）。空 / 未指定なら '' ＝ 以降の prompt は資料なしの従来出力と byte 互換。
+  //   ★ transcript と同じ位置（AI・Quota より前）で検証する。上限超過は 413 で明示的に返し、
+  //     黙って切り詰めない（何が評価されたか分からない状態を作らない）。
+  const material = normalizePresentationMaterial(b.material);
+  if (typeof b.material === 'string' && b.material.trim().length > CAREER_PRESENTATION_MATERIAL_MAX_CHARS) {
+    return Response.json({ error: '発表資料が長すぎます。' }, { status: 413 });
   }
 
   // 日次利用回数（PASSAI Career BASIC / プレゼン = 1 セッション 1 回）。
@@ -261,10 +275,20 @@ export async function POST(req: Request) {
         config,
         presentationType: b.presentationType,
         hasCompanyOfficial,
+        // ★ user prompt 側に資料ブロックが実際に出るときだけ、資料を使う評価指示を足す
+        //   （system の指示と user の block を乖離させない。公式情報 block と同じ契約）。
+        hasMaterial: material !== '',
       }),
     ].join('\n\n');
 
-    const userPrompt = buildEvaluateUserPrompt({ theme, timeLimitSec, durationSec, transcript, config });
+    const userPrompt = buildEvaluateUserPrompt({
+      theme,
+      timeLimitSec,
+      durationSec,
+      transcript,
+      config,
+      material,
+    });
 
     let result: CareerPresentationFinalResult | null = null;
     const startedAt = Date.now();

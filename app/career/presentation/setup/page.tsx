@@ -25,6 +25,8 @@ import { upsertCareerPresentationSessionsToSupabase } from '@/lib/supabase/caree
 import {
   CAREER_PRESENTATION_TIME_LIMITS,
   CAREER_PRESENTATION_EVAL_FOCUS,
+  CAREER_PRESENTATION_MATERIAL_MAX_CHARS,
+  normalizePresentationMaterial,
   presentationConfigFromTarget,
   getSelectionTypeLabel,
   resolveDifficulty,
@@ -71,6 +73,9 @@ export default function CareerPresentationSetupPage() {
   const [recentThemes, setRecentThemes] = useState<string[]>([]);
   // 登録済みの自己分析・ES等（他PASSAI機能データ）を補助的に参考にするか（既定 off）。
   const [useCareerContext, setUseCareerContext] = useState(false);
+  // 発表資料（任意）。実際の発表で使う資料・スライドの内容を貼り付ける。
+  //   評価時の補助材料として evaluate へ渡す（未入力なら従来どおりの評価）。
+  const [material, setMaterial] = useState('');
 
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -82,6 +87,10 @@ export default function CareerPresentationSetupPage() {
   );
 
   const difficulty = resolveDifficulty(target?.difficulty);
+
+  // 発表資料の文字数表示 / 上限超過（入力しながら気付けるようにする）。
+  const materialLength = material.trim().length;
+  const materialOverLimit = materialLength > CAREER_PRESENTATION_MATERIAL_MAX_CHARS;
 
   // target（選考文脈）＋ setup（評価観点）から最終 config を組み立てる。
   function buildConfig(): CareerPresentationConfig {
@@ -140,6 +149,13 @@ export default function CareerPresentationSetupPage() {
       setError('お題を入力するか、AIに提案してもらってください。');
       return;
     }
+    // 発表資料（任意）。上限超過だけは開始前に止める（評価 API で 413 になるのを未然に防ぐ）。
+    if (material.trim().length > CAREER_PRESENTATION_MATERIAL_MAX_CHARS) {
+      setError(
+        `発表資料が長すぎます（${CAREER_PRESENTATION_MATERIAL_MAX_CHARS.toLocaleString()}文字以内）。要点を絞って貼り付けてください。`,
+      );
+      return;
+    }
     setLoading(true);
     setError(null);
     const config = buildConfig();
@@ -161,6 +177,10 @@ export default function CareerPresentationSetupPage() {
       durationSec: 0,
       transcript: '',
     };
+    // 発表資料（任意）。入力があるときだけ session に載せる
+    //   （未入力のセッションに空文字の幽霊フィールドを作らない）。
+    const normalizedMaterial = normalizePresentationMaterial(material);
+    if (normalizedMaterial) session.material = normalizedMaterial;
     upsertPresentationSession(session);
     // Supabase durable mirror（best-effort / member のみ。config 列は無いため mirror されない）。
     if (userId) void upsertCareerPresentationSessionsToSupabase(userId, [session]);
@@ -260,6 +280,34 @@ export default function CareerPresentationSetupPage() {
         </p>
       </Card>
 
+      {/* 発表資料（任意・最後の準備項目）。発表開始 CTA の直前に置く。 */}
+      <Card variant="soft" padding="md" className="mb-5 sm:mb-6">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <p className="text-[11px] font-bold text-blue-700 tracking-widest">発表資料（任意）</p>
+          <p
+            className={`text-[11px] tabular-nums ${
+              materialOverLimit ? 'font-bold text-red-600' : 'text-slate-400'
+            }`}
+          >
+            {materialLength.toLocaleString()} / {CAREER_PRESENTATION_MATERIAL_MAX_CHARS.toLocaleString()}
+          </p>
+        </div>
+        <Textarea
+          value={material}
+          onChange={(e) => setMaterial(e.target.value)}
+          placeholder={'例:\nスライド1 結論: 私の強みは巻き込み力\nスライド2 根拠: 新歓改革で入会者1.5倍（20名→30名）\nスライド3 学び: 役割設計で人を動かす力が身についた'}
+          rows={6}
+        />
+        <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
+          実際の発表で使用する資料やスライドの内容を貼り付けてください。入力した資料もAIの評価に使用されます（未入力でも評価は行われ、資料がないことによる減点はありません）。
+        </p>
+        {materialOverLimit && (
+          <p className="mt-2 text-xs text-red-600 leading-relaxed" role="alert">
+            文字数が上限を超えています。要点を絞って貼り付けてください。
+          </p>
+        )}
+      </Card>
+
       {error && (
         <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
           {error}
@@ -271,7 +319,7 @@ export default function CareerPresentationSetupPage() {
           variant="primary"
           size="md"
           onClick={handleStart}
-          disabled={loading}
+          disabled={loading || materialOverLimit}
           className="w-full sm:w-auto"
         >
           {loading ? '準備中…' : '発表を始める →'}
