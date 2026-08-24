@@ -714,8 +714,9 @@ function ActiveView({
           ? 'online'
           : mergeGdConnectionState(m.connectionState, derived);
       const isSelf = m.participantId === selfParticipantId;
+      // speaking は同時に 1 人だけ（確定発言が最優先。自分の入力中は「誰も話していない」ときのみ）。
       const speaking = isSelf
-        ? selfSpeaking || recentSpeakerId === m.participantId
+        ? recentSpeakerId === m.participantId || (!recentSpeakerId && selfSpeaking)
         : recentSpeakerId === m.participantId;
       return {
         key: m.id,

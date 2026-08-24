@@ -291,8 +291,12 @@ export default function CareerGdSessionPage() {
     const ordered = [...list].sort((a, b) => (a.isSelf ? 0 : 1) - (b.isSelf ? 0 : 1));
     return ordered.map((p) => {
       const thinking = phase === 'ai-thinking' && p.id === aiSpeakerId;
+      // speaking は同時に 1 人だけ（直近の実発言が最優先。自分の入力中は「誰も話していない」ときのみ）。
       const speaking =
-        !thinking && (p.isSelf ? selfTyping || recentSpeakerId === p.id : recentSpeakerId === p.id);
+        !thinking &&
+        (p.isSelf
+          ? recentSpeakerId === p.id || (!recentSpeakerId && selfTyping)
+          : recentSpeakerId === p.id);
       return {
         key: p.id,
         participantId: p.id,

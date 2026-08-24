@@ -125,9 +125,17 @@ console.log('\n[C] 発話インジケータ');
   check('C8 solo は既存 phase を thinking に写す', solo.includes("phase === 'ai-thinking' && p.id === aiSpeakerId"));
   check('C9 solo は transcript の最新発言を speaker に使う', solo.includes('lastSpeech') && solo.includes("u.kind !== 'system'"));
   check('C10 solo は入力中を自分の発言中に写す', solo.includes('selfTyping'));
+  check(
+    'C10b solo の speaking は同時に 1 人だけ（実発言が最優先）',
+    solo.includes('recentSpeakerId === p.id || (!recentSpeakerId && selfTyping)'),
+  );
   // room: 既存 messages / pendingMessages を使う。
   check('C11 room は確定 message の最新を speaker に使う', room.includes('lastMessage') && room.includes("messages[i].kind !== 'system'"));
   check('C12 room は optimistic 送信中を自分の発言中に写す', room.includes("pendingMessages.some((m) => m.status === 'sending')"));
+  check(
+    'C12b room の speaking は同時に 1 人だけ（確定発言が最優先）',
+    room.includes('recentSpeakerId === m.participantId || (!recentSpeakerId && selfSpeaking)'),
+  );
   // 進行ロジックの新規追加が無いこと（speaker を server / DB に持たせていない）。
   check(
     'C13 speaker 用の新 API / endpoint を作っていない',
