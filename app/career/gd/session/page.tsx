@@ -12,9 +12,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Button } from '@/components/ui/Button';
-import { Textarea } from '@/components/ui/Textarea';
 import { GD_ROLE_LABELS } from '../gdRoles';
+import { GdCircleStage, useRecentSpeaker, type GdStageParticipant } from '../components/stage';
 import {
   getInProgressGdSession,
   upsertGdSession,
@@ -85,6 +84,8 @@ export default function CareerGdSessionPage() {
   const [phase, setPhase] = useState<Phase>('discussing');
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  // Forest Circle の「・・・」表示用（どの AI が生成中か）。進行ロジックには関与しない。
+  const [aiSpeakerId, setAiSpeakerId] = useState<string | null>(null);
   // 次に発言する AI のローテーション位置。
   const aiPointerRef = useRef(0);
 
@@ -112,6 +113,8 @@ export default function CareerGdSessionPage() {
     setError(null);
     const speaker = ais[aiPointerRef.current % ais.length];
     aiPointerRef.current += 1;
+    // 生成中の AI を Speaking Indicator へ渡すだけ（選出も順番も従来どおり）。
+    setAiSpeakerId(speaker.id);
     const wrap =
       current.transcript.filter((u) => u.kind !== 'system').length >=
       Math.round(MAX_UTTERANCES * 0.7);
@@ -149,9 +152,11 @@ export default function CareerGdSessionPage() {
       upsertGdSession(next);
       setSession(next);
       setPhase('discussing');
+      setAiSpeakerId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'AIの発言生成に失敗しました。');
       setPhase('discussing');
+      setAiSpeakerId(null);
     }
   }, []);
 
@@ -268,6 +273,39 @@ export default function CareerGdSessionPage() {
     }
   }, [session, self, router]);
 
+  // ── Forest Circle 表示用の adapter（既存 state を写すだけ / 進行ロジック非関与）──
+  //   直近の発言（system を除く）＝「今この人が話している」の source。
+  const lastSpeech = useMemo<GdUtterance | null>(() => {
+    const speeches = (session?.transcript ?? []).filter((u) => u.kind !== 'system');
+    return speeches.length > 0 ? speeches[speeches.length - 1] : null;
+  }, [session]);
+  const recentSpeakerId = useRecentSpeaker(
+    lastSpeech?.participantId ?? null,
+    lastSpeech?.id ?? null,
+  );
+  // 自分は「入力中（draft がある）」を発言中として扱う（テキストGDでの自然な写像）。
+  const selfTyping = draft.trim().length > 0;
+  const stageParticipants = useMemo<GdStageParticipant[]>(() => {
+    const list = session?.participants ?? [];
+    // 自分を先頭（＝手前中央の席）へ。sort は安定なので他の並びは既存のまま。
+    const ordered = [...list].sort((a, b) => (a.isSelf ? 0 : 1) - (b.isSelf ? 0 : 1));
+    return ordered.map((p) => {
+      const thinking = phase === 'ai-thinking' && p.id === aiSpeakerId;
+      const speaking =
+        !thinking && (p.isSelf ? selfTyping || recentSpeakerId === p.id : recentSpeakerId === p.id);
+      return {
+        key: p.id,
+        participantId: p.id,
+        displayName: p.displayName,
+        roleLabel: GD_ROLE_LABELS[p.role],
+        isSelf: !!p.isSelf,
+        isAi: p.type === 'ai',
+        isHost: false,
+        speech: thinking ? 'thinking' : speaking ? 'speaking' : 'idle',
+      };
+    });
+  }, [session, phase, aiSpeakerId, recentSpeakerId, selfTyping]);
+
   if (!isMounted) return null;
 
   if (!session) {
@@ -295,142 +333,167 @@ export default function CareerGdSessionPage() {
     return p ? GD_ROLE_LABELS[p.role] : '';
   };
   const aiThinking = phase === 'ai-thinking';
+  const thinkingAiName = aiThinking
+    ? (session.participants.find((p) => p.id === aiSpeakerId)?.displayName ?? 'AI参加者')
+    : null;
+  const statusLabel =
+    phase === 'evaluating'
+      ? '評価を作成中…'
+      : aiThinking
+        ? `${thinkingAiName}が発言を考えています…`
+        : reachedCap
+          ? '発言数が上限に達しました'
+          : null;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-      <PageHeader title="GD中" description="AI参加者とディスカッションを進めてください。" />
+      <PageHeader title="GD中" description="森の円卓で、AI参加者とディスカッションを進めてください。" />
 
-      {/* テーマ */}
-      <Card variant="soft" padding="md" className="mb-5">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">テーマ</p>
-        <p className="text-base font-bold text-slate-900 leading-relaxed mb-1">{session.theme.title}</p>
-        <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{session.theme.description}</p>
-        {session.theme.constraints && session.theme.constraints.length > 0 && (
-          <ul className="mt-2 list-disc pl-5 space-y-0.5">
-            {session.theme.constraints.map((c, i) => (
-              <li key={i} className="text-xs text-slate-500">{c}</li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      {/* 参加者・役割・時間 */}
-      <div className="mb-5 flex items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
-          {session.participants.map((p) => (
-            <span
-              key={p.id}
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${p.isSelf ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}
+      <div className="gdf-shell">
+        {/* 円になって座っている参加者（主役）。テーマ・残り時間は円の中央に置く。 */}
+        <GdCircleStage
+          participants={stageParticipants}
+          themeTitle={session.theme.title || '（テーマ準備中）'}
+          statusLabel={statusLabel}
+          timer={
+            <p
+              className={`gdf-clock${remaining <= 0 ? ' gdf-clock--expired' : ''}`}
+              data-testid="gd-solo-remaining"
             >
-              {p.displayName}・{GD_ROLE_LABELS[p.role]}
+              残り {formatClock(remaining)}
+            </p>
+          }
+          headerLeft={<span className="gdf-chip">参加者 {session.participants.length}人</span>}
+          headerRight={
+            <span className="gdf-chip">
+              発言 {total} / {MAX_UTTERANCES}
             </span>
-          ))}
-        </div>
-        <span className={`shrink-0 text-sm font-semibold ${remaining <= 0 ? 'text-red-600' : 'text-slate-500'}`}>
-          残り {formatClock(remaining)}
-        </span>
-      </div>
+          }
+        />
 
-      {/* 議論ログ */}
-      <Card variant="soft" padding="md" className="mb-5">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-3">
-          議論ログ（{total} / {MAX_UTTERANCES} 発言）
-        </p>
-        {session.transcript.length === 0 ? (
-          <p className="text-sm text-slate-500 leading-relaxed">
-            まだ発言はありません。あなたから口火を切るか、「AIの発言を進める」を押してください。
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {session.transcript.map((u) => {
-              const isSelf = session.participants.find((p) => p.id === u.participantId)?.isSelf;
-              return (
-                <li key={u.id} className="text-sm leading-relaxed">
-                  <span className={isSelf ? 'font-bold text-blue-700' : 'font-bold text-slate-900'}>
-                    {nameOf(u.participantId)}
-                    <span className="ml-1 text-[11px] font-medium text-slate-400">{roleOf(u.participantId)}</span>
-                    ：
-                  </span>
-                  <span className="text-slate-700 whitespace-pre-wrap">{u.content}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {aiThinking && (
-          <p className="mt-3 text-xs text-slate-400 italic">AI参加者が考えています…</p>
-        )}
-      </Card>
+        <div className="mt-3 flex flex-col gap-3">
+          {/* テーマの詳細（円の中央には見出しだけを置くため、本文はここに出す）。 */}
+          {(session.theme.description || (session.theme.constraints?.length ?? 0) > 0) && (
+            <div className="gdf-panel">
+              <p className="gdf-panel__label">テーマの詳細</p>
+              {session.theme.description && (
+                <p className="mt-1 text-[13px] leading-relaxed text-[#e2f1e6] whitespace-pre-wrap">
+                  {session.theme.description}
+                </p>
+              )}
+              {session.theme.constraints && session.theme.constraints.length > 0 && (
+                <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                  {session.theme.constraints.map((c, i) => (
+                    <li key={i} className="text-xs text-[#bfd8c6]">{c}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
-      {error && (
-        <p className="mb-4 text-sm text-red-600 leading-relaxed" role="alert">
-          {error}
-        </p>
-      )}
-
-      {/* 入力・操作 */}
-      {!reachedCap ? (
-        <Card variant="soft" padding="md" className="mb-5">
-          <label className="block text-sm font-bold text-slate-800 mb-2">あなたの発言</label>
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="意見・提案・他の参加者への質問などを入力してください。"
-            rows={4}
-            disabled={aiThinking || phase === 'evaluating'}
-          />
-          <div className="mt-4 flex flex-col sm:flex-row gap-3">
-            <Button
-              variant="primary"
-              size="md"
-              onClick={postUser}
-              disabled={aiThinking || phase === 'evaluating' || !draft.trim()}
-              className="w-full sm:w-auto"
-            >
-              発言する →
-            </Button>
-            <Button
-              variant="outline"
-              size="md"
-              onClick={advanceAi}
-              disabled={aiThinking || phase === 'evaluating'}
-              className="w-full sm:w-auto"
-            >
-              AIの発言を進める
-            </Button>
+          {/* 議論ログ */}
+          <div className="gdf-panel">
+            <p className="gdf-panel__label">議論ログ（{total} / {MAX_UTTERANCES} 発言）</p>
+            <div className="gdf-log mt-2">
+              {session.transcript.length === 0 ? (
+                <p className="gdf-log__empty">
+                  まだ発言はありません。あなたから口火を切るか、「AIの発言を進める」を押してください。
+                </p>
+              ) : (
+                session.transcript.map((u) => {
+                  const speaker = session.participants.find((p) => p.id === u.participantId);
+                  if (u.kind === 'system') {
+                    return (
+                      <p key={u.id} className="gdf-msg__system">【進行】{u.content}</p>
+                    );
+                  }
+                  return (
+                    <div
+                      key={u.id}
+                      className={`gdf-msg${speaker?.isSelf ? ' gdf-msg--self' : ''}${speaker?.type === 'ai' ? ' gdf-msg--ai' : ''}`}
+                    >
+                      <span className="gdf-msg__who">
+                        {nameOf(u.participantId)}
+                        <span className="gdf-seat__role">{roleOf(u.participantId)}</span>
+                      </span>
+                      <span className="gdf-msg__body">{u.content}</span>
+                    </div>
+                  );
+                })
+              )}
+              {aiThinking && (
+                <p className="gdf-msg__system">{thinkingAiName}が考えています…</p>
+              )}
+            </div>
           </div>
-        </Card>
-      ) : (
-        <Card variant="soft" padding="md" className="mb-5">
-          <p className="text-sm text-slate-600 leading-relaxed">
-            発言数が上限に達しました。議論を終了して評価に進みましょう。
-          </p>
-        </Card>
-      )}
 
-      {/* 終了・評価 */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Button
-          variant="primary"
-          size="md"
-          onClick={finish}
-          disabled={phase === 'evaluating' || aiThinking || selfSpeechCount(session) === 0}
-          className="w-full sm:w-auto"
-        >
-          {phase === 'evaluating' ? '評価を作成中…' : 'GDを終了して評価を見る →'}
-        </Button>
-        <Link
-          href="/career/gd"
-          className="inline-flex items-center justify-center gap-1 text-sm text-gray-500 hover:text-gray-800 border border-gray-300 hover:border-gray-400 rounded-lg px-4 py-2 transition-colors"
-        >
-          ← 中断してGDトップに戻る
-        </Link>
+          {error && (
+            <p className="gdf-alert" role="alert">
+              {error}
+            </p>
+          )}
+
+          {/* 発言入力・操作 */}
+          {!reachedCap ? (
+            <div className="gdf-panel">
+              <label htmlFor="gd-solo-input" className="gdf-panel__label">
+                あなたの発言
+              </label>
+              <textarea
+                id="gd-solo-input"
+                className="gdf-field mt-2"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="意見・提案・他の参加者への質問などを入力してください。"
+                rows={3}
+                disabled={aiThinking || phase === 'evaluating'}
+              />
+              <div className="gdf-controls mt-3">
+                <button
+                  type="button"
+                  className="gdf-btn gdf-btn--primary"
+                  onClick={postUser}
+                  disabled={aiThinking || phase === 'evaluating' || !draft.trim()}
+                >
+                  発言する →
+                </button>
+                <button
+                  type="button"
+                  className="gdf-btn gdf-btn--ghost"
+                  onClick={advanceAi}
+                  disabled={aiThinking || phase === 'evaluating'}
+                >
+                  AIの発言を進める
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="gdf-panel">
+              <p className="text-[13px] leading-relaxed text-[#e2f1e6]">
+                発言数が上限に達しました。議論を終了して評価に進みましょう。
+              </p>
+            </div>
+          )}
+
+          {/* 終了・評価 */}
+          <div className="gdf-controls">
+            <button
+              type="button"
+              className="gdf-btn gdf-btn--primary"
+              onClick={finish}
+              disabled={phase === 'evaluating' || aiThinking || selfSpeechCount(session) === 0}
+            >
+              {phase === 'evaluating' ? '評価を作成中…' : 'GDを終了して評価を見る →'}
+            </button>
+            <Link href="/career/gd" className="gdf-btn gdf-btn--ghost">
+              ← 中断してGDトップに戻る
+            </Link>
+          </div>
+          {selfSpeechCount(session) === 0 && (
+            <p className="gdf-note">評価には、あなた自身の発言が1回以上必要です。</p>
+          )}
+        </div>
       </div>
-      {selfSpeechCount(session) === 0 && (
-        <p className="mt-2 text-xs text-amber-700">
-          評価には、あなた自身の発言が1回以上必要です。
-        </p>
-      )}
     </div>
   );
 }

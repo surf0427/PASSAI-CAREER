@@ -40,6 +40,11 @@ import type {
   GdRealtimeSelfIdentity,
 } from '@/lib/careerGd/realtimeRoom';
 import { GD_ROLE_LABELS } from '../../gdRoles';
+import {
+  GdCircleStage,
+  useRecentSpeaker,
+  type GdStageParticipant,
+} from '../../components/stage';
 import { GdEvaluationDetail } from '../../GdEvaluationDetail';
 import { GdRoomOverallDetail } from '../../GdRoomOverallDetail';
 import { appendGdRoomLog, loadGdRoomLogs } from '../../gdRoomLogStorage';
@@ -674,125 +679,214 @@ function ActiveView({
     [members],
   );
 
+  // ── Forest Circle 表示用の adapter（既存 state を写すだけ）────────────────
+  //   speaker の source は「確定済み message の最新 1 件」。realtime protocol も
+  //   messages hook も変更しない（新しい speaker state を server 側に作らない）。
+  const lastMessage = useMemo<CareerGdRoomMessage | null>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].kind !== 'system') return messages[i];
+    }
+    return null;
+  }, [messages]);
+  const recentSpeakerId = useRecentSpeaker(
+    lastMessage?.participantId ?? null,
+    lastMessage ? lastMessage.id || `seq-${lastMessage.seq}` : null,
+  );
+  // 自分は「入力中 / 送信中（optimistic pending）」を発言中として扱う。
+  const selfSpeaking =
+    input.trim().length > 0 || pendingMessages.some((m) => m.status === 'sending');
+  const humanCount = members.filter((m) => !m.isAi && !m.leftAt).length;
+
+  const stageParticipants = useMemo<GdStageParticipant[]>(() => {
+    // 自分を先頭（＝手前中央の席）へ。sort は安定なので他の並びは既存の members 順のまま。
+    const ordered = [...members].sort(
+      (a, b) =>
+        (a.participantId === selfParticipantId ? 0 : 1) -
+        (b.participantId === selfParticipantId ? 0 : 1),
+    );
+    return ordered.map((m) => {
+      // 接続状態の導出は MembersCard と同じ 3 情報源のマージ（既存 lib をそのまま使う）。
+      const inPresence = !!presenceMap && !!presenceMap[m.participantId];
+      const derived = deriveGdConnectionState(m.lastSeenAt ?? m.joinedAt, nowMs);
+      const connection: GdConnectionState = m.isAi
+        ? 'online'
+        : inPresence
+          ? 'online'
+          : mergeGdConnectionState(m.connectionState, derived);
+      const isSelf = m.participantId === selfParticipantId;
+      const speaking = isSelf
+        ? selfSpeaking || recentSpeakerId === m.participantId
+        : recentSpeakerId === m.participantId;
+      return {
+        key: m.id,
+        participantId: m.participantId,
+        displayName: m.displayName,
+        roleLabel: GD_ROLE_LABELS[m.role],
+        isSelf,
+        isAi: m.isAi,
+        isHost: m.isHost,
+        personaRole: m.persona?.personaRole ?? null,
+        speech: speaking ? 'speaking' : 'idle',
+        connection,
+        left: !!m.leftAt,
+      };
+    });
+  }, [members, selfParticipantId, presenceMap, nowMs, recentSpeakerId, selfSpeaking]);
+
+  const statusLabel = timerExpired
+    ? '制限時間になりました'
+    : aiThinking
+      ? 'AIメンバーが発言を考えています…'
+      : null;
+
   return (
     <>
-      <Card variant="soft" padding="md" className="mb-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-1">テーマ</p>
-            <p className="text-sm font-bold text-slate-800 leading-snug">
-              {room.theme?.title || '（テーマ準備中）'}
-            </p>
-            {room.theme?.description && (
-              <p className="mt-1 text-xs text-slate-600 leading-relaxed">{room.theme.description}</p>
-            )}
-            {room.theme?.constraints && room.theme.constraints.length > 0 && (
-              <ul className="mt-2 list-disc pl-4 text-xs text-slate-500 leading-relaxed">
-                {room.theme.constraints.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <RemainingTime remainingSeconds={remainingSeconds} isExpired={timerExpired} />
-        </div>
-      </Card>
-
-      <MembersCard
-        members={members}
-        plannedCount={room.plannedParticipantCount}
-        className="mb-4"
-        presenceMap={presenceMap}
-        connectionState={connectionState}
-        syncMode={syncMode}
-        nowMs={nowMs}
-      />
-
-      <Card variant="soft" padding="md" className="mb-4">
-        <p className="text-[11px] font-bold text-blue-700 tracking-widest mb-2">ディスカッション</p>
-        <div
-          ref={timelineRef}
-          className="max-h-[46vh] overflow-y-auto rounded-xl bg-white/60 border border-slate-100 p-3 flex flex-col gap-2.5"
-        >
-          {messages.length === 0 && pendingMessages.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center py-6">
-              まだ発言はありません。あなたの発言、または「AIに発言してもらう」で議論を始めましょう。
-            </p>
-          ) : (
-            <>
-              {messages.map((m) => {
-                const member = nameOf(m.participantId);
-                const isSelf = m.participantId === selfParticipantId;
-                return (
-                  <MessageRow
-                    key={m.id || `seq-${m.seq}`}
-                    message={m}
-                    displayName={member?.displayName ?? '参加者'}
-                    isAi={member?.isAi ?? false}
-                    isHost={member?.isHost ?? false}
-                    isSelf={isSelf}
-                  />
-                );
-              })}
-              {/* optimistic（sending / failed）は確定メッセージの末尾に表示する。 */}
-              {pendingMessages.map((p) => (
-                <PendingMessageRow
-                  key={p.clientMsgId}
-                  pending={p}
-                  displayName={selfDisplayName}
-                  onResend={() => resendMessage(p.clientMsgId)}
-                />
-              ))}
-            </>
-          )}
-          {aiThinking && <p className="text-xs text-emerald-600 text-center py-1">AIが考えています…</p>}
-        </div>
-      </Card>
-
-      {(actionError || messageError) && (
-        <p className="text-xs text-red-600 leading-relaxed mb-3" role="alert">
-          {actionError ?? messageError}
-        </p>
-      )}
-
-      <Card variant="soft" padding="md">
-        <label htmlFor="gd-input" className="sr-only">
-          発言を入力
-        </label>
-        <textarea
-          id="gd-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onInputKeyDown}
-          rows={2}
-          maxLength={600}
-          disabled={timerExpired}
-          placeholder="あなたの発言を入力（Enterで送信 / Shift+Enterで改行・600文字まで）"
-          className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+      <div className="gdf-shell">
+        {/* 円になって座っている参加者（主役）。テーマ・残り時間は円の中央へ。 */}
+        <GdCircleStage
+          participants={stageParticipants}
+          themeTitle={room.theme?.title || '（テーマ準備中）'}
+          statusLabel={statusLabel}
+          timer={<RemainingTime remainingSeconds={remainingSeconds} isExpired={timerExpired} />}
+          headerLeft={
+            <span className="gdf-chip">
+              参加者（{humanCount} / {room.plannedParticipantCount}）
+            </span>
+          }
+          headerRight={
+            <span className="gdf-chip">
+              {syncMode ? <SyncModeBadge mode={syncMode} /> : <ConnectionBadge state={connectionState} />}
+            </span>
+          }
+          // 既存 E2E（roster 件数 / AI 件数 / 接続状態）の test hook を席へ引き継ぐ。
+          seatTestHook={(p) => ({
+            testId: 'gd-member-row',
+            attrs: {
+              'data-ai': String(p.isAi),
+              'data-connection': p.isAi ? 'online' : (p.connection ?? 'online'),
+            },
+          })}
         />
-        <div className="mt-3 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-          <div className="flex gap-2">
-            <Button variant="primary" size="md" onClick={handleSend} disabled={timerExpired || !input.trim()}>
-              発言する
-            </Button>
-            <Button variant="outline" size="md" onClick={aiTurn} disabled={aiThinking || timerExpired}>
-              {aiThinking ? '生成中…' : 'AIに発言してもらう'}
-            </Button>
-          </div>
-          {isHost && (
-            <Button variant="ghost" size="md" onClick={finish} disabled={finishing} className="text-red-600">
-              {finishing ? '終了処理中…' : 'GDを終了する'}
-            </Button>
+
+        <div className="mt-3 flex flex-col gap-3">
+          {/* テーマの詳細（見出しは円の中央にあるので、本文・与件はここに置く）。 */}
+          {(room.theme?.description || (room.theme?.constraints?.length ?? 0) > 0) && (
+            <div className="gdf-panel">
+              <p className="gdf-panel__label">テーマの詳細</p>
+              {room.theme?.description && (
+                <p className="mt-1 text-[13px] leading-relaxed text-[#e2f1e6]">{room.theme.description}</p>
+              )}
+              {room.theme?.constraints && room.theme.constraints.length > 0 && (
+                <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                  {room.theme.constraints.map((c, i) => (
+                    <li key={i} className="text-xs text-[#bfd8c6]">{c}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
+
+          {/* 議論ログ */}
+          <div className="gdf-panel">
+            <p className="gdf-panel__label">ディスカッション</p>
+            <div ref={timelineRef} className="gdf-log mt-2">
+              {messages.length === 0 && pendingMessages.length === 0 ? (
+                <p className="gdf-log__empty">
+                  まだ発言はありません。あなたの発言、または「AIに発言してもらう」で議論を始めましょう。
+                </p>
+              ) : (
+                <>
+                  {messages.map((m) => {
+                    const member = nameOf(m.participantId);
+                    const isSelf = m.participantId === selfParticipantId;
+                    return (
+                      <MessageRow
+                        key={m.id || `seq-${m.seq}`}
+                        message={m}
+                        displayName={member?.displayName ?? '参加者'}
+                        isAi={member?.isAi ?? false}
+                        isHost={member?.isHost ?? false}
+                        isSelf={isSelf}
+                      />
+                    );
+                  })}
+                  {/* optimistic（sending / failed）は確定メッセージの末尾に表示する。 */}
+                  {pendingMessages.map((p) => (
+                    <PendingMessageRow
+                      key={p.clientMsgId}
+                      pending={p}
+                      displayName={selfDisplayName}
+                      onResend={() => resendMessage(p.clientMsgId)}
+                    />
+                  ))}
+                </>
+              )}
+              {aiThinking && <p className="gdf-msg__system">AIが考えています…</p>}
+            </div>
+          </div>
+
+          {(actionError || messageError) && (
+            <p className="gdf-alert" role="alert">
+              {actionError ?? messageError}
+            </p>
+          )}
+
+          {/* 発言入力・操作 */}
+          <div className="gdf-panel">
+            <label htmlFor="gd-input" className="sr-only">
+              発言を入力
+            </label>
+            <textarea
+              id="gd-input"
+              className="gdf-field"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onInputKeyDown}
+              rows={2}
+              maxLength={600}
+              disabled={timerExpired}
+              placeholder="あなたの発言を入力（Enterで送信 / Shift+Enterで改行・600文字まで）"
+            />
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="gdf-controls">
+                <button
+                  type="button"
+                  className="gdf-btn gdf-btn--primary"
+                  onClick={handleSend}
+                  disabled={timerExpired || !input.trim()}
+                >
+                  発言する
+                </button>
+                <button
+                  type="button"
+                  className="gdf-btn gdf-btn--ghost"
+                  onClick={aiTurn}
+                  disabled={aiThinking || timerExpired}
+                >
+                  {aiThinking ? '生成中…' : 'AIに発言してもらう'}
+                </button>
+              </div>
+              {isHost && (
+                <button
+                  type="button"
+                  className="gdf-btn gdf-btn--danger"
+                  onClick={finish}
+                  disabled={finishing}
+                >
+                  {finishing ? '終了処理中…' : 'GDを終了する'}
+                </button>
+              )}
+            </div>
+            {timerExpired ? (
+              <p className="gdf-alert mt-2">
+                制限時間になりました。{isHost ? 'まもなく自動で終了します。' : 'ホストの終了をお待ちください。'}
+              </p>
+            ) : (
+              !isHost && <p className="gdf-note mt-2">GDの終了はホストが行います。</p>
+            )}
+          </div>
         </div>
-        {timerExpired ? (
-          <p className="mt-2 text-[11px] text-red-500">
-            制限時間になりました。{isHost ? 'まもなく自動で終了します。' : 'ホストの終了をお待ちください。'}
-          </p>
-        ) : (
-          !isHost && <p className="mt-2 text-[11px] text-slate-400">GDの終了はホストが行います。</p>
-        )}
-      </Card>
+      </div>
 
       {/* 修正2/3: host は「GDを終了する」(finish→結果) に加え、途中中止したい場合は「部屋を終了する」
           (close→cancelled・結果なし) を明示操作できる。一般参加者は「退出する」(部屋は継続)。 */}
@@ -911,12 +1005,11 @@ function RemainingTime({ remainingSeconds, isExpired }: { remainingSeconds: numb
   const mm = Math.floor(remainingSeconds / 60);
   const ss = remainingSeconds % 60;
   return (
-    <div className="shrink-0 text-right" data-testid="gd-remaining-time" data-expired={String(isExpired)}>
-      <p className="text-[10px] text-slate-400 mb-0.5">残り時間</p>
-      <p className={`text-lg font-bold tabular-nums ${isExpired ? 'text-red-600' : 'text-slate-800'}`}>
+    <div data-testid="gd-remaining-time" data-expired={String(isExpired)}>
+      <p className={`gdf-clock${isExpired ? ' gdf-clock--expired' : ''}`}>
         {String(mm).padStart(2, '0')}:{String(ss).padStart(2, '0')}
       </p>
-      {isExpired && <p className="text-[10px] text-red-500">時間になりました</p>}
+      <p className="gdf-clock__note">{isExpired ? '時間になりました' : '残り時間'}</p>
     </div>
   );
 }
@@ -935,24 +1028,16 @@ function MessageRow({
   isSelf: boolean;
 }) {
   if (message.kind === 'system') {
-    return (
-      <p className="text-[11px] text-slate-400 text-center py-1">【進行】{message.content}</p>
-    );
+    return <p className="gdf-msg__system">【進行】{message.content}</p>;
   }
   return (
-    <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}>
-      <div className="flex items-center gap-1.5 mb-0.5">
-        <span className="text-[11px] font-semibold text-slate-600">{displayName}</span>
-        {isHost && <span className="rounded-full bg-indigo-50 px-1.5 text-[10px] font-semibold text-indigo-700">ホスト</span>}
-        {isAi && <span className="rounded-full bg-emerald-50 px-1.5 text-[10px] font-semibold text-emerald-700">AI</span>}
-      </div>
-      <div
-        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-          isSelf ? 'bg-blue-600 text-white' : isAi ? 'bg-emerald-50 text-slate-800' : 'bg-white text-slate-800 border border-slate-100'
-        }`}
-      >
-        {message.content}
-      </div>
+    <div className={`gdf-msg${isSelf ? ' gdf-msg--self' : ''}${isAi ? ' gdf-msg--ai' : ''}`}>
+      <span className="gdf-msg__who">
+        {displayName}
+        {isHost && <span className="gdf-seat__tag">ホスト</span>}
+        {isAi && <span className="gdf-seat__tag gdf-seat__tag--ai">AI</span>}
+      </span>
+      <span className="gdf-msg__body">{message.content}</span>
     </div>
   );
 }
@@ -970,33 +1055,21 @@ function PendingMessageRow({
   const failed = pending.status === 'failed';
   return (
     <div
-      className="flex flex-col items-end"
+      className={`gdf-msg gdf-msg--self ${failed ? 'gdf-msg--failed' : 'gdf-msg--pending'}`}
       data-testid="gd-pending-message"
       data-status={pending.status}
     >
-      <div className="flex items-center gap-1.5 mb-0.5">
-        <span className="text-[11px] font-semibold text-slate-600">{displayName}</span>
-      </div>
-      <div
-        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-          failed ? 'bg-red-50 text-slate-800 border border-red-200' : 'bg-blue-600/70 text-white'
-        }`}
-      >
-        {pending.content}
-      </div>
+      <span className="gdf-msg__who">{displayName}</span>
+      <span className="gdf-msg__body">{pending.content}</span>
       {failed ? (
-        <div className="mt-0.5 flex items-center gap-2">
-          <span className="text-[10px] text-red-500">送信に失敗しました</span>
-          <button
-            type="button"
-            onClick={onResend}
-            className="text-[10px] font-semibold text-blue-600 hover:underline"
-          >
+        <span className="flex items-center gap-2">
+          <span className="gdf-alert">送信に失敗しました</span>
+          <button type="button" onClick={onResend} className="gdf-msg__note font-bold underline">
             再送する
           </button>
-        </div>
+        </span>
       ) : (
-        <span className="mt-0.5 text-[10px] text-slate-400">送信中…</span>
+        <span className="gdf-msg__note">送信中…</span>
       )}
     </div>
   );

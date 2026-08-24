@@ -375,3 +375,530 @@ body {
     animation: none !important;
   }
 }
+
+/* ────────────────────────────────────────────────────────────
+   就活版 GD — Forest Circle ステージ（ソロ / フレンド / オンライン共通）
+   方針:
+     - 面接の .civ-* / 受験版の .iv-* とは独立した namespace（.gdf-*）。互いに影響しない。
+     - 円卓の座標は seatLayout.ts が返す正規化値（--gdf-x / --gdf-y / --gdf-sc）を
+       CSS 変数として受け取り、半径（--gdf-rx / --gdf-ry）だけを breakpoint で変える。
+       → レスポンシブは CSS だけで完結し、React 側に画面幅の分岐を持ち込まない。
+     - 画像 / 動画 / canvas / WebGL を使わない。演出は transform と opacity のみ。
+     - prefers-reduced-motion ではアニメーションを止め、静的表示に落とす。
+   ──────────────────────────────────────────────────────────── */
+
+/* 会話中インジケータ「・・・」。1 つずつ順に浮かぶ（激しく動かさない）。 */
+@keyframes gdf-dot {
+  0%, 70%, 100% { opacity: 0.25; transform: translateY(0); }
+  35%           { opacity: 1;    transform: translateY(-2.5px); }
+}
+/* 発言者の足元リング。ゆっくり広がるだけ。 */
+@keyframes gdf-ring {
+  0%, 100% { transform: translateX(-50%) scale(0.94); opacity: 0.5; }
+  50%      { transform: translateX(-50%) scale(1.06); opacity: 0.85; }
+}
+/* 木々のあいだの灯り。ごく弱い明滅。 */
+@keyframes gdf-lamp {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 0.85; }
+}
+
+/* GD 実行中セクション全体（ステージ・ログ・操作を 1 つの空間として見せる）。 */
+.gdf-shell {
+  border-radius: 22px;
+  padding: 10px;
+  background: linear-gradient(180deg, #10291f 0%, #0c1f19 100%);
+  box-shadow: 0 18px 40px -22px rgb(5 20 14 / 0.75);
+  outline: 1px solid rgb(120 180 140 / 0.22);
+  outline-offset: -1px;
+}
+@media (min-width: 640px) {
+  .gdf-shell { padding: 14px; border-radius: 26px; }
+}
+
+/* ステージ本体。--gdf-* が円の形（半径・中心・アバターサイズ）を決める。 */
+.gdf-stage {
+  --gdf-rx: 40%;
+  --gdf-ry: 29%;
+  --gdf-cy: 54%;
+  --gdf-center-y: 47%;
+  --gdf-avatar: 44px;
+  --gdf-plate-fs: 10px;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 5 / 6;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0c221c;
+  isolation: isolate;
+}
+@media (min-width: 640px) {
+  .gdf-stage {
+    --gdf-rx: 34%;
+    --gdf-ry: 30%;
+    --gdf-cy: 50%;
+    --gdf-center-y: 40%;
+    --gdf-avatar: 68px;
+    --gdf-plate-fs: 11.5px;
+    aspect-ratio: 16 / 10;
+    border-radius: 20px;
+  }
+}
+@media (min-width: 1024px) {
+  .gdf-stage {
+    --gdf-rx: 33%;
+    --gdf-ry: 34%;
+    --gdf-avatar: 76px;
+    --gdf-plate-fs: 12px;
+    aspect-ratio: 16 / 9;
+  }
+}
+/* 人数が多いほど席が詰まるので、円をわずかに広げて重なりを抑える。 */
+.gdf-stage[data-count='7'],
+.gdf-stage[data-count='8'],
+.gdf-stage[data-count='9'] { --gdf-rx: 42%; }
+.gdf-stage[data-count='7'] .gdf-center,
+.gdf-stage[data-count='8'] .gdf-center,
+.gdf-stage[data-count='9'] .gdf-center { width: min(38%, 132px); }
+@media (min-width: 640px) {
+  .gdf-stage[data-count='7'],
+  .gdf-stage[data-count='8'],
+  .gdf-stage[data-count='9'] { --gdf-rx: 37%; }
+}
+
+.gdf-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+/* 木々のあいだの小さな暖色の灯り。 */
+.gdf-lamp {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgb(255 214 150 / 0.85) 0%, rgb(255 196 118 / 0.28) 42%, rgb(255 196 118 / 0) 72%);
+  z-index: 1;
+  animation: gdf-lamp 5.5s ease-in-out infinite;
+}
+.gdf-lamp--a { left: 13%; top: 22%; }
+.gdf-lamp--b { right: 16%; top: 15%; width: 20px; height: 20px; animation-delay: 1.6s; }
+.gdf-lamp--c { left: 62%; top: 30%; width: 16px; height: 16px; animation-delay: 3.1s; }
+
+/* ステージ上部の情報行（参加者数・同期状態など。呼び出し側が差し込む）。 */
+.gdf-stage__header {
+  position: absolute;
+  inset: 8px 10px auto 10px;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.gdf-stage__headerSlot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  pointer-events: auto;
+}
+.gdf-stage__headerSlot--end { justify-content: flex-end; }
+
+/* 円の中央。参加者が主役なので、テーマ・残り時間だけを小さく置く。 */
+.gdf-center {
+  position: absolute;
+  left: 50%;
+  top: var(--gdf-center-y);
+  transform: translate(-50%, -50%);
+  /* 円の中央にあるので、奥の席（z 10〜19）より前・手前の席（z 21〜30）より後ろに置く。
+     ＝ 参加者の奥行きと矛盾しない重なりになる。 */
+  z-index: 20;
+  width: min(46%, 160px);
+  text-align: center;
+  padding: 5px 8px;
+  border-radius: 12px;
+  background: rgb(8 24 19 / 0.34);
+  backdrop-filter: blur(2px);
+  text-shadow: 0 1px 3px rgb(3 12 9 / 0.75);
+  pointer-events: none;
+}
+.gdf-center__label {
+  display: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #a7d3b4;
+}
+.gdf-center__theme {
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #f2fbf3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.gdf-center__timer { margin-top: 2px; }
+.gdf-center__status {
+  margin-top: 2px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: #ffe0ad;
+}
+@media (min-width: 640px) {
+  .gdf-center { width: min(36%, 220px); padding: 7px 10px; }
+  .gdf-stage[data-count='7'] .gdf-center,
+  .gdf-stage[data-count='8'] .gdf-center,
+  .gdf-stage[data-count='9'] .gdf-center { width: min(32%, 200px); }
+  .gdf-center__label { display: block; }
+  .gdf-center__theme { font-size: 12px; }
+  .gdf-center__status { font-size: 11px; }
+}
+
+/* 残り時間（中央）。 */
+.gdf-clock {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: #eafaee;
+  font-variant-numeric: tabular-nums;
+}
+.gdf-clock--expired { color: #ffb4a6; }
+.gdf-clock__note { font-size: 9px; color: #cfe6d5; }
+@media (min-width: 640px) {
+  .gdf-clock { font-size: 20px; }
+  .gdf-clock__note { font-size: 9.5px; }
+}
+
+/* z-index を持たせない（席ごとの奥行き z-index を stage の重なり順にそのまま参加させる）。 */
+.gdf-ring { position: absolute; inset: 0; }
+
+/* ── 座席（1 人ぶん） ────────────────────────────────────────
+   left/top は「足元（地面との接地点）」。translate(-50%,-100%) で
+   アバターの底辺をその点に合わせ、名前札はさらに下へ絶対配置する。 */
+.gdf-seat {
+  position: absolute;
+  left: calc(50% + var(--gdf-rx) * var(--gdf-x));
+  top: calc(var(--gdf-cy) + var(--gdf-ry) * var(--gdf-y));
+  width: var(--gdf-avatar);
+  transform: translate(-50%, -100%);
+}
+.gdf-seat__figure {
+  position: relative;
+  width: 100%;
+  transform: scale(calc(var(--gdf-sc) * var(--gdf-boost, 1)));
+  transform-origin: 50% 100%;
+  transition: transform 0.35s ease, filter 0.35s ease;
+}
+.gdf-seat__figure--left { opacity: 0.45; filter: grayscale(0.5); }
+.gdf-figure { display: block; width: 100%; height: auto; }
+
+/* 発言中の強調（自然な範囲：わずかな拡大・暖色のグロー・足元リング）。 */
+.gdf-seat[data-speech='speaking'] { --gdf-boost: 1.07; }
+.gdf-seat[data-speech='speaking'] .gdf-figure {
+  filter: drop-shadow(0 0 9px rgb(255 208 140 / 0.55)) brightness(1.08);
+}
+.gdf-seat[data-speech='thinking'] .gdf-figure {
+  filter: drop-shadow(0 0 7px rgb(178 222 198 / 0.45));
+}
+.gdf-seat__ring {
+  position: absolute;
+  left: 50%;
+  bottom: -2%;
+  width: 82%;
+  aspect-ratio: 3 / 1;
+  transform: translateX(-50%);
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgb(255 214 150 / 0.5), rgb(255 214 150 / 0));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.gdf-seat[data-speech='speaking'] .gdf-seat__ring {
+  opacity: 1;
+  animation: gdf-ring 2.6s ease-in-out infinite;
+}
+
+/* 会話中インジケータ「・・・」（頭上）。 */
+.gdf-seat__bubble {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  margin-bottom: 4px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border-radius: 9999px;
+  background: rgb(252 246 232 / 0.94);
+  box-shadow: 0 2px 6px rgb(4 16 11 / 0.45);
+}
+/* 吹き出しの尻尾（頭の方を指す）。 */
+.gdf-seat__bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -55%) rotate(45deg);
+  background: rgb(252 246 232 / 0.94);
+  border-radius: 1px;
+}
+.gdf-seat__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: #3c5f49;
+  animation: gdf-dot 1.3s ease-in-out infinite;
+}
+.gdf-seat__dot:nth-child(2) { animation-delay: 0.18s; }
+.gdf-seat__dot:nth-child(3) { animation-delay: 0.36s; }
+.gdf-seat__bubble[data-speech='thinking'] { background: rgb(226 240 231 / 0.92); }
+.gdf-seat__bubble[data-speech='thinking']::after { background: rgb(226 240 231 / 0.92); }
+
+/* 名前札（アバターの真下）。 */
+.gdf-seat__plate {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  margin-top: 3px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(var(--gdf-avatar) * 1.75);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgb(6 20 15 / 0.66);
+  text-align: center;
+}
+.gdf-seat__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-size: var(--gdf-plate-fs);
+  font-weight: 700;
+  line-height: 1.25;
+  color: #f4fbf4;
+}
+/* 長い表示名は「…」で省略する（DOM 上には完全な名前が残る）。 */
+.gdf-seat__nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gdf-seat__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.gdf-seat__tag {
+  padding: 0 4px;
+  border-radius: 9999px;
+  font-size: calc(var(--gdf-plate-fs) * 0.8);
+  font-weight: 700;
+  line-height: 1.5;
+  color: #dff0e2;
+  background: rgb(255 255 255 / 0.16);
+  white-space: nowrap;
+}
+.gdf-seat__tag--self { background: rgb(255 214 150 / 0.28); color: #ffe6bd; }
+.gdf-seat__tag--ai   { background: rgb(126 224 190 / 0.22); color: #bff3dd; }
+.gdf-seat__role {
+  display: none;
+  font-size: calc(var(--gdf-plate-fs) * 0.82);
+  line-height: 1.5;
+  color: #b9d6c2;
+  white-space: nowrap;
+}
+@media (min-width: 640px) {
+  .gdf-seat__plate { max-width: calc(var(--gdf-avatar) * 2.05); }
+  .gdf-seat__role { display: inline; }
+}
+.gdf-seat__state {
+  font-size: calc(var(--gdf-plate-fs) * 0.85);
+  font-weight: 700;
+  line-height: 1.4;
+  color: #ffdca6;
+}
+.gdf-seat__state[data-speech='thinking'] { color: #b6e5cd; }
+.gdf-seat__presence {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 9999px;
+  background: #94a3a0;
+}
+.gdf-seat__presence[data-state='online']       { background: #4ade80; }
+.gdf-seat__presence[data-state='disconnected'] { background: #fbbf24; }
+.gdf-seat__presence[data-state='stale']        { background: #94a3a0; }
+
+/* 自分の席は輪郭で分かるようにする（色だけに依存しない）。 */
+.gdf-seat[data-self='true'] .gdf-seat__plate {
+  outline: 1.5px solid rgb(255 214 150 / 0.75);
+  outline-offset: -1px;
+}
+
+/* ── ステージ下の暗色パネル（ログ・入力・操作） ───────────────── */
+.gdf-panel {
+  border-radius: 16px;
+  background: rgb(255 255 255 / 0.06);
+  outline: 1px solid rgb(160 210 175 / 0.16);
+  outline-offset: -1px;
+  padding: 12px;
+  color: #e8f4ea;
+}
+.gdf-panel__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #a7d3b4;
+}
+.gdf-log {
+  max-height: 34vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+.gdf-log__empty { font-size: 12px; line-height: 1.7; color: #b9d6c2; text-align: center; padding: 14px 0; }
+.gdf-msg { display: flex; flex-direction: column; gap: 2px; }
+.gdf-msg--self { align-items: flex-end; }
+.gdf-msg__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #bfe0c8;
+}
+.gdf-msg__body {
+  max-width: 88%;
+  border-radius: 14px;
+  padding: 7px 11px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: rgb(255 255 255 / 0.1);
+  color: #f1faf2;
+}
+.gdf-msg--self .gdf-msg__body { background: rgb(255 214 150 / 0.2); color: #fff3df; }
+.gdf-msg--ai .gdf-msg__body   { background: rgb(126 224 190 / 0.14); }
+.gdf-msg--pending .gdf-msg__body { opacity: 0.7; }
+.gdf-msg--failed .gdf-msg__body  { background: rgb(248 113 113 / 0.18); }
+.gdf-msg__system { font-size: 11px; color: #a7c7b0; text-align: center; padding: 2px 0; }
+.gdf-msg__note { font-size: 10px; color: #cfe6d5; }
+
+.gdf-field {
+  width: 100%;
+  resize: none;
+  border-radius: 12px;
+  border: 1px solid rgb(160 210 175 / 0.3);
+  background: rgb(6 20 15 / 0.55);
+  padding: 9px 11px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #f1faf2;
+}
+.gdf-field::placeholder { color: #9ec2a9; }
+.gdf-field:focus { outline: 2px solid #86c8a3; outline-offset: 1px; }
+.gdf-field:disabled { opacity: 0.55; }
+
+.gdf-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gdf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+  cursor: pointer;
+}
+.gdf-btn:focus-visible { outline: 2px solid #ffd79a; outline-offset: 2px; }
+.gdf-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.gdf-btn--primary { background: #e8b473; color: #24160a; }
+.gdf-btn--primary:hover:not(:disabled) { background: #f0c68e; }
+.gdf-btn--ghost {
+  background: rgb(255 255 255 / 0.1);
+  color: #e8f4ea;
+  outline: 1px solid rgb(160 210 175 / 0.3);
+  outline-offset: -1px;
+}
+.gdf-btn--ghost:hover:not(:disabled) { background: rgb(255 255 255 / 0.16); }
+.gdf-btn--danger { background: rgb(248 113 113 / 0.16); color: #ffc9c2; }
+.gdf-btn--danger:hover:not(:disabled) { background: rgb(248 113 113 / 0.26); }
+
+.gdf-note { font-size: 11px; line-height: 1.6; color: #bfd8c6; }
+.gdf-alert { font-size: 12px; line-height: 1.6; color: #ffc9c2; }
+
+/* ステージ上のバッジ（参加者数・同期状態など）。 */
+.gdf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #e9f6ec;
+  background: rgb(6 20 15 / 0.6);
+  outline: 1px solid rgb(160 210 175 / 0.2);
+  outline-offset: -1px;
+  white-space: nowrap;
+}
+
+/* ステージ上に載せる既存バッジ（同期モード / 接続状態）は暗色背景に合わせて明色へ。
+   状態を表すドットの色（emerald / amber / slate）はそのまま活かす。 */
+.gdf-chip [data-testid='gd-sync-mode'],
+.gdf-chip [data-testid='gd-connection-badge'] {
+  color: #e2f3e7;
+  font-size: 11px;
+}
+
+/* 読み上げ専用（発話状態を色だけで伝えないための補助）。 */
+.gdf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gdf-seat__dot,
+  .gdf-seat[data-speech='speaking'] .gdf-seat__ring,
+  .gdf-lamp {
+    animation: none !important;
+  }
+  .gdf-seat__figure { transition: none; }
+  .gdf-seat[data-speech='speaking'] { --gdf-boost: 1; }
+  .gdf-seat__dot { opacity: 1; }
+}
