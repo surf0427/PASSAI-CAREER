@@ -27,16 +27,27 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 //     FEATURES と /career/consultation)。企業マッチングは flag 既定 OFF のため記載しない。
 //   - (STEP-LEGAL-03 当時) CAREER は課金導線を持たないため、第 4 / 5 条の有料プランは
 //     受験版の機能に対するものである旨を明記していた。
-//   ★ 2026-08-24: この前提は既に失効している。CAREER には単一の有料プランと決済導線があり
-//     (/career/billing)、AI 実行は server 側の有料ゲートで guest・未契約を拒否する
-//     (lib/careerBilling/aiAccess.ts + entitlement.ts / app/api/career/** の 27 route)。
-//     client の PlanGate に /career が無いのは同 gate が受験版専用だからであって、
-//     CAREER が無料だからではない。
-//   ★ よって第 4 条本文の「CAREER には有料プランおよび決済の仕組みがありません / すべての
-//     機能を無料で提供しています」は実態と食い違う。特商法ページ (/legal/commerce) は
-//     CAREER を有償役務として価格表示しており、規約本文と矛盾する。**別途の規約改定で
-//     是正が必要**（本コメント修正の対象外。料金条項の本文は今回一切変更していない）。
 //   - 料金・返金・保持期間など、コードから実証できない新しい事業条件は追加しない。
+//
+// LEGAL-BILL (2026-08-25): 上記の前提は失効しており、第 4 / 5 条の本文が虚偽になっていた
+//   （規約は「CAREER は無料・決済の仕組みなし」、特商法ページは「月額3,000円（税込）／
+//   単一プラン」を法定表示、という真正面からの矛盾）。第 4 / 5 条を実態へ揃えた。
+//
+//   実装事実（read-only で確認）:
+//     - CAREER は **単一の有料プラン**。tier 抽象は廃止済み（lib/careerBilling/plans.ts）
+//     - 権利判定は status のみ（active/trialing/past_due、canceled でも期末まで grace）
+//       … lib/careerBilling/entitlementPolicy.ts
+//     - AI 実行は server 側の有料ゲートで guest・未契約を拒否（lib/careerBilling/aiAccess.ts）
+//     - 一方 /career の **page** は課金ゲートされていない（PlanGate の PROTECTED_PREFIXES は
+//       受験版専用で /career を含まない）。つまり未契約でも閲覧はでき、AI 実行だけができない。
+//       第 4 条 2 号 / 第 5 条 4 号はこの実態どおりに書いてある。
+//     - 解約導線の名称は製品で異なる（CAREER =「契約を管理」/ 受験版 =「請求情報を管理」）。
+//       第 5 条 1 号は両方を併記した（旧文は受験版の名称だけで、CAREER 利用者が辿れない）。
+//
+//   ★ 金額は本ファイルへ **ハードコードしない**。公開価格の正本は lib/careerPricing.ts で、
+//     法定表示は /legal/commerce が担う。規約は販売条件をそちらへ参照させるだけに留める
+//     （同じ金額を 3 ページで二重管理しない）。
+//   ★ Stripe / checkout / entitlement / 価格そのものは一切変更していない（文言のみの是正）。
 //
 // LEGAL-AGG (2026-08-24): 第 11 条 (知的財産権) を改定し、ユーザーコンテンツの利用許諾を
 //   目的限定の非独占ライセンスとして書き直したうえで、cross-user の統計・傾向情報の扱いを
@@ -64,7 +75,8 @@ const ENACTED_AT = '2026年6月2日';
 // PASSAI CAREER (新卒就活版) を適用対象へ追加した改定。
 // 2026-08-24: 第 11 条 (知的財産権) にユーザーコンテンツの利用許諾範囲と、集計・一般化された
 //   統計・傾向情報の扱いを明記した改定。
-const LAST_REVISED_AT = '2026年8月24日';
+// 2026-08-25: 第 4 条 (利用料金) / 第 5 条 (解約) を PASSAI CAREER の有料提供の実態へ揃えた改定。
+const LAST_REVISED_AT = '2026年8月25日';
 
 export default function TermsPage() {
   return (
@@ -214,9 +226,17 @@ export default function TermsPage() {
           <LegalArticle number={4} title="利用料金">
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-2">
               <p className="text-sm text-slate-700 leading-relaxed">
-                本条および第 5 条 (解約) は、<strong>PASSAI (大学受験向け)</strong> の
-                有料プランについて定めるものです。PASSAI CAREER (新卒就活向け) には
-                現在、有料プランおよび決済の仕組みがありません。
+                本条および第 5 条 (解約) は、<strong>PASSAI (大学受験向け)</strong> および{' '}
+                <strong>PASSAI CAREER (新卒就活向け)</strong> の有料プランについて定める
+                ものです。料金、支払方法その他の販売条件は、本サービス内の料金プラン
+                ページおよび{' '}
+                <Link
+                  href="/legal/commerce"
+                  className="text-brand-700 hover:underline"
+                >
+                  特定商取引法に基づく表記
+                </Link>{' '}
+                に表示します。
               </p>
             </div>
             <ol className="list-decimal pl-5 space-y-1.5">
@@ -225,9 +245,10 @@ export default function TermsPage() {
                 契約により利用可能となります。
               </li>
               <li>
-                PASSAI CAREER (新卒就活向け) は、現在すべての機能を無料で提供して
-                います。将来、有料プランを導入する場合は、第 12 条に従い事前に告知
-                します。
+                PASSAI CAREER (新卒就活向け) は、単一の有料プランにより提供します。
+                AI による添削・評価・相談等の機能は、有効な契約があるユーザーのみが
+                利用できます。契約のないユーザーは、保存済みの内容の閲覧等はできますが、
+                AI 機能を実行することはできません。
               </li>
               <li>
                 各プランの料金、利用可能な機能、機能ごとの月次利用上限は、本サービス内の
@@ -254,7 +275,8 @@ export default function TermsPage() {
           <LegalArticle number={5} title="解約">
             <ol className="list-decimal pl-5 space-y-1.5">
               <li>
-                ユーザーは、マイページ内の「請求情報を管理」 (Stripe Billing Portal) から
+                ユーザーは、マイページの解約導線 (PASSAI CAREER は「契約を管理」、
+                PASSAI は「請求情報を管理」) から Stripe カスタマーポータルへ進み、
                 いつでも解約手続きを行うことができます。
               </li>
               <li>
@@ -265,8 +287,10 @@ export default function TermsPage() {
                 契約期間途中の解約に伴う日割り計算による返金は原則として行いません。
               </li>
               <li>
-                解約後、当該プランに紐づく機能の月次利用上限はリセットされ、無料プラン
-                相当の利用条件に戻ります。
+                解約後、PASSAI (大学受験向け) では当該プランに紐づく機能の月次利用上限が
+                リセットされ、無料プラン相当の利用条件に戻ります。PASSAI CAREER には
+                無料プランがないため、契約期間の終了後は AI 機能を実行できなくなります
+                (保存済みの内容の閲覧等は引き続きご利用いただけます)。
               </li>
             </ol>
           </LegalArticle>
