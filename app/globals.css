@@ -522,12 +522,29 @@ body {
   z-index: 20;
   width: min(46%, 160px);
   text-align: center;
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-radius: 12px;
-  background: rgb(8 24 19 / 0.34);
+  /* 上端に光、下端に影＝厚みのあるプレート。落ち影で床から浮いて見せる。 */
+  background: linear-gradient(180deg, rgb(24 52 40 / 0.5) 0%, rgb(6 20 15 / 0.46) 100%);
+  box-shadow:
+    inset 0 1px 0 rgb(214 240 222 / 0.22),
+    inset 0 -1px 0 rgb(0 0 0 / 0.3),
+    0 10px 18px -10px rgb(2 12 8 / 0.85);
   backdrop-filter: blur(2px);
   text-shadow: 0 1px 3px rgb(3 12 9 / 0.75);
   pointer-events: none;
+}
+/* プレートの落ち影（床側）。HUD が空間の中に置かれているように見せる。 */
+.gdf-center::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 3px);
+  width: 78%;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(2 12 8 / 0.45), rgb(2 12 8 / 0));
 }
 /* ★ 1 行固定。テーマ全文はステージ下の「テーマ」パネルに出す。
    中央 HUD の高さが可変だと、奥の席の名前札と衝突しうるため高さを固定する。 */
@@ -601,22 +618,33 @@ body {
   transition: transform 0.35s ease, filter 0.35s ease;
 }
 .gdf-seat__figure--left { opacity: 0.45; filter: grayscale(0.5); }
-.gdf-figure { display: block; width: 100%; height: auto; }
+/* 空気遠近: 奥（--gdf-depth が 0 に近い）ほど彩度・明度を落として霞ませる。
+   これだけで平面的な並びが「奥行きのある空間」に見える。 */
+.gdf-figure {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter:
+    saturate(calc(0.78 + 0.22 * var(--gdf-depth, 1)))
+    brightness(calc(0.82 + 0.18 * var(--gdf-depth, 1)));
+}
 
 /* 発言中の強調（自然な範囲：わずかな拡大・暖色のグロー・足元リング）。 */
 .gdf-seat[data-speech='speaking'] { --gdf-boost: 1.07; }
 .gdf-seat[data-speech='speaking'] .gdf-figure {
-  filter: drop-shadow(0 0 9px rgb(255 208 140 / 0.55)) brightness(1.08);
+  filter: drop-shadow(0 0 9px rgb(255 208 140 / 0.55)) saturate(1.04) brightness(1.06);
 }
 .gdf-seat[data-speech='thinking'] .gdf-figure {
-  filter: drop-shadow(0 0 7px rgb(178 222 198 / 0.45));
+  filter:
+    drop-shadow(0 0 7px rgb(178 222 198 / 0.45))
+    brightness(calc(0.9 + 0.1 * var(--gdf-depth, 1)));
 }
 .gdf-seat__ring {
   position: absolute;
   left: 50%;
-  bottom: -2%;
-  width: 82%;
-  aspect-ratio: 3 / 1;
+  bottom: -1%;
+  width: 88%;
+  aspect-ratio: 3.4 / 1;
   transform: translateX(-50%);
   border-radius: 9999px;
   background: radial-gradient(closest-side, rgb(255 214 150 / 0.5), rgb(255 214 150 / 0));
