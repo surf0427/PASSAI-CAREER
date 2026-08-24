@@ -25,9 +25,17 @@ import { FooterSection } from '@/app/components/landing/FooterSection';
 //     条項が存在しなかったため、適用対象を 2 プロダクトへ明示的に広げる。
 //   - 記載する CAREER 機能は **実装済み route があるものだけ** (app/career/home/page.tsx の
 //     FEATURES と /career/consultation)。企業マッチングは flag 既定 OFF のため記載しない。
-//   - CAREER は課金導線を持たない (app/components/PlanGate.tsx の PROTECTED_PREFIXES に
-//     /career が無い = 未課金でも全機能に到達できる)。よって第 4 / 5 条の有料プランは
-//     受験版の機能に対するものである旨を明記し、CAREER を有料であるかのように読ませない。
+//   - (STEP-LEGAL-03 当時) CAREER は課金導線を持たないため、第 4 / 5 条の有料プランは
+//     受験版の機能に対するものである旨を明記していた。
+//   ★ 2026-08-24: この前提は既に失効している。CAREER には単一の有料プランと決済導線があり
+//     (/career/billing)、AI 実行は server 側の有料ゲートで guest・未契約を拒否する
+//     (lib/careerBilling/aiAccess.ts + entitlement.ts / app/api/career/** の 27 route)。
+//     client の PlanGate に /career が無いのは同 gate が受験版専用だからであって、
+//     CAREER が無料だからではない。
+//   ★ よって第 4 条本文の「CAREER には有料プランおよび決済の仕組みがありません / すべての
+//     機能を無料で提供しています」は実態と食い違う。特商法ページ (/legal/commerce) は
+//     CAREER を有償役務として価格表示しており、規約本文と矛盾する。**別途の規約改定で
+//     是正が必要**（本コメント修正の対象外。料金条項の本文は今回一切変更していない）。
 //   - 料金・返金・保持期間など、コードから実証できない新しい事業条件は追加しない。
 //
 // LEGAL-AGG (2026-08-24): 第 11 条 (知的財産権) を改定し、ユーザーコンテンツの利用許諾を
