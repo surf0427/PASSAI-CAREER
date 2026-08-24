@@ -438,6 +438,19 @@ export const CAREER_AI_RATE_LIMITS = {
     windows: [{ limit: 4, windowSeconds: 60 }, { limit: 12, windowSeconds: 3600 }],
     failClosed: true,
   },
+  // プレゼン発表資料（ファイル）のアップロード / 削除。
+  //   AI は呼ばないが 10MB の multipart を受けるため、帯域・storage の濫用を止める必要がある。
+  //   正常系は 1 セッション 1 回（差し替え・削除を数回）なので member 6/分・30/時で十分。
+  //   guest は有料ゲートで先に落ちるが、guard の 2 系統契約に合わせて rule は持つ（fail-closed）。
+  presentationMaterialMember: {
+    namespace: 'career_presentation_material_member',
+    windows: [{ limit: 6, windowSeconds: 60 }, { limit: 30, windowSeconds: 3600 }],
+  },
+  presentationMaterialGuest: {
+    namespace: 'career_presentation_material_guest',
+    windows: [{ limit: 3, windowSeconds: 60 }, { limit: 10, windowSeconds: 3600 }],
+    failClosed: true,
+  },
   consultationMember: {
     namespace: 'career_consultation_member',
     windows: [{ limit: 20, windowSeconds: 60 }, { limit: 120, windowSeconds: 3600 }],

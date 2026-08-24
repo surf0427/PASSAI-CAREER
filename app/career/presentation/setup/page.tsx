@@ -32,10 +32,18 @@ import {
   resolveDifficulty,
   CAREER_PRESENTATION_NEW_SESSION_TYPE,
 } from '../presentationModes';
+import {
+  CAREER_PRESENTATION_MATERIAL_ACCEPT,
+  CAREER_PRESENTATION_MATERIAL_MAX_BYTES,
+  CAREER_PRESENTATION_MATERIAL_TYPE_LABEL,
+  formatMaterialBytes,
+  isAllowedCareerPresentationMaterialMime,
+} from '@/lib/careerPresentation/material';
 import type {
   CareerPresentationSession,
   CareerPresentationConfig,
   CareerPresentationTarget,
+  CareerPresentationMaterialFile,
 } from '@/types/careerPresentation';
 
 const subscribeMount = () => () => {};
@@ -76,6 +84,14 @@ export default function CareerPresentationSetupPage() {
   // 発表資料（任意）。実際の発表で使う資料・スライドの内容を貼り付ける。
   //   評価時の補助材料として evaluate へ渡す（未入力なら従来どおりの評価）。
   const [material, setMaterial] = useState('');
+  // 発表資料ファイル（任意）。アップロード済みの参照 metadata（実体は private storage）。
+  const [materialFile, setMaterialFile] = useState<CareerPresentationMaterialFile | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [materialFileError, setMaterialFileError] = useState<string | null>(null);
+  // ★ セッション id をこの画面の入場時に確定させる。
+  //   資料ファイルの保存先 path（`${userId}/${sessionId}/…`）を server が組み立てるため、
+  //   アップロード時点と「発表を始める」で作る session とで id が一致している必要がある。
+  const [sessionId] = useState<string>(() => newId());
 
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -143,6 +159,62 @@ export default function CareerPresentationSetupPage() {
     }
   }
 
+  // 発表資料ファイルを選択 → 即アップロード（実体は private storage / client は参照だけ持つ）。
+  async function handleMaterialFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setMaterialFileError(null);
+    const file = e.target.files?.[0] ?? null;
+    // 同じファイルを選び直せるよう input はここで空にする。
+    e.target.value = '';
+    if (!file) return;
+    // client 側の事前検証（UX 用。正本は server 側の検証）。
+    if (!isAllowedCareerPresentationMaterialMime(file.type)) {
+      setMaterialFileError(`対応形式は ${CAREER_PRESENTATION_MATERIAL_TYPE_LABEL} です。`);
+      return;
+    }
+    if (file.size > CAREER_PRESENTATION_MATERIAL_MAX_BYTES) {
+      setMaterialFileError('ファイルサイズは最大 10MB までです。');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('sessionId', sessionId);
+      const res = await fetch('/api/career/presentation/material', {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? 'ファイルのアップロードに失敗しました。');
+      }
+      const data = (await res.json()) as { materialFile: CareerPresentationMaterialFile };
+      setMaterialFile(data.materialFile);
+    } catch (err) {
+      setMaterialFileError(
+        err instanceof Error ? err.message : 'ファイルのアップロードに失敗しました。',
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // 添付を外す（storage の実体も消す。失敗しても client の参照は外す）。
+  async function handleRemoveMaterialFile() {
+    setMaterialFileError(null);
+    setMaterialFile(null);
+    try {
+      await fetch('/api/career/presentation/material', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch {
+      // 実体が残っても評価には使われない（session が参照を持たない）。UI はブロックしない。
+    }
+  }
+
   function handleStart() {
     if (loading) return;
     if (!theme.trim()) {
@@ -161,7 +233,8 @@ export default function CareerPresentationSetupPage() {
     const config = buildConfig();
     const now = new Date().toISOString();
     const session: CareerPresentationSession = {
-      id: newId(),
+      // ★ 資料ファイルのアップロード時に使った id と同一（path の一致を保証する）。
+      id: sessionId,
       createdAt: now,
       updatedAt: now,
       status: 'in_progress',
@@ -181,6 +254,8 @@ export default function CareerPresentationSetupPage() {
     //   （未入力のセッションに空文字の幽霊フィールドを作らない）。
     const normalizedMaterial = normalizePresentationMaterial(material);
     if (normalizedMaterial) session.material = normalizedMaterial;
+    // 発表資料ファイル（任意）。参照 metadata だけを session に載せる（blob は保存しない）。
+    if (materialFile) session.materialFile = materialFile;
     upsertPresentationSession(session);
     // Supabase durable mirror（best-effort / member のみ。config 列は無いため mirror されない）。
     if (userId) void upsertCareerPresentationSessionsToSupabase(userId, [session]);
@@ -292,6 +367,53 @@ export default function CareerPresentationSetupPage() {
             {materialLength.toLocaleString()} / {CAREER_PRESENTATION_MATERIAL_MAX_CHARS.toLocaleString()}
           </p>
         </div>
+        {/* ① ファイルを添付する（PDF / PNG / JPG）。実体は private storage に保存する。 */}
+        <div className="mb-4 rounded-lg bg-white ring-1 ring-slate-200 px-3 py-3">
+          {materialFile ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 text-sm text-slate-700">
+                📎{' '}
+                <span className="font-semibold break-all">{materialFile.fileName}</span>{' '}
+                <span className="text-slate-400">
+                  ({formatMaterialBytes(materialFile.sizeBytes)})
+                </span>
+              </p>
+              <button
+                type="button"
+                onClick={handleRemoveMaterialFile}
+                className="text-xs font-semibold text-slate-500 hover:text-red-600 hover:underline"
+              >
+                添付を外す
+              </button>
+            </div>
+          ) : (
+            <label className="flex flex-wrap items-center gap-3 cursor-pointer">
+              <span className="inline-flex items-center rounded-lg px-3.5 py-2 text-sm font-semibold ring-1 ring-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                {uploading ? 'アップロード中…' : 'ファイルを選択'}
+              </span>
+              <span className="text-[11px] text-slate-400">
+                {CAREER_PRESENTATION_MATERIAL_TYPE_LABEL} ・ 最大10MB
+              </span>
+              <input
+                type="file"
+                accept={CAREER_PRESENTATION_MATERIAL_ACCEPT}
+                onChange={handleMaterialFileChange}
+                disabled={uploading}
+                className="hidden"
+              />
+            </label>
+          )}
+          {materialFileError && (
+            <p className="mt-2 text-xs text-red-600 leading-relaxed" role="alert">
+              {materialFileError}
+            </p>
+          )}
+        </div>
+
+        {/* ② テキストで貼り付ける。①と②はどちらか一方でも両方でも使える。 */}
+        <p className="mb-2 text-[11px] font-semibold text-slate-500">
+          または、資料のテキストを貼り付け
+        </p>
         <Textarea
           value={material}
           onChange={(e) => setMaterial(e.target.value)}
@@ -299,7 +421,7 @@ export default function CareerPresentationSetupPage() {
           rows={6}
         />
         <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
-          実際の発表で使用する資料やスライドの内容を貼り付けてください。入力した資料もAIの評価に使用されます（未入力でも評価は行われ、資料がないことによる減点はありません）。
+          実際の発表で使用する資料やスライドを添付するか、内容を貼り付けてください。提出した資料もAIの評価に使用されます（未入力でも評価は行われ、資料がないことによる減点はありません）。
         </p>
         {materialOverLimit && (
           <p className="mt-2 text-xs text-red-600 leading-relaxed" role="alert">
@@ -319,7 +441,7 @@ export default function CareerPresentationSetupPage() {
           variant="primary"
           size="md"
           onClick={handleStart}
-          disabled={loading || materialOverLimit}
+          disabled={loading || materialOverLimit || uploading}
           className="w-full sm:w-auto"
         >
           {loading ? '準備中…' : '発表を始める →'}

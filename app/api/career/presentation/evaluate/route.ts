@@ -28,6 +28,14 @@ import {
   normalizePresentationMaterial,
 } from '@/app/career/presentation/presentationModes';
 import {
+  CAREER_PRESENTATION_MATERIAL_BUCKET,
+  CAREER_PRESENTATION_MATERIAL_MAX_BYTES,
+  buildCareerPresentationMaterialPath,
+  normalizeMaterialFileName,
+} from '@/lib/careerPresentation/material';
+import { getCareerServiceRoleSupabaseClient } from '@/lib/careerSupabase/serviceRoleClient';
+import { devWarn } from '@/lib/devLog';
+import {
   CAREER_PRESENTATION_MODEL,
   CAREER_PRESENTATION_AXES,
   buildPresentationSystemParts,
@@ -35,6 +43,7 @@ import {
   buildEvaluateInstruction,
   computePresentationTotalScore,
   presentationRankFromScore,
+  buildEvaluateUserContent,
 } from '../presentationPrompt';
 import { resolvePresentationContextInputs } from '../resolveContextInputs';
 // Data Spine Layer 2（Personal Memory）: 全 Career AI route 共有の解決 seam。
@@ -183,6 +192,8 @@ export async function POST(req: Request) {
     transcript?: unknown;
     // 発表資料（任意・本人が setup で貼り付けたテキスト）。未指定 / 空なら従来どおりの評価。
     material?: unknown;
+    // 発表資料ファイル（任意）の参照。★ path は受け取っても使わない（identity から再生成する）。
+    materialFile?: unknown;
   };
 
   const transcript = str(b.transcript);
@@ -200,6 +211,11 @@ export async function POST(req: Request) {
   if (typeof b.material === 'string' && b.material.trim().length > CAREER_PRESENTATION_MATERIAL_MAX_CHARS) {
     return Response.json({ error: '発表資料が長すぎます。' }, { status: 413 });
   }
+
+  // 発表資料ファイル（任意）。ここでは「参照が妥当か」だけを見る（download は AI 直前）。
+  //   ★ client が送ってきた path は **使わない**。identity（server session）と sessionId から
+  //     path を再生成するので、他人のファイル・任意 path を指すことは構造的にできない。
+  const materialFileRef = resolveMaterialFileRef(b.materialFile, guard.identity);
 
   // 日次利用回数（PASSAI Career BASIC / プレゼン = 1 セッション 1 回）。
   //   ★ anchor は評価だけ。同一セッションの theme / Q&A は消費しない。
@@ -268,6 +284,13 @@ export async function POST(req: Request) {
       companyOfficial,
       personalMemory,
     });
+    // 発表資料ファイルを private storage から取得する（失敗時は資料ファイルなしで続行）。
+    //   ★ 劣化動作: 発表を終えたユーザーを storage 障害でブロックしない（受験版と同じ思想）。
+    //   ★ **prompt を組む前**に取得する。取得できたかどうかで system 指示と user block の
+    //     両方が決まるため、ここで確定させないと「資料を見ろという指示だけがあって資料が無い」
+    //     という乖離が起きる。
+    const materialFile = materialFileRef ? await loadMaterialFile(materialFileRef) : null;
+
     const system = [
       baseSystem,
       buildEvaluateInstruction({
@@ -275,9 +298,10 @@ export async function POST(req: Request) {
         config,
         presentationType: b.presentationType,
         hasCompanyOfficial,
-        // ★ user prompt 側に資料ブロックが実際に出るときだけ、資料を使う評価指示を足す
-        //   （system の指示と user の block を乖離させない。公式情報 block と同じ契約）。
-        hasMaterial: material !== '',
+        // ★ user 側に資料（貼り付けテキスト or 添付ファイル）が実際に載るときだけ、
+        //   資料を使う評価指示を足す（system の指示と user の block を乖離させない）。
+        hasMaterial: material !== '' || materialFile !== null,
+        hasMaterialFile: materialFile !== null,
       }),
     ].join('\n\n');
 
@@ -288,7 +312,14 @@ export async function POST(req: Request) {
       transcript,
       config,
       material,
+      hasMaterialFile: materialFile !== null,
     });
+
+    // 資料ファイルがあるときだけ multimodal content を組む（PDF=document / 画像=image）。
+    //   ★ 組み立て・prompt injection 境界は presentationPrompt の純関数が正本
+    //     （route は I/O だけを持ち、prompt の形は 1 箇所で決める）。
+    //   資料ファイルが無いときは従来どおり **文字列のまま**渡る（byte 互換）。
+    const userContent = buildEvaluateUserContent({ userPrompt, materialFile });
 
     let result: CareerPresentationFinalResult | null = null;
     const startedAt = Date.now();
@@ -311,7 +342,7 @@ export async function POST(req: Request) {
             max_tokens: MAX_OUTPUT_TOKENS,
             temperature: attempt === 2 ? 0 : 0.4,
             system,
-            messages: [{ role: 'user', content: userPrompt }],
+            messages: [{ role: 'user', content: userContent }],
           },
           { signal: createTimeoutSignal(callTimeoutMs) },
         )
@@ -358,6 +389,64 @@ export async function POST(req: Request) {
     );
   }
 }
+
+// ── 発表資料ファイル（任意）─────────────────────────────────────────
+//
+// client が送ってくるのは「どのセッションの資料か」と「何の形式か」だけ。
+// path は **必ず server が identity から再生成する**（受け取った path は読み捨てる）。
+// これにより、他人の資料・任意 path を指す request は構造的に成立しない（CASE H）。
+
+type MaterialFileRef = { path: string; mimeType: string; fileName: string };
+
+function resolveMaterialFileRef(
+  raw: unknown,
+  identity: { kind: 'member'; userId: string } | { kind: 'guest' },
+): MaterialFileRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  // guest は資料をアップロードできない（material route が有料ゲートで落とす）。
+  if (identity.kind !== 'member') return null;
+  const r = raw as { sessionId?: unknown; mimeType?: unknown; fileName?: unknown };
+  const mimeType = typeof r.mimeType === 'string' ? r.mimeType : '';
+  // ★ r.path は意図的に読まない（client 申告 path を信用しない）。
+  const path = buildCareerPresentationMaterialPath(identity.userId, r.sessionId, mimeType);
+  if (!path) return null;
+  return {
+    path,
+    mimeType,
+    fileName: normalizeMaterialFileName(r.fileName) || '発表資料',
+  };
+}
+
+/** private bucket から資料を取得して base64 化する。失敗時は null（資料なしで評価続行）。 */
+async function loadMaterialFile(
+  ref: MaterialFileRef,
+): Promise<{ mimeType: string; fileName: string; base64: string } | null> {
+  try {
+    const supabase = getCareerServiceRoleSupabaseClient();
+    const { data, error } = await supabase.storage
+      .from(CAREER_PRESENTATION_MATERIAL_BUCKET)
+      .download(ref.path);
+    if (error || !data) {
+      devWarn('[career/presentation/evaluate] material download failed', {
+        message: error?.message,
+      });
+      return null;
+    }
+    const buf = Buffer.from(await data.arrayBuffer());
+    // 実バイト数の最終確認（storage 側に何が入っていても上限を超えたものは AI へ渡さない）。
+    if (buf.byteLength <= 0 || buf.byteLength > CAREER_PRESENTATION_MATERIAL_MAX_BYTES) {
+      devWarn('[career/presentation/evaluate] material size out of range', {
+        bytes: buf.byteLength,
+      });
+      return null;
+    }
+    return { mimeType: ref.mimeType, fileName: ref.fileName, base64: buf.toString('base64') };
+  } catch (err) {
+    devWarn('[career/presentation/evaluate] material load threw', err);
+    return null;
+  }
+}
+
 
 // 秒数の正規化（0〜3600 にクランプ。不正は 0）。
 function clampSecond(value: unknown): number {

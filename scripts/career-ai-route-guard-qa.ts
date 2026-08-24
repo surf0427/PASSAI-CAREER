@@ -112,6 +112,13 @@ const ROUTES: Guarded[] = [
     guestRule: 'selfAnalysisQuestionGuest',
   },
   {
+    name: 'presentation/material',
+    file: 'app/api/career/presentation/material/route.ts',
+    memberRule: 'presentationMaterialMember',
+    guestRule: 'presentationMaterialGuest',
+    upload: true,
+  },
+  {
     name: 'gd/theme',
     file: 'app/api/career/gd/theme/route.ts',
     memberRule: 'gdThemeMember',
@@ -134,7 +141,7 @@ const ROUTES: Guarded[] = [
 console.log('PASSAI CAREER — CAREER AI route request guard QA');
 
 // ════════════════════════════════════════════════════════════════════
-section('A. 9 route が guard を AI 到達前に通している');
+section('A. 10 route が guard を AI 到達前に通している');
 
 for (const r of ROUTES) {
   const src = read(r.file);

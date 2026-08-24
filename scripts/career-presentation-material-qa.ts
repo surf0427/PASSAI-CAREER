@@ -340,9 +340,12 @@ const setupPageSrc = read('app/career/presentation/setup/page.tsx');
 const setupJsx = setupPageSrc.slice(setupPageSrc.indexOf('  return ('));
 const setupPage = setupPageSrc;
 check(setupJsx.includes('発表資料（任意）'), 'setup UI: 「発表資料（任意）」の入力欄がある');
+// 説明文はファイル添付の追加（後続 commit）で「添付するか、貼り付け」へ拡張された。
+//   ここで固定したいのは「貼り付けできること」と「評価に使われること」が書いてある点。
 check(
-  setupPage.includes('実際の発表で使用する資料やスライドの内容を貼り付けてください'),
-  'setup UI: 説明文がある',
+  setupPage.includes('内容を貼り付けてください') &&
+    setupPage.includes('AIの評価に使用されます'),
+  'setup UI: 貼り付けできること・評価に使われることが説明文にある',
 );
 for (const before of ['お題（必須）', '発表時間', '評価してほしい観点', '発表方法']) {
   check(

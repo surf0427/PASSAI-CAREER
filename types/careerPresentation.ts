@@ -164,6 +164,27 @@ export type CareerPresentationQaReview = {
   nextPractice: string[];
 };
 
+// 発表資料ファイル（任意）の参照 metadata。
+//
+// ★ ファイル本体（blob / base64）は localStorage に置かない。実体は CAREER 専用の
+//   private bucket（career-presentation-materials・Project B）にあり、ここに持つのは
+//   「どこにあるか・何であるか」だけ。評価時に server が service-role で download する。
+// ★ path は **server が生成した値**（`${userId}/${sessionId}/material.${ext}`）。
+//   client はこれを表示・再送に使うだけで、server は受け取った path を信用せず
+//   毎回 identity から再生成する（arbitrary path access を構造的に不可能にする）。
+export type CareerPresentationMaterialFile = {
+  // Storage 上の canonical path（server 生成）。
+  path: string;
+  // 'application/pdf' | 'image/png' | 'image/jpeg' のいずれか。
+  mimeType: string;
+  // 元のファイル名（表示用）。
+  fileName: string;
+  // バイト数（表示用）。
+  sizeBytes: number;
+  // アップロード時刻（ISO）。
+  uploadedAt: string;
+};
+
 // 進行中 / 完了済みのプレゼンセッション（localStorage: careerPresentationSessions）。
 export type CareerPresentationSession = {
   id: string;
@@ -188,9 +209,17 @@ export type CareerPresentationSession = {
    * ★ optional。未入力 / 本 field 追加前の旧セッションには存在しないため、読み取り側は
    *   欠損を前提に扱うこと（欠損＝資料なしで正常。資料が無いことを理由に減点はしない）。
    * ★ 正本はここ（localStorage の session）。評価時に result へ写して履歴にも残す。
-   *   受験版のような Supabase Storage への**ファイル**添付は就活版では扱わない（テキストのみ）。
    */
   material?: string;
+  /**
+   * 発表資料ファイル（任意）の参照 metadata。実体は private storage にあり、ここには
+   * path / MIME / ファイル名 / サイズだけを持つ（blob・base64 は保存しない）。
+   *
+   * ★ 貼り付けテキスト（material）とは **別の source**（同じ内容の複製ではない）。
+   *   両方あってもよく、prompt では 1 つの「発表資料」context として統合して扱う。
+   * ★ optional。未添付 / 本 field 追加前の旧セッションには存在しない（欠損＝添付なしで正常）。
+   */
+  materialFile?: CareerPresentationMaterialFile;
 };
 
 // 完了済みプレゼン 1 件分の結果（localStorage: careerPresentationResults）。
@@ -207,6 +236,8 @@ export type CareerPresentationResult = {
   transcript: string;
   // 発表資料（任意）。session から写す。旧ログには無い（欠損＝資料なしで正常）。
   material?: string;
+  // 発表資料ファイル（任意）の参照 metadata。session から写す。旧ログには無い。
+  materialFile?: CareerPresentationMaterialFile;
   result: CareerPresentationFinalResult;
   // 発表後に練習した質疑応答（任意。未実施なら空 or 省略）。
   qa?: CareerPresentationQaTurn[];
